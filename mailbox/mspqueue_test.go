@@ -21,7 +21,7 @@ func BenchmarkQueue_PushPopUnPop(b *testing.B) {
 	b.StopTimer()
 }
 
-func TestQueue_PushPopUnPop(t *testing.T) {
+func TestMSPQueue_PushPopUnPop(t *testing.T) {
 	q := NewMSPQueue()
 
 	q.Push(&actorkit.Envelope{Data:1})
@@ -46,7 +46,7 @@ func TestQueue_PushPopUnPop(t *testing.T) {
 	assert.True(t, q.Empty())
 }
 
-func TestQueue_Empty(t *testing.T) {
+func TestMSPQueue_Empty(t *testing.T) {
 	q := NewMSPQueue()
 	assert.True(t, q.Empty())
 	q.Push(&actorkit.Envelope{Data:1})

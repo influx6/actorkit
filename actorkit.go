@@ -1,7 +1,25 @@
 package actorkit
 
-import "time"
+import (
+	"time"
+	"github.com/gokit/es"
+)
 
+//***********************************
+// Subscribe And Unsubscribe
+//***********************************
+
+var events = es.New()
+
+// Subscribe adds handler into global subscription.
+func Subscribe(h es.EventHandler) es.Subscription {
+	return events.Subscribe(h)
+}
+
+// Publish publishes to all subscribers provided value.
+func Publish(h interface{})  {
+	events.Publish(h)
+}
 
 //***********************************
 // Envelope And Meta
@@ -84,40 +102,33 @@ type Future interface{
 }
 
 //***********************************
-// Supervisor
+//  Behaviour
 //***********************************
 
-// SupervisorStats provides a basic stats report regarding
-// a supervisors state.
-type SupervisorStats interface{
-	// Throughput returns the total count of delivered messages.
-	Throughput() int
-
-	// Received returns the total messages received by supervisor.
-	Received() int
-
-	// Processed returns the total messages handled by supervisor's actor.
-	Processed() int
+// Behaviour represents a indivisible unit of computation.
+// Encapsulating itself and it's internal from the outside
+// as a black-box.
+type Behaviour interface{
+	Receive(Envelope, Actor, Distributor)
 }
 
-// Supervisor handles the supervision of a giving actor and
-// associated mailbox.
-type Supervisor interface{
-	// Stop ends the operation of the supervisor, making the actor in
-	// effect non-working.
-	Stop() error
+//***********************************
+//  Mailbox
+//***********************************
 
-	// Stats returns the stats associated with a supervisor.
-	Stats() SupervisorStats
-
-	// Deliver adds a message to the mailbox for delivery to the actor for processing.
-	Deliver(envelope Envelope) error
-
-	// Supervise initializes the supervisor to begin handling of action operation.
-	// It is expected to return an error if the supervisor is already handling
-	// a actor process, if called twice.
-	Supervise(actor Actor, mailbox Mailbox) error
+// Mailbox defines a underline queue which provides the
+// ability to adequately push and release a envelope
+// received for later processing. Usually a mailbox is
+// associated with a actor and managed by a distributor.
+type Mailbox interface{
+	Cap() int
+	Total() int
+	Empty() bool
+	Push(*Envelope)
+	Pop() *Envelope
+	UnPop(*Envelope)
 }
+
 
 //***********************************
 //  Escalator
@@ -128,6 +139,48 @@ type Supervisor interface{
 type Escalator interface{
 	EscalateFailure(by Mask, envelope Envelope, reason interface{})
 }
+
+//***********************************
+// Actor
+//***********************************
+
+// ActorStats provides a basic stats report regarding
+// a supervisors state.
+type ActorStats interface{
+	// Throughput returns the total count of delivered messages.
+	Throughput() int
+
+	// Received returns the total messages received by supervisor.
+	Received() int
+
+	// Processed returns the total messages handled by supervisor's actor.
+	Processed() int
+}
+
+// Actor handles the supervision of a giving actor and
+// associated mailbox.
+type Actor interface{
+	Escalator
+	
+	// Addr returns given address of supervisor actor.
+	Addr() Mask
+
+	// Stop ends the operation of the supervisor, making the actor in
+	// effect non-working.
+	Stop() error
+
+	// Stats returns the stats associated with a supervisor.
+	Stats() ActorStats
+
+	// Deliver adds a message to the mailbox for delivery to the actor for processing.
+	Deliver(envelope Envelope) error
+
+	// Supervise initializes the supervisor to begin handling of action operation.
+	// It is expected to return an error if the supervisor is already handling
+	// a actor process, if called twice.
+	Supervise(actor Behaviour) error
+}
+
 
 //***********************************
 //  Distributor
@@ -142,8 +195,7 @@ type Distributor interface{
 	// an error if failed.
 	Stop(Mask) error
 
-	// Escalator returns the distributors escalator.
-	Escalator() Escalator
+	WatchFor(service string, )
 
 	// Deadletter returns the address associated with the
 	// deadletter inbox of the distributor.
@@ -181,34 +233,13 @@ type Distributor interface{
 	// after sending message to another actor.
 	Borrow(func(Envelope, Distributor)) Mask
 
-	// Supervise will register giving actor as an instance to be referenced by the
+	// Add will register giving actor as an instance to be referenced by the
 	// Mask address. It will receive it's own supervisor which will manage it's
 	// mailbox and message delivery.
-	Supervise(Mask, Actor)
+	Register(...Actor)
+
+	// Remove will unregister giving Actors with associated Mask address from the 
+	// distributor.
+	Remove(...Mask)
 }
 
-//***********************************
-//  Actor
-//***********************************
-
-// Actor represents a indivisible unit of computation.
-// Encapsulating itself and it's internal from the outside
-// as a black-box.
-type Actor interface{
-	Receive(Envelope, Distributor)
-}
-
-//***********************************
-//  Mailbox
-//***********************************
-
-// Mailbox defines a underline queue which provides the
-// ability to adequately push and release a envelope
-// received for later processing. Usually a mailbox is
-// associated with a actor and managed by a distributor.
-type Mailbox interface{
-	Empty() bool
-	Push(*Envelope)
-	Pop() *Envelope
-	UnPop(*Envelope)
-}
