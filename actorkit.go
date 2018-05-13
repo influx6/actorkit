@@ -223,6 +223,9 @@ type Future interface{
 
 // Stoppable defines an interface
 type Stoppable interface{
+	// Stopped returns true/false if giving value had stopped.
+	Stopped() bool
+
 	// Stop will immediately stop the target regardless of
 	// pending operation.
 	Stop()

@@ -5,36 +5,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestProcessDistributor(t *testing.T){
+	dist := GetDistributor()
 
-func TestNewLocalResolver(t *testing.T) {
-	lr := NewLocalResolver()
+	assert.NotNil(t, dist.Deadletter())
+	assert.Len(t, dist.FindAll("wicked"), 1)
+	assert.NotNil(t, dist.FindAny("wicked"))
+	assert.Equal(t, dist.FindAny("wicked"), deadMask)
+	assert.Equal(t, dist.Deadletter(), deadMask)
 
-	proc1 := newNoActorProcess()
-	proc2 := newNoActorProcess()
-	proc3 := newNoActorProcess()
+	op := NewLocalResolver()
+	op.Register(newNoActorProcess(), "wicka")
+	dist.AddResolver(op)
 
-	lr.Register(proc1, "sum")
-	lr.Register(proc2, "sum")
-	lr.Register(proc3, "mut")
-
-	sumAddr := NewMask(AnyNetworkAddr, "sum")
-	mutAddr := NewMask(AnyNetworkAddr, "mut")
-
-	proc, found := lr.Resolve(sumAddr)
-	assert.True(t, found)
-	assert.NotNil(t, proc)
-	assert.NotEqual(t, proc, proc3)
-	assert.True(t, proc == proc1 || proc == proc2)
-
-	proc, found = lr.Resolve(sumAddr)
-	assert.True(t, found)
-	assert.NotNil(t, proc)
-	assert.NotEqual(t, proc, proc3)
-	assert.True(t, proc == proc1 || proc == proc2)
-
-	proc, found = lr.Resolve(mutAddr)
-	assert.True(t, found)
-	assert.NotNil(t, proc)
-	assert.NotEqual(t, proc, proc1)
-	assert.NotEqual(t, proc, proc2)
+	assert.NotNil(t, dist.FindAny("wicka"))
+	assert.NotEqual(t, dist.FindAny("wicka"), deadMask)
 }

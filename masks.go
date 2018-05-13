@@ -3,7 +3,14 @@ package actorkit
 import (
 	"github.com/rs/xid"
 	"time"
+	"errors"
 	"fmt"
+)
+
+// errors ...
+var (
+	ErrDeadDoesNotStopp = errors.New("deadletter process does not stop")
+	ErrUnresolveableByProc = errors.New("future unresolvable by stopped process")
 )
 
 //***********************************
@@ -82,8 +89,11 @@ func (lm *localMask) GracefulStop() Waiter {
 	return lm.proc().GracefulStop()
 }
 
+func (lm *localMask) Stopped() bool {
+	return lm.proc().Stopped()
+}
+
 func (lm *localMask) Stop() {
-	if lm.proc() != nil {return}
 	lm.proc().Stop()
 }
 
@@ -97,11 +107,17 @@ func (lm *localMask) Send(v interface{}, dest Mask)  {
 }
 
 func (lm *localMask) SendFuture(v interface{}, d time.Duration) Future  {
-	future := newFutureActor(d, lm)
+	if _, ok := lm.proc().(*deadletterProcess); ok {
+		return resolvedFutureWithError(ErrDeadDoesNotStopp, lm)
+	}
 
+	if lm.proc().Stopped() {
+		return resolvedFutureWithError(ErrUnresolveableByProc, lm)
+	}
+
+	future := newFutureActor(d, lm)
 	env := NEnvelope(xid.New().String(),Header{},future.Mask(), v)
 	lm.proc().Receive(env)
-
 	future.start()
 	return future
 }

@@ -30,6 +30,7 @@ var (
 type deadletterProcess struct{}
 func (d deadletterProcess) Wait(){}
 func (d deadletterProcess) Stop(){}
+func (d deadletterProcess) Stopped() bool {return true}
 func (d deadletterProcess) GracefulStop() Waiter {
 	return d
 }
@@ -87,12 +88,13 @@ func newProcessDistributor() *processDistributor{
 	return pd
 }
 
-func (pb processDistributor) Deadletter() Mask {
+// Deadletter returns the address of the deadletter processor.
+func (pb *processDistributor) Deadletter() Mask {
 	return deadMask
 }
 
 // Fleets returns all Processes providing said services.
-func (pb processDistributor) Fleets(service string) ([]Process, error) {
+func (pb *processDistributor) Fleets(service string) ([]Process, error) {
 	pb.fl.RLock()
 	defer pb.fl.RUnlock()
 
@@ -110,7 +112,8 @@ func (pb processDistributor) Fleets(service string) ([]Process, error) {
 	return fleets, nil
 }
 
-func (pb processDistributor) Resolve(in Mask) (Process, bool) {
+// Resolve returns the processor for given Mask address.
+func (pb *processDistributor) Resolve(in Mask) (Process, bool) {
 	pb.rl.RLock()
 	defer pb.rl.RUnlock()
 
@@ -123,7 +126,8 @@ func (pb processDistributor) Resolve(in Mask) (Process, bool) {
 	return deadletter, false
 }
 
-func (pb processDistributor) AddEscalator(e Escalator) {
+// AddEscalator adds escalator into distributors list.
+func (pb *processDistributor) AddEscalator(e Escalator) {
 	if e == nil{return}
 
 	pb.el.Lock()
@@ -131,7 +135,8 @@ func (pb processDistributor) AddEscalator(e Escalator) {
 	pb.el.Unlock()
 }
 
-func (pb processDistributor) AddFleet(f FleetResolver) {
+// AddFleet adds fleet into distributors list.
+func (pb *processDistributor) AddFleet(f FleetResolver) {
 	if f == nil{return}
 
 	pb.fl.Lock()
@@ -139,7 +144,8 @@ func (pb processDistributor) AddFleet(f FleetResolver) {
 	pb.fl.Unlock()
 }
 
-func (pb processDistributor) AddResolver(r Resolver) {
+// AddResolver adds resolver into distributors list.
+func (pb *processDistributor) AddResolver(r Resolver) {
 	if r == nil{return}
 
 	pb.rl.Lock()
@@ -153,21 +159,26 @@ func (pb processDistributor) AddResolver(r Resolver) {
 	pb.fl.Unlock()
 }
 
-func (pb processDistributor) FindAny(service string) Mask  {
+// FindAny returns Mask of processor handling service.
+// If not found then deadletter Mask is returned.
+func (pb *processDistributor) FindAny(service string) Mask  {
 	pb.rl.RLock()
 	defer pb.rl.RUnlock()
 
-	wanted := newMaskWithP(AnyNetworkAddr, service, &deadletterProcess{})
+	wanted := newMaskWithP(AnyNetworkAddr, service, nil)
 	for _, rsv := range pb.resolvers{
 		if proc, found := rsv.Resolve(wanted); found {
 			wanted.m = proc
 			return wanted
 		}
 	}
-	return wanted
+
+	return deadMask
 }
 
-func (pb processDistributor) FindAll(service string) []Mask {
+// FindAll returns all Mask of processors handling service.
+// If not found then deadletter Mask is returned.
+func (pb *processDistributor) FindAll(service string) []Mask {
 	pb.rl.RLock()
 	defer pb.rl.RUnlock()
 
@@ -187,7 +198,8 @@ func (pb processDistributor) FindAll(service string) []Mask {
 	return addrs
 }
 
-func (pb processDistributor) EscalateFailure(by Mask, en Envelope, reason interface{})  {
+// EscalateFailure will escalate giving Envelope and Mask with provided reason.
+func (pb *processDistributor) EscalateFailure(by Mask, en Envelope, reason interface{})  {
 	pb.el.RLock()
 	defer pb.el.RUnlock()
 	for _, es := range pb.escalators{

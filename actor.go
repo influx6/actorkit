@@ -20,6 +20,7 @@ func newNoActorProcess() *noActorProcess{
 func (m noActorProcess) Wait()  {}
 func (m noActorProcess) Stop()  {}
 func (m noActorProcess) Receive(env Envelope) {}
+func (m noActorProcess) Stopped() bool  {return true}
 func (m noActorProcess) GracefulStop()  Waiter { return m}
 func (m noActorProcess) ID() string  {
 	return m.id.String()

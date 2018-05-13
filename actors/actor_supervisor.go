@@ -115,6 +115,7 @@ type actorSyncSupervisor struct{
 	wg sync.WaitGroup
 	processed int64
 	received int64
+	stopped int64
 
 	actions chan func()
 	closer chan struct{}
@@ -142,10 +143,16 @@ func (m *actorSyncSupervisor) GracefulStop()  actorkit.Waiter {
 	return m
 }
 
+// Stopped returns true/false if processor has being stopped.
+func (m *actorSyncSupervisor) Stopped() bool {
+	return atomic.LoadInt64(&m.received) > 0
+}
+
 // Stop sends a signal to stop processor operation.
 func (m *actorSyncSupervisor) Stop()  {
 	m.do.Do(func(){
 		m.closer <- struct{}{}
+		atomic.StoreInt64(&m.stopped, 1)
 	})
 }
 

@@ -35,6 +35,15 @@ func resolvedFuture(value Envelope, m Mask) *futureActor {
 	return fa
 }
 
+func resolvedFutureWithError(value error, m Mask) *futureActor {
+	fa := new(futureActor)
+	fa.target = m
+	fa.id = xid.New()
+	fa.err = value
+	fa.mask = newMask(AnyNetworkAddr, "future-srv", ResolveAlways(fa))
+	return fa
+}
+
 func newFutureActor(d time.Duration, target Mask) *futureActor {
 	fa := new(futureActor)
 	fa.timeout = d
@@ -59,6 +68,9 @@ func (f *futureActor) GracefulStop() Waiter  {
 	return f
 }
 
+func (f *futureActor) Stopped() bool  {
+	return false
+}
 
 // Stop is not supported for a future, has it must
 // be either resolved by a timeout or by a response.

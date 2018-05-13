@@ -11,6 +11,14 @@ var (
 	eb = NewMask(AnyNetworkAddr, "bob")
 )
 
+func TestFutureResolvedWithError(t *testing.T){
+	tf := resolvedFutureWithError(ErrDeadDoesNotStopp, &localMask{})
+	assert.Nil(t, tf.Result())
+	assert.NotNil(t, tf.Err())
+	assert.Equal(t, tf.Err(), ErrDeadDoesNotStopp)
+	tf.Wait()
+}
+
 func TestFutureResolved(t *testing.T){
 	env := NEnvelope("bob", Header{}, eb, 1)
 	tf := resolvedFuture(env, &localMask{})
