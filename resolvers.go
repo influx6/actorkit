@@ -2,12 +2,23 @@ package actorkit
 
 import (
 	"sync"
+	"errors"
 	"sync/atomic"
 )
 
 var (
 	defaultResolver = NewLocalResolver()
 )
+
+var (
+	// ErrIDAlreadyExists is returned when a process is already registered with id.
+	ErrIDAlreadyExists = errors.New("Process.ID already existing")
+)
+
+// GetProcessRegistry returns the default resolver for the package.
+func GetProcessRegistry() ProcessRegistry {
+	return defaultResolver
+}
 
 //**************************************
 // LocalResolver implements Resolver
@@ -122,14 +133,14 @@ func NewLocalResolver() *LocalResolver{
 }
 
 // Register adds giving set into LocalResolver.
-func (lr *LocalResolver) Register(process Process, service string){
+func (lr *LocalResolver) Register(process Process, service string) error {
 	lr.sm.Lock()
 	if set, ok := lr.service[service]; ok {
 		lr.sm.Unlock()
 		if !set.Has(process.ID()){
 			set.Add(process)
 		}
-		return
+		return ErrIDAlreadyExists
 	}
 	lr.sm.Unlock()
 
@@ -139,6 +150,7 @@ func (lr *LocalResolver) Register(process Process, service string){
 	lr.sm.Lock()
 	lr.service[service] = set
 	lr.sm.Unlock()
+	return nil
 }
 
 func (lr *LocalResolver) Fleets(service string) ([]Process, error) {

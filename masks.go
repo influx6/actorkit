@@ -24,6 +24,13 @@ func GetMask(addr string, srv string, m Resolver) Mask {
 	return newMask(addr,srv, m)
 }
 
+// ForceMaskWithProcess returns a mask which gets routed to provided
+// process and address. Generally it's desired to always obtain a
+// Mask from a Resolver.
+func ForceMaskWithProcess(addr string, srv string, m Process) Mask {
+	return newMaskWithP(addr, srv, m)
+}
+
 //***********************************
 //  localMask implements Mask
 //***********************************
@@ -35,8 +42,8 @@ var _ Mask = &localMask{}
 // specifically different service ports. Where the network represents the
 // zone of the actor be it local or remote.
 type localMask struct{
-	address string
 	srv string
+	address string
 
 	rsv Resolver
 	m Process

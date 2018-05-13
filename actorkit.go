@@ -151,6 +151,7 @@ type MessageInvoker interface{
 	InvokeMessageProcessed(Envelope)
 	InvokeMessageProcessing(Envelope)
 	InvokeSystemRequest(Envelope)
+	InvokePanicked(Envelope, interface{})
 	InvokeSystemMessageProcessing(Envelope)
 	InvokeSystemMessageProcessed(Envelope)
 	InvokeEscalateFailure(Mask, Envelope, interface{})
