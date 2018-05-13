@@ -22,36 +22,82 @@ func Publish(h interface{})  {
 }
 
 //***********************************
-// Envelope And Meta
+// Envelope And Header
 //***********************************
 
-// Meta defines a map type to hold meta information associated with a Envelope.
-type Meta map[string]interface{}
+// ReadOnlyHeader defines an interface for a header
+// type which exposes methods to get header values but
+// cam mpt be changed in anyway.
+type ReadOnlyHeader interface{
+	Len() int
+	Has(string) bool
+	Get(string) string
+	Map() map[string]string
+}
+
+var _ ReadOnlyHeader = &Header{}
+
+// Header defines a map type to hold meta information associated with a Envelope.
+type Header map[string]string
 
 // Get returns the associated value from the map within the map.
-func (m Meta) Get(n string)  interface{} {
+func (m Header) Get(n string) string {
 	return m[n]
 }
 
+// Map returns a map with contents of header.
+func (m Header) Map() map[string]string {
+	mv := make(map[string]string, len(m))
+	for k, v := range m {mv[k] = v}
+	return mv
+}
+
 // Len returns the length of records within the meta.
-func (m Meta) Len() int {
+func (m Header) Len() int {
 	return len(m)
 }
 
 // Has returns true/false value if key is present.
-func (m Meta) Has(n string) bool {
+func (m Header) Has(n string) bool {
 	_, ok := m[n]
 	return ok
 }
 
-// Envelope defines an struct representing a received message.
-type Envelope struct{
-	ID int64
-	Meta Meta
-	Src Mask
-	Dst Mask
-	Data interface{}
-	Future Future
+// Envelope defines an interface representing a received message.
+type Envelope interface{
+	ReadOnlyHeader
+	ID() string
+	Sender() Mask
+	Data() interface{}
+}
+
+// NEnvelope returns a new Envelope from provided arguments.
+func NEnvelope(id string, header Header, sender Mask, data interface{}) Envelope{
+	return &localEnvelope{
+		id:id,
+		data: data,
+		sender: sender,
+		Header: header,
+	}
+}
+
+type localEnvelope struct{
+	Header
+	id string
+	sender Mask
+	data interface{}
+}
+
+func (le *localEnvelope) Data() interface{} {
+	return le.data
+}
+
+func (le *localEnvelope) Sender() Mask {
+	return le.sender
+}
+
+func (le *localEnvelope) ID() string {
+	return le.id
 }
 
 //***********************************
@@ -63,12 +109,91 @@ type Envelope struct{
 // specifically different service ports. Where the network represents the
 // zone of the actor be it local or remote.
 type Mask interface{
-	Port() int
-	String() string
-	Network() string
+	Stoppable
+	Sender
+
+	// ID returns the unique id value for the given
+	// actor which the mask points to.
+	ID() string
+
+	// Service returns the associated service group, tag
+	// which actor wishes to represent itself under.
+	// This allows the distributor to group actors.
 	Service() string
 
-	Send(interface{}) error
+	// Address returns the associated address of actor pointed
+	// to my mask.
+	Address() string
+
+	// String returns the full representation of associated
+	// Mask.
+	String() string
+}
+
+//***********************************
+//  Invokers
+//***********************************
+
+// MailInvoker defines an interface that exposes methods
+// to signal status of a mailbox.
+type MailInvoker interface{
+	InvokeFull()
+	InvokeEmpty()
+	InvokeReceived(Envelope)
+	InvokeDispatched(Envelope)
+}
+
+// MessageInvoker defines a interface that exposes
+// methods to signal different state of a process
+// for external systems to plugin.
+type MessageInvoker interface{
+	InvokeRequest(Envelope)
+	InvokeMessageProcessed(Envelope)
+	InvokeMessageProcessing(Envelope)
+	InvokeSystemRequest(Envelope)
+	InvokeSystemMessageProcessing(Envelope)
+	InvokeSystemMessageProcessed(Envelope)
+	InvokeEscalateFailure(Mask, Envelope, interface{})
+}
+
+//***********************************
+//  Receiver
+//***********************************
+
+// Receiver defines an interface that exposes methods
+// to receive envelopes.
+type Receiver interface{
+	Receive(envelope Envelope)
+}
+
+//***********************************
+//  Sender
+//***********************************
+
+// Sender defines an interface that exposes methods
+// to sending messages.
+type Sender interface{
+	// Send will deliver a message to the underline actor
+	// will destination address.
+	Send(interface{}, Mask)
+
+	// Forward forwards giving envelope to actor.
+	Forward(Envelope)
+
+	// SendFuture will deliver given message to Mask's actor inbox
+	// for processing and returns a Future has destination of response.
+	SendFuture(interface{}, time.Duration) Future
+}
+
+//***********************************
+//  Waiter
+//***********************************
+
+// Waiter defines a in interface that exposes a wait method
+// to signal end of a giving operation after blocking call
+// of Waiter.Wait().
+type Waiter interface{
+	Wait()
 }
 
 //***********************************
@@ -78,38 +203,62 @@ type Mask interface{
 // Future represents a computation ongoing awaiting
 // able to provide a future response.
 type Future interface{
-	// Wait will block current goroutine till the future has being
-	// resolved.
-	Wait()
+	Waiter
 
-	// Stop ends the block from execution to and stops blocking any
-	// calls maid to wait, also the response will be considered unhandled
-	// and will be sent to the dead letter.
-	Stop()
-
-	// Mask returns the target address mask of the processing actor.
-	Mask() Mask
+	// Addr returns given address of resolving actor.
+	Addr() Mask
 
 	// Err returns an error if processing failed or if the timeout elapsed
 	// or if the future was stopped.
 	Err() error
 
-	// Resolve the future will be resolved with giving value.
-	Resolve(interface{})
-
-	// Response returns the response received from the actors finished work.
-	Response() interface{}
+	// Result returns the response received from the actors finished work.
+	Result() Envelope
 }
 
 //***********************************
-//  Behaviour
+//  Stoppable
 //***********************************
 
-// Behaviour represents a indivisible unit of computation.
+// Stoppable defines an interface
+type Stoppable interface{
+	// Stop will immediately stop the target regardless of
+	// pending operation.
+	Stop()
+
+	// GracefulStop will immediately stop the target regardless of
+	// pending operation and returns a Waiter to await end.
+	GracefulStop() Waiter
+}
+
+//***********************************
+//  Actor
+//***********************************
+
+// Actor represents a indivisible unit of computation.
 // Encapsulating itself and it's internal from the outside
 // as a black-box.
-type Behaviour interface{
-	Receive(Envelope, Actor, Distributor)
+type Actor interface{
+	Respond(Envelope, Distributor)
+}
+
+// ActorFunc defines a function type representing
+// the argument for a behaviour.
+type ActorFunc func(Envelope, Distributor)
+
+// FromFunc returns a Actor that uses the function has a
+// resolver.
+func FromFunc(b ActorFunc) Actor {
+	return beFunc{b}
+}
+
+type beFunc struct{
+	b ActorFunc
+}
+
+// Respond implements the Actor interface.
+func (b beFunc) Respond(e Envelope, d Distributor){
+	b.b(e,d)
 }
 
 //***********************************
@@ -124,11 +273,10 @@ type Mailbox interface{
 	Cap() int
 	Total() int
 	Empty() bool
-	Push(*Envelope)
-	Pop() *Envelope
-	UnPop(*Envelope)
+	Push(Envelope)
+	Pop() Envelope
+	UnPop(Envelope)
 }
-
 
 //***********************************
 //  Escalator
@@ -141,46 +289,52 @@ type Escalator interface{
 }
 
 //***********************************
-// Actor
+//  Identity
 //***********************************
 
-// ActorStats provides a basic stats report regarding
-// a supervisors state.
-type ActorStats interface{
-	// Throughput returns the total count of delivered messages.
-	Throughput() int
-
-	// Received returns the total messages received by supervisor.
-	Received() int
-
-	// Processed returns the total messages handled by supervisor's actor.
-	Processed() int
+// Identity provides a method to return the ID of a process.
+type Identity interface{
+	ID() string
 }
 
-// Actor handles the supervision of a giving actor and
-// associated mailbox.
-type Actor interface{
-	Escalator
-	
-	// Addr returns given address of supervisor actor.
-	Addr() Mask
+//***********************************
+//  Process
+//***********************************
 
-	// Stop ends the operation of the supervisor, making the actor in
-	// effect non-working.
-	Stop() error
-
-	// Stats returns the stats associated with a supervisor.
-	Stats() ActorStats
-
-	// Deliver adds a message to the mailbox for delivery to the actor for processing.
-	Deliver(envelope Envelope) error
-
-	// Supervise initializes the supervisor to begin handling of action operation.
-	// It is expected to return an error if the supervisor is already handling
-	// a actor process, if called twice.
-	Supervise(actor Behaviour) error
+// Process defines a type which embodies the methods of
+// Stoppable and Sender.
+type Process interface{
+	Identity
+	Stoppable
+	Receiver
 }
 
+//***********************************
+//  ProcessRegistry
+//***********************************
+
+// ProcessRegistry defines an interface that exposes
+// a method to register an existing Process with its
+// associate service and id.
+type ProcessRegistry interface{
+	Register(p Process, service string) error
+}
+
+//***********************************
+//  Resolver And FleetResolver
+//***********************************
+
+// Resolver defines an interface that resolves
+// a giving Mask address into a Maskable.
+type Resolver interface{
+	Resolve(Mask) (Process, bool)
+}
+
+// FleetResolver defines a interface that returns
+// a list of processes that match a giving service.
+type FleetResolver interface{
+	Fleets(service string) ([]Process, error)
+}
 
 //***********************************
 //  Distributor
@@ -191,55 +345,31 @@ type Actor interface{
 // It provides ability to identify giving actors based on
 // associated service name.
 type Distributor interface{
-	// Stop sends a signal to stop a giving actor and returns
-	// an error if failed.
-	Stop(Mask) error
-
-	WatchFor(service string, )
+	Escalator
 
 	// Deadletter returns the address associated with the
 	// deadletter inbox of the distributor.
 	Deadletter() Mask
 
-	// Send delivers giving message to actor on giving ID.
-	Send(Mask,  interface{})
+	// AddEscalator adds provided escalator into distributor.
+	AddEscalator(Escalator)
 
-	// SendFuture delivers message to giving actor but times it with giving
-	// duration where the surpassing of said duration will cancel the Future with
-	// a timeout.
-	SendFuture(Mask,  interface{}, time.Duration) Future
+	// AddResolver provides a method to add given Resolver into
+	// the distributor.
+	AddResolver(Resolver)
 
-	// ForwardEnvelope delivers giving Envelope to another actor
-	// for processing.
-	// Note that the envelope details will not be changed
-	// and the response will be delivered to the original Mask i.e Envelope.Src.
-	ForwardEnvelope(Mask,  Envelope)
-
-	// ForwardFuture delivers giving envelop to an actor on the associated
-	// mask. The response of the actor is timed with giving duration.
-	// Note that the envelope details will not be changed
-	// and the response will be delivered to the original Mask i.e Envelope.Src.
-	ForwardFuture(Mask,  Envelope, time.Duration) Future
+	// AddFleet provides a method to add given FleetResolver into
+	// the distributor.
+	AddFleet(FleetResolver)
 
 	// FindAny returns a giving actor associated with giving service.
-	FindAny(service string)  (Mask, error)
+	// If service is not found then it's expected that the Mask for
+	// dead letter be returned.
+	FindAny(service string)  Mask
 
-	// FindAll returns all actors provided services for giving service name. This
-	// is needed to allow discovery of all instance of a actor type that are providing
-	// processing for a associated service name.
-	FindAll(service string)  ([]Mask, error)
-
-	// Borrow provides a one-time actor which function will be called on response
-	// after sending message to another actor.
-	Borrow(func(Envelope, Distributor)) Mask
-
-	// Add will register giving actor as an instance to be referenced by the
-	// Mask address. It will receive it's own supervisor which will manage it's
-	// mailbox and message delivery.
-	Register(...Actor)
-
-	// Remove will unregister giving Actors with associated Mask address from the 
-	// distributor.
-	Remove(...Mask)
+	// FindAll returns all actors address providing the required service. This
+	// is to allow discovery of other actors. It should use the FleetResolver
+	// underneath.
+	FindAll(service string)  []Mask
 }
 

@@ -13,7 +13,7 @@ var _ actorkit.Mailbox = &BoxQueue{}
 //}}
 
 type node struct{
-	value *actorkit.Envelope
+	value actorkit.Envelope
 	next *node
 	prev *node
 }
@@ -42,9 +42,9 @@ const (
 // BoundedBoxQueue returns a new instance of a unbounded box queue.
 // Items will be queue till the capped is reached and then old items
 // will be dropped till queue has enough space for new item.
-func BoundedBoxQueue(capp int, method Strategy) *BoxQueue{
+func BoundedBoxQueue(capped int, method Strategy) *BoxQueue{
 	bq := &BoxQueue{
-		capped: capp,
+		capped: capped,
 		strategy: method,
 	}
 	return bq
@@ -63,7 +63,7 @@ func UnboundedBoxQueue() *BoxQueue{
 //
 // Push can be safely called from multiple goroutines.
 // Based on strategy if capped, then a message will be dropped.
-func (bq *BoxQueue) Push(env *actorkit.Envelope){
+func (bq *BoxQueue) Push(env actorkit.Envelope){
 	available := int(atomic.LoadInt64(&bq.total))
 	if bq.capped != -1 && available >= bq.capped{
 		switch bq.strategy{
@@ -100,7 +100,7 @@ func (bq *BoxQueue) Push(env *actorkit.Envelope){
 // message is removed to make space for message to be added back.
 // This means strategy will be ignored since this is an attempt
 // to re-add an item back into the top of the queue.
-func (bq *BoxQueue) UnPop(env *actorkit.Envelope){
+func (bq *BoxQueue) UnPop(env actorkit.Envelope){
 	available := int(atomic.LoadInt64(&bq.total))
 	if bq.capped != -1 && available >= bq.capped{
 			bq.unshift()
@@ -128,7 +128,7 @@ func (bq *BoxQueue) UnPop(env *actorkit.Envelope){
 // Pops removes the item from the front of the queue.
 //
 // Pop can be safely called from multiple goroutines.
-func (bq *BoxQueue) Pop() *actorkit.Envelope{
+func (bq *BoxQueue) Pop() actorkit.Envelope{
 	bq.bm.Lock()
 	head := bq.head
 	if head != nil  {
