@@ -109,8 +109,8 @@ func (le *localEnvelope) ID() string {
 // specifically different service ports. Where the network represents the
 // zone of the actor be it local or remote.
 type Mask interface{
-	Stoppable
 	Sender
+	Stoppable
 
 	// ID returns the unique id value for the given
 	// actor which the mask points to.

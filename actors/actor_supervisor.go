@@ -113,9 +113,9 @@ type actorSyncSupervisor struct{
 
 	do sync.Once
 	wg sync.WaitGroup
-	processed int64
-	received int64
 	stopped int64
+	received int64
+	processed int64
 
 	actions chan func()
 	closer chan struct{}
@@ -210,12 +210,12 @@ func (m *actorSyncSupervisor) run()  {
 
 	if m.escalator != nil {
 		m.behaviour.Respond(
-			actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), ActorStarted{}),
+			actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &ActorStarted{}),
 			m.escalator,
 		)
 	}else{
 		m.behaviour.Respond(
-			actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), ActorStarted{}),
+			actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &ActorStarted{}),
 			actorkit.GetDistributor(),
 		)
 	}
@@ -230,7 +230,7 @@ func (m *actorSyncSupervisor) run()  {
 			// system messages are dealt with first.
 			if m.escalator != nil {
 				m.behaviour.Respond(
-					actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), ActorShuttingDown{
+					actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &ActorShuttingDown{
 						Mail: m.mail,
 						Mask: mymask,
 					}),
@@ -238,7 +238,7 @@ func (m *actorSyncSupervisor) run()  {
 				)
 			}else{
 				m.behaviour.Respond(
-					actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), ActorShuttingDown{
+					actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &ActorShuttingDown{
 						Mail: m.mail,
 						Mask: mymask,
 					}),
