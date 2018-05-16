@@ -21,6 +21,31 @@ var (
 )
 
 //**************************************************
+//  Invoker
+//**************************************************
+
+// types of Invoker variables.
+var (
+	AsyncFunctionInvoker AsyncInvoker
+	SyncFunctionInvoker SyncInvoker
+)
+
+// Invoker defines a type which invokes a function.
+type Invoker interface{
+	Invoke(func())
+}
+
+type AsyncInvoker struct{}
+func (AsyncInvoker) Invoke(f func()){
+	go f()
+}
+
+type SyncInvoker struct{}
+func (SyncInvoker) Invoke(f func()){
+	f()
+}
+
+//**************************************************
 //  actorSyncSupervisor implements Process and actorkit.Actor
 //**************************************************
 
@@ -31,10 +56,18 @@ var _ actorkit.Process = &actorSyncSupervisor{}
 // values of type.
 type ActorSyncOption func(*actorSyncSupervisor)
 
+
 // WithMailbox sets the mailbox to be used by an actorSyncSupervisor.
 func WithMailbox(mail actorkit.Mailbox) ActorSyncOption{
 	return func(s *actorSyncSupervisor) {
 		s.mail = mail
+	}
+}
+
+// WithInvoker sets the function invoker to provider.
+func WithInvoker(in Invoker) ActorSyncOption{
+	return func(s *actorSyncSupervisor) {
+		s.fnInvoker = in
 	}
 }
 
@@ -89,6 +122,10 @@ func FromActor(action actorkit.Actor, ops ...ActorSyncOption) actorkit.Process {
 		op(ac)
 	}
 
+	if ac.fnInvoker == nil {
+		ac.fnInvoker = SyncFunctionInvoker
+	}
+
 	if ac.mail == nil {
 		ac.mail = mailbox.UnboundedBoxQueue()
 	}
@@ -112,6 +149,7 @@ type actorSyncSupervisor struct{
 	actions chan func()
 	closer chan struct{}
 
+	fnInvoker Invoker
 	mail actorkit.Mailbox
 	behaviour actorkit.Actor
 	escalator *escalateDistributor
@@ -322,7 +360,7 @@ func (m *actorSyncSupervisor) run()  {
 
 			return
 		case action := <-m.actions:
-			action()
+			m.fnInvoker.Invoke(action)
 		default:
 		}
 	}
