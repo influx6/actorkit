@@ -1,8 +1,8 @@
 package mailbox
 
 import (
-	"testing"
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
 func BenchmarkQueue_PushPopUnPop(b *testing.B) {
@@ -12,7 +12,7 @@ func BenchmarkQueue_PushPopUnPop(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		go func(){
+		go func() {
 			q.Push(env)
 		}()
 		q.Pop()
@@ -39,7 +39,7 @@ func TestMSPQueue_PushPopUnPop(t *testing.T) {
 	assert.False(t, q.Empty())
 	popped2 := q.Pop()
 	assert.NotNil(t, popped2)
-	assert.True(t,  popped1 == popped)
+	assert.True(t, popped1 == popped)
 	assert.True(t, popped2 != popped)
 
 	assert.True(t, q.Empty())

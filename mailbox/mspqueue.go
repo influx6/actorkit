@@ -1,9 +1,9 @@
 package mailbox
 
 import (
+	"github.com/gokit/actorkit"
 	"sync/atomic"
 	"unsafe"
-	"github.com/gokit/actorkit"
 )
 
 // MSQueue provides an efficient implementation of a multi-producer, single-consumer lock-free queue.

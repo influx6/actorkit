@@ -1,8 +1,8 @@
 package actorkit
 
 import (
-	"sync"
 	"errors"
+	"sync"
 	"sync/atomic"
 )
 
@@ -31,25 +31,25 @@ func GetProcessRegistry() ProcessRegistry {
 // are processes offering the same service contract and
 // will randomly based on index be provided when a process
 // is needed for communication.
-type roundRobinProcessSet struct{
+type roundRobinProcessSet struct {
 	lastIndex int32
-	src *LocalResolver
-	set map[string]int
-	ribbon map[int]string
+	src       *LocalResolver
+	set       map[string]int
+	ribbon    map[int]string
 }
 
-func newRoundRobinProcessSet(rs *LocalResolver) *roundRobinProcessSet{
+func newRoundRobinProcessSet(rs *LocalResolver) *roundRobinProcessSet {
 	return &roundRobinProcessSet{
-		set: map[string]int{},
+		set:    map[string]int{},
 		ribbon: map[int]string{},
-		src: rs,
+		src:    rs,
 	}
 }
 
 // GetRobin will return the next Process in a round-robin
 // random fashion, allowing some form of distributed calls
 // for different process to handle messages.
-func (p *roundRobinProcessSet) GetRobin() Process  {
+func (p *roundRobinProcessSet) GetRobin() Process {
 	var lastIndex int32
 	total := int32(len(p.ribbon))
 	if atomic.LoadInt32(&p.lastIndex) >= total {
@@ -57,24 +57,24 @@ func (p *roundRobinProcessSet) GetRobin() Process  {
 	}
 
 	lastIndex = atomic.AddInt32(&p.lastIndex, 1)
-	target := int(lastIndex%total)
+	target := int(lastIndex % total)
 
 	return p.src.procs[p.set[p.ribbon[target]]]
 }
 
-func (p *roundRobinProcessSet) Total() int  {
+func (p *roundRobinProcessSet) Total() int {
 	return len(p.set)
 }
 
-func (p *roundRobinProcessSet) CopyOnly(target []Process) []Process  {
-	for _, ind := range p.set{
+func (p *roundRobinProcessSet) CopyOnly(target []Process) []Process {
+	for _, ind := range p.set {
 		target = append(target, p.src.procs[ind])
 	}
 	return target
 }
 
-func (p *roundRobinProcessSet) Copy(target []Process,seen map[string]struct{}) []Process  {
-	for key, ind := range p.set{
+func (p *roundRobinProcessSet) Copy(target []Process, seen map[string]struct{}) []Process {
+	for key, ind := range p.set {
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -84,8 +84,8 @@ func (p *roundRobinProcessSet) Copy(target []Process,seen map[string]struct{}) [
 	return target
 }
 
-func (p *roundRobinProcessSet) RemoveInSet(proc Process)  {
-	if !p.Has(proc.ID()){
+func (p *roundRobinProcessSet) RemoveInSet(proc Process) {
+	if !p.Has(proc.ID()) {
 		return
 	}
 
@@ -95,7 +95,7 @@ func (p *roundRobinProcessSet) RemoveInSet(proc Process)  {
 
 	// we bare the cost of removal here.
 	for k, m := range p.ribbon {
-		if m == proc.ID(){
+		if m == proc.ID() {
 			delete(p.ribbon, k)
 			continue
 		}
@@ -105,15 +105,14 @@ func (p *roundRobinProcessSet) RemoveInSet(proc Process)  {
 	}
 }
 
-
-func (p *roundRobinProcessSet) Add(proc Process)  {
-	if p.Has(proc.ID()){
+func (p *roundRobinProcessSet) Add(proc Process) {
+	if p.Has(proc.ID()) {
 		return
 	}
 
 	p.ribbon[len(p.ribbon)] = proc.ID()
 
-	if ind, ok := p.src.seen[proc.ID()]; ok{
+	if ind, ok := p.src.seen[proc.ID()]; ok {
 		p.set[proc.ID()] = ind
 		return
 	}
@@ -129,25 +128,25 @@ func (p *roundRobinProcessSet) Has(s string) bool {
 }
 
 // LocalResolver implements the Resolver interface.
-type LocalResolver struct{
-	sm sync.RWMutex
-	seen map[string]int
+type LocalResolver struct {
+	sm      sync.RWMutex
+	seen    map[string]int
 	service map[string]*roundRobinProcessSet
-	procs []Process
+	procs   []Process
 }
 
 // NewLocalResolver returns a new instance of LocalResolver.
 // It implements the Resolver and FleetResolver interface.
-func NewLocalResolver() *LocalResolver{
+func NewLocalResolver() *LocalResolver {
 	return &LocalResolver{
-		seen: map[string]int{},
+		seen:    map[string]int{},
 		service: map[string]*roundRobinProcessSet{},
 	}
 }
 
 // GetProcess attempts to retrieve process using provided id
 // else returning a false if not found.
-func (lr *LocalResolver) GetProcess(id string) (Process, error)  {
+func (lr *LocalResolver) GetProcess(id string) (Process, error) {
 	lr.sm.Lock()
 	defer lr.sm.Unlock()
 
@@ -158,7 +157,7 @@ func (lr *LocalResolver) GetProcess(id string) (Process, error)  {
 	return nil, ErrProcNotFound
 }
 
-func (lr *LocalResolver) Unregister(process Process, service string)  {
+func (lr *LocalResolver) Unregister(process Process, service string) {
 	lr.sm.Lock()
 	defer lr.sm.Unlock()
 
@@ -168,7 +167,7 @@ func (lr *LocalResolver) Unregister(process Process, service string)  {
 }
 
 // Register adds giving set into LocalResolver.
-func (lr *LocalResolver) Register(process Process, service string)  {
+func (lr *LocalResolver) Register(process Process, service string) {
 	lr.sm.Lock()
 	defer lr.sm.Unlock()
 
@@ -210,7 +209,7 @@ func (lr *LocalResolver) Resolve(m Mask) (Process, bool) {
 	return nil, false
 }
 
-func (p *LocalResolver) Remove(proc Process)  {
+func (p *LocalResolver) Remove(proc Process) {
 	// go-routine this due to possible locks
 	go proc.RemoveWatcher(deadMask)
 
@@ -244,11 +243,11 @@ func (p *LocalResolver) Remove(proc Process)  {
 // ResolveAlways returns a Resolver that always returns
 // given process regardless of Mask.
 func ResolveAlways(p Process) Resolver {
-	return &sourceResolver{target:p}
+	return &sourceResolver{target: p}
 }
 
 // sourceResolver implements the Resolver interface.
-type sourceResolver struct{
+type sourceResolver struct {
 	target Process
 }
 
@@ -256,12 +255,12 @@ func (s sourceResolver) Fleets(m Mask) ([]Process, error) {
 	return []Process{s.target}, nil
 }
 
-func (s sourceResolver) ResolveById(m string) (Process, bool){
+func (s sourceResolver) ResolveById(m string) (Process, bool) {
 	return s.target, true
 }
 
 // Resolve implements the Resolver interface.
-func (s sourceResolver) Resolve(m Mask) (Process, bool){
+func (s sourceResolver) Resolve(m Mask) (Process, bool) {
 	return s.target, true
 }
 
@@ -269,14 +268,14 @@ func (s sourceResolver) Resolve(m Mask) (Process, bool){
 // locality
 //**************************************
 
-type localitySrc interface{
-	Remove(*localityIndex) 
+type localitySrc interface {
+	Remove(*localityIndex)
 	Get(*localityIndex) interface{}
 }
 
-type localityIndex struct{
+type localityIndex struct {
 	index int
-	src localitySrc
+	src   localitySrc
 }
 
 func (l *localityIndex) Remove() {
@@ -291,12 +290,12 @@ func (l *localityIndex) Get() interface{} {
 // localityMap
 //**************************************
 
-type localityMap struct{
-	rl sync.RWMutex
+type localityMap struct {
+	rl    sync.RWMutex
 	items map[int]interface{}
 }
 
-func (l *localityMap) Get(index *localityIndex)  interface{} {
+func (l *localityMap) Get(index *localityIndex) interface{} {
 	if index.index == -1 {
 		return nil
 	}
@@ -307,7 +306,7 @@ func (l *localityMap) Get(index *localityIndex)  interface{} {
 	return l.items[index.index]
 }
 
-func (l *localityMap) Remove(index *localityIndex)  {
+func (l *localityMap) Remove(index *localityIndex) {
 	if index.index == -1 {
 		return
 	}
@@ -323,7 +322,7 @@ func (l *localityMap) Remove(index *localityIndex)  {
 	}
 
 	l.items[index.index] = l.items[total-1]
-	delete(l.items, total -1)
+	delete(l.items, total-1)
 }
 
 func (l *localityMap) Add(item interface{}) *localityIndex {
@@ -342,12 +341,12 @@ func (l *localityMap) Add(item interface{}) *localityIndex {
 // localityList
 //**************************************
 
-type localityList struct{
-	rl sync.RWMutex
-	items []interface{}	
+type localityList struct {
+	rl    sync.RWMutex
+	items []interface{}
 }
 
-func (l *localityList) Get(index *localityIndex)  interface{} {
+func (l *localityList) Get(index *localityIndex) interface{} {
 	if index.index == -1 {
 		return nil
 	}
@@ -358,21 +357,21 @@ func (l *localityList) Get(index *localityIndex)  interface{} {
 	return l.items[index.index]
 }
 
-func (l *localityList) Remove(index *localityIndex)  {
+func (l *localityList) Remove(index *localityIndex) {
 	if index.index == -1 {
-		return 
+		return
 	}
-	
+
 	l.rl.Lock()
 	defer l.rl.Unlock()
-	
+
 	total := len(l.items)
 	if total == 1 {
 		l.items = nil
 		index.index = 1
 		return
 	}
-	
+
 	l.items[index.index] = l.items[total-1]
 	l.items = l.items[:total-1]
 }
@@ -380,10 +379,10 @@ func (l *localityList) Remove(index *localityIndex)  {
 func (l *localityList) Add(item interface{}) *localityIndex {
 	index := new(localityIndex)
 	index.src = l
-	
+
 	l.rl.Lock()
 	defer l.rl.Unlock()
-	
+
 	index.index = len(l.items)
 	l.items = append(l.items, item)
 	return index

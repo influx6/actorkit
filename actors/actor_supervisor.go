@@ -2,13 +2,12 @@ package actors
 
 import (
 	"errors"
-	"sync/atomic"
-	"sync"
-	"github.com/rs/xid"
 	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/mailbox"
+	"github.com/rs/xid"
+	"sync"
+	"sync/atomic"
 )
-
 
 var (
 	ErrAlreadySupervising = errors.New("already supervising")
@@ -27,21 +26,23 @@ var (
 // types of Invoker variables.
 var (
 	AsyncFunctionInvoker AsyncInvoker
-	SyncFunctionInvoker SyncInvoker
+	SyncFunctionInvoker  SyncInvoker
 )
 
 // Invoker defines a type which invokes a function.
-type Invoker interface{
+type Invoker interface {
 	Invoke(func())
 }
 
 type AsyncInvoker struct{}
-func (AsyncInvoker) Invoke(f func()){
+
+func (AsyncInvoker) Invoke(f func()) {
 	go f()
 }
 
 type SyncInvoker struct{}
-func (SyncInvoker) Invoke(f func()){
+
+func (SyncInvoker) Invoke(f func()) {
 	f()
 }
 
@@ -56,37 +57,36 @@ var _ actorkit.Process = &actorSyncSupervisor{}
 // values of type.
 type ActorSyncOption func(*actorSyncSupervisor)
 
-
 // WithMailbox sets the mailbox to be used by an actorSyncSupervisor.
-func WithMailbox(mail actorkit.Mailbox) ActorSyncOption{
+func WithMailbox(mail actorkit.Mailbox) ActorSyncOption {
 	return func(s *actorSyncSupervisor) {
 		s.mail = mail
 	}
 }
 
 // WithInvoker sets the function invoker to provider.
-func WithInvoker(in Invoker) ActorSyncOption{
+func WithInvoker(in Invoker) ActorSyncOption {
 	return func(s *actorSyncSupervisor) {
 		s.fnInvoker = in
 	}
 }
 
 // WithID sets the actor processor ID.
-func WithID(id xid.ID) ActorSyncOption{
+func WithID(id xid.ID) ActorSyncOption {
 	return func(s *actorSyncSupervisor) {
 		s.id = id
 	}
 }
 
 // WithMailInvoker sets the actor processor to use provided invoker.
-func WithMailInvoker(in actorkit.MailInvoker) ActorSyncOption{
+func WithMailInvoker(in actorkit.MailInvoker) ActorSyncOption {
 	return func(s *actorSyncSupervisor) {
 		s.mailInvoker = in
 	}
 }
 
 // WithMessageInvoker sets the actor processor to use provided invoker.
-func WithMessageInvoker(in actorkit.MessageInvoker) ActorSyncOption{
+func WithMessageInvoker(in actorkit.MessageInvoker) ActorSyncOption {
 	return func(s *actorSyncSupervisor) {
 		s.invoker = in
 	}
@@ -94,11 +94,11 @@ func WithMessageInvoker(in actorkit.MessageInvoker) ActorSyncOption{
 
 // WithLocalEscalator sets a local escalator be called by the
 // actorSyncSupervisor.
-func WithLocalEscalator(es actorkit.Escalator) ActorSyncOption{
+func WithLocalEscalator(es actorkit.Escalator) ActorSyncOption {
 	return func(s *actorSyncSupervisor) {
 		s.escalator = &escalateDistributor{
-			src: s,
-			local: es,
+			src:         s,
+			local:       es,
 			Distributor: actorkit.GetDistributor(),
 		}
 	}
@@ -137,47 +137,47 @@ func FromActor(action actorkit.Actor, ops ...ActorSyncOption) actorkit.Process {
 
 // actorSyncSupervisor implements the Process interface and
 // provides a basic processor management for an actorkit.Actor.
-type actorSyncSupervisor struct{
+type actorSyncSupervisor struct {
 	id xid.ID
 
-	do sync.Once
-	wg sync.WaitGroup
-	stopped int64
-	received int64
+	do        sync.Once
+	wg        sync.WaitGroup
+	stopped   int64
+	received  int64
 	processed int64
 
 	actions chan func()
-	closer chan struct{}
+	closer  chan struct{}
 
-	fnInvoker Invoker
-	mail actorkit.Mailbox
-	behaviour actorkit.Actor
-	escalator *escalateDistributor
-	invoker actorkit.MessageInvoker
+	fnInvoker   Invoker
+	mail        actorkit.Mailbox
+	behaviour   actorkit.Actor
+	escalator   *escalateDistributor
+	invoker     actorkit.MessageInvoker
 	mailInvoker actorkit.MailInvoker
-	watchers *actorkit.Watchers
+	watchers    *actorkit.Watchers
 }
 
-func (m *actorSyncSupervisor) RemoveWatcher(mw actorkit.Mask)  {
+func (m *actorSyncSupervisor) RemoveWatcher(mw actorkit.Mask) {
 	m.watchers.RemoveWatcher(mw)
 }
 
-func (m *actorSyncSupervisor) AddWatcher(mw actorkit.Mask, fn func(interface{}))  {
+func (m *actorSyncSupervisor) AddWatcher(mw actorkit.Mask, fn func(interface{})) {
 	m.watchers.AddWatcher(mw, fn)
 }
 
 // ID returns the associated ID of the implementation.
-func (m *actorSyncSupervisor) ID()  string {
+func (m *actorSyncSupervisor) ID() string {
 	return m.id.String()
 }
 
 // Wait will cause a block till the actor is fully closed.
-func (m *actorSyncSupervisor) Wait()  {
+func (m *actorSyncSupervisor) Wait() {
 	m.wg.Wait()
 }
 
 // GracefulStop attempts to gracefully stop the actor.
-func (m *actorSyncSupervisor) GracefulStop()  actorkit.Waiter {
+func (m *actorSyncSupervisor) GracefulStop() actorkit.Waiter {
 	m.Stop()
 	return m
 }
@@ -188,8 +188,8 @@ func (m *actorSyncSupervisor) Stopped() bool {
 }
 
 // Stop sends a signal to stop processor operation.
-func (m *actorSyncSupervisor) Stop()  {
-	m.do.Do(func(){
+func (m *actorSyncSupervisor) Stop() {
+	m.do.Do(func() {
 		m.closer <- struct{}{}
 		atomic.StoreInt64(&m.stopped, 1)
 	})
@@ -207,14 +207,13 @@ func (m *actorSyncSupervisor) Receive(myMask actorkit.Mask, env actorkit.Envelop
 		m.mailInvoker.InvokeReceived(env)
 	}
 
-	select{
+	select {
 	case m.actions <- m.doNext:
 	default:
 	}
 }
 
-
-func (m *actorSyncSupervisor) doNext()  {
+func (m *actorSyncSupervisor) doNext() {
 	var next *actorkit.QueuedEnvelope
 
 	defer func() {
@@ -243,8 +242,8 @@ func (m *actorSyncSupervisor) doNext()  {
 
 		if m.escalator != nil {
 			m.behaviour.Respond(next.MyMask, next.Envelope, m.escalator)
-		}else{
-			m.behaviour.Respond(next.MyMask,next.Envelope, actorkit.GetDistributor())
+		} else {
+			m.behaviour.Respond(next.MyMask, next.Envelope, actorkit.GetDistributor())
 		}
 
 		if m.invoker != nil {
@@ -253,22 +252,22 @@ func (m *actorSyncSupervisor) doNext()  {
 
 		// if we still have message, then signal to
 		// process next.
-		if !m.mail.Empty(){
+		if !m.mail.Empty() {
 			m.actions <- m.doNext
 		}
 	}
 }
 
-func (m *actorSyncSupervisor) run()  {
+func (m *actorSyncSupervisor) run() {
 	defer m.wg.Done()
 
 	mymask := actorkit.ForceMaskWithProcess(actorkit.AnyNetworkAddr, "process", m)
-	defer func(){
+	defer func() {
 		perr := recover()
 		msg := actorkit.ProcessFinishedShutDown{
-			ID: m.id.String(),
+			ID:    m.id.String(),
 			Panic: perr,
-			Mail: m.mail,
+			Mail:  m.mail,
 		}
 
 		// inform all watchers
@@ -288,7 +287,7 @@ func (m *actorSyncSupervisor) run()  {
 				),
 				m.escalator,
 			)
-		}else{
+		} else {
 			m.behaviour.Respond(
 				mymask,
 				actorkit.LocalEnvelope(
@@ -316,7 +315,7 @@ func (m *actorSyncSupervisor) run()  {
 			actorkit.LocalEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &initialMsg),
 			m.escalator,
 		)
-	}else{
+	} else {
 		m.behaviour.Respond(
 			mymask,
 			actorkit.LocalEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &initialMsg),
@@ -345,7 +344,7 @@ func (m *actorSyncSupervisor) run()  {
 					),
 					m.escalator,
 				)
-			}else{
+			} else {
 				m.behaviour.Respond(
 					mymask,
 					actorkit.LocalEnvelope(
@@ -366,13 +365,13 @@ func (m *actorSyncSupervisor) run()  {
 	}
 }
 
-type escalateDistributor struct{
+type escalateDistributor struct {
 	actorkit.Distributor
 	local actorkit.Escalator
-	src *actorSyncSupervisor
+	src   *actorSyncSupervisor
 }
 
-func (es *escalateDistributor) EscalateFailure(by actorkit.Mask, env actorkit.Envelope, reason interface{}){
+func (es *escalateDistributor) EscalateFailure(by actorkit.Mask, env actorkit.Envelope, reason interface{}) {
 	if es.src.invoker != nil {
 		es.src.invoker.InvokeEscalateFailure(by, env, reason)
 	}

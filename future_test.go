@@ -1,17 +1,17 @@
 package actorkit
 
 import (
-	"testing"
-	"time"
 	"errors"
 	"github.com/stretchr/testify/assert"
+	"testing"
+	"time"
 )
 
 var (
 	eb = NewMask(AnyNetworkAddr, "bob")
 )
 
-func TestFutureResolvedWithError(t *testing.T){
+func TestFutureResolvedWithError(t *testing.T) {
 	tf := resolvedFutureWithError(ErrDeadDoesNotStopp, &localMask{})
 	assert.Nil(t, tf.Result())
 	assert.NotNil(t, tf.Err())
@@ -19,7 +19,7 @@ func TestFutureResolvedWithError(t *testing.T){
 	tf.Wait()
 }
 
-func TestFutureResolved(t *testing.T){
+func TestFutureResolved(t *testing.T) {
 	env := LocalEnvelope("bob", Header{}, eb, 1)
 	tf := resolvedFuture(env, &localMask{})
 	assert.NotNil(t, tf.Result())
@@ -27,8 +27,8 @@ func TestFutureResolved(t *testing.T){
 	tf.Wait()
 }
 
-func TestFutureTimeout(t *testing.T){
-	tf := newFutureActor(1 * time.Second, &localMask{})
+func TestFutureTimeout(t *testing.T) {
+	tf := newFutureActor(1*time.Second, &localMask{})
 	tf.start()
 	time.Sleep(2 * time.Second)
 	assert.Nil(t, tf.Result())
@@ -37,8 +37,8 @@ func TestFutureTimeout(t *testing.T){
 	tf.Wait()
 }
 
-func TestFutureResolutionCloseToTimeout(t *testing.T){
-	tf := newFutureActor(1 * time.Second, &localMask{})
+func TestFutureResolutionCloseToTimeout(t *testing.T) {
+	tf := newFutureActor(1*time.Second, &localMask{})
 	tf.start()
 
 	time.Sleep(800 * time.Millisecond)
@@ -49,11 +49,11 @@ func TestFutureResolutionCloseToTimeout(t *testing.T){
 	tf.Receive(&localMask{}, env)
 	tf.Wait()
 
-	assert.Equal(t,tf.Result().Data(), 1)
+	assert.Equal(t, tf.Result().Data(), 1)
 }
 
-func TestFutureResolutionCloseToTimeoutErr(t *testing.T){
-	tf := newFutureActor(1 * time.Second, &localMask{})
+func TestFutureResolutionCloseToTimeoutErr(t *testing.T) {
+	tf := newFutureActor(1*time.Second, &localMask{})
 	tf.start()
 
 	time.Sleep(800 * time.Millisecond)
@@ -66,6 +66,6 @@ func TestFutureResolutionCloseToTimeoutErr(t *testing.T){
 	tf.Receive(&localMask{}, env)
 	tf.Wait()
 
-	assert.Equal(t,tf.Err(), nil)
-	assert.Equal(t,tf.Result().Data(), err)
+	assert.Equal(t, tf.Err(), nil)
+	assert.Equal(t, tf.Result().Data(), err)
 }

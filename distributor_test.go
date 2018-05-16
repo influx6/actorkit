@@ -1,11 +1,11 @@
 package actorkit
 
 import (
-	"testing"
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
-func TestProcessDistributor(t *testing.T){
+func TestProcessDistributor(t *testing.T) {
 	dist := GetDistributor()
 
 	assert.NotNil(t, dist.Deadletter())

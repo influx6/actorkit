@@ -1,15 +1,15 @@
 package actorkit
 
 import (
-	"github.com/rs/xid"
-	"time"
 	"errors"
 	"fmt"
+	"github.com/rs/xid"
+	"time"
 )
 
 // errors ...
 var (
-	ErrDeadDoesNotStopp = errors.New("deadletter process does not stop")
+	ErrDeadDoesNotStopp    = errors.New("deadletter process does not stop")
 	ErrUnresolveableByProc = errors.New("future unresolvable by stopped process")
 )
 
@@ -20,7 +20,7 @@ var (
 // NewMask returns a new Mask with provided address and srv string.
 // The Mask processor will be resolved by the root distributor.
 func NewMask(addr string, srv string) Mask {
-	return newMask(addr,srv, rootDistributor)
+	return newMask(addr, srv, rootDistributor)
 }
 
 // GetMask provides a method to create a Mask address for a Process.
@@ -28,7 +28,7 @@ func NewMask(addr string, srv string) Mask {
 // IDs are generated from a global increasing id generator.
 // Uses https://github.com/rs/xid for generating id.
 func GetMask(addr string, srv string, m Resolver) Mask {
-	return newMask(addr,srv, m)
+	return newMask(addr, srv, m)
 }
 
 // ForceMaskWithProcess returns a mask which gets routed to provided
@@ -48,19 +48,19 @@ var _ Mask = &localMask{}
 // Actor. Multiple actors are allowed to have same service name but must have
 // specifically different service ports. Where the network represents the
 // zone of the actor be it local or remote.
-type localMask struct{
-	srv string
+type localMask struct {
+	srv     string
 	address string
 
 	rsv Resolver
-	m Process
+	m   Process
 }
 
 // newMaskWithP returns a new instance of localMask using the provided process.
 func newMaskWithP(addr string, srv string, m Process) *localMask {
 	return &localMask{
-		m: m,
-		srv: srv,
+		m:       m,
+		srv:     srv,
 		address: addr,
 	}
 }
@@ -69,8 +69,8 @@ func newMaskWithP(addr string, srv string, m Process) *localMask {
 // to resolve the exact process.
 func newMask(addr string, srv string, r Resolver) *localMask {
 	return &localMask{
-		rsv: r,
-		srv: srv,
+		rsv:     r,
+		srv:     srv,
 		address: addr,
 	}
 }
@@ -102,7 +102,7 @@ func (lm *localMask) Unwatch(m Mask) {
 }
 
 func (lm *localMask) Watch(m Mask) {
-	if m.Stopped()	{
+	if m.Stopped() {
 		lm.Send(&TerminatedProcess{
 			ID: m.ID(),
 		}, deadMask)
@@ -144,16 +144,16 @@ func (lm *localMask) Stop() {
 	lm.proc(false).Stop()
 }
 
-func (lm *localMask) Forward(v Envelope)  {
+func (lm *localMask) Forward(v Envelope) {
 	lm.proc(false).Receive(lm, v)
 }
 
-func (lm *localMask) Send(v interface{}, dest Mask)  {
-	env := LocalEnvelope(xid.New().String(),Header{},dest, v)
+func (lm *localMask) Send(v interface{}, dest Mask) {
+	env := LocalEnvelope(xid.New().String(), Header{}, dest, v)
 	lm.proc(false).Receive(lm, env)
 }
 
-func (lm *localMask) SendFuture(v interface{}, d time.Duration) Future  {
+func (lm *localMask) SendFuture(v interface{}, d time.Duration) Future {
 	if _, ok := lm.proc(false).(*deadletterProcess); ok {
 		return resolvedFutureWithError(ErrDeadDoesNotStopp, lm)
 	}
@@ -163,7 +163,7 @@ func (lm *localMask) SendFuture(v interface{}, d time.Duration) Future  {
 	}
 
 	future := newFutureActor(d, lm)
-	env := LocalEnvelope(xid.New().String(),Header{},future.Mask(), v)
+	env := LocalEnvelope(xid.New().String(), Header{}, future.Mask(), v)
 	lm.proc(false).Receive(lm, env)
 	future.start()
 	return future
@@ -185,6 +185,6 @@ func (lm *localMask) Service() string {
 	return lm.srv
 }
 
-func (lm *localMask) RemoveService()  {
+func (lm *localMask) RemoveService() {
 	defaultResolver.Unregister(lm.proc(true), lm.srv)
 }

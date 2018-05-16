@@ -1,10 +1,9 @@
 package actorkit
 
 import (
-	"testing"
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
-
 
 func TestNewLocalResolver(t *testing.T) {
 	lr := NewLocalResolver()

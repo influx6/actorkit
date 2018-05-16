@@ -1,8 +1,8 @@
 package actorkit
 
 import (
-	"time"
 	"github.com/gokit/es"
+	"time"
 )
 
 //***********************************
@@ -17,7 +17,7 @@ func Subscribe(h es.EventHandler) es.Subscription {
 }
 
 // Publish publishes to all subscribers provided value.
-func Publish(h interface{})  {
+func Publish(h interface{}) {
 	events.Publish(h)
 }
 
@@ -28,7 +28,7 @@ func Publish(h interface{})  {
 // ReadOnlyHeader defines an interface for a header
 // type which exposes methods to get header values but
 // cam mpt be changed in anyway.
-type ReadOnlyHeader interface{
+type ReadOnlyHeader interface {
 	Len() int
 	Has(string) bool
 	Get(string) string
@@ -48,7 +48,9 @@ func (m Header) Get(n string) string {
 // Map returns a map with contents of header.
 func (m Header) Map() map[string]string {
 	mv := make(map[string]string, len(m))
-	for k, v := range m {mv[k] = v}
+	for k, v := range m {
+		mv[k] = v
+	}
 	return mv
 }
 
@@ -66,13 +68,13 @@ func (m Header) Has(n string) bool {
 // QueuedEnvelope defines a struct which holds
 // the address which an envelope is delivered
 // to and the delivered envelope.
-type QueuedEnvelope struct{
+type QueuedEnvelope struct {
 	Envelope
 	MyMask Mask
 }
 
 // Envelope defines an interface representing a received message.
-type Envelope interface{
+type Envelope interface {
 	ReadOnlyHeader
 	ID() string
 	Sender() Mask
@@ -80,20 +82,20 @@ type Envelope interface{
 }
 
 // LocalEnvelope returns a new Envelope from provided arguments.
-func LocalEnvelope(id string, header Header, sender Mask, data interface{}) Envelope{
+func LocalEnvelope(id string, header Header, sender Mask, data interface{}) Envelope {
 	return &localEnvelope{
-		id:id,
-		data: data,
+		id:     id,
+		data:   data,
 		sender: sender,
 		Header: header,
 	}
 }
 
-type localEnvelope struct{
+type localEnvelope struct {
 	Header
-	id string
+	id     string
 	sender Mask
-	data interface{}
+	data   interface{}
 }
 
 func (le *localEnvelope) Data() interface{} {
@@ -120,7 +122,7 @@ func (le *localEnvelope) ID() string {
 // Because an actor may be plural in its functionality (i.e handling different types of
 // messages), Mask are the means to represent them in such a way, apart from a means of
 // reaching an Actor process.
-type Mask interface{
+type Mask interface {
 	Sender
 	Stoppable
 	Watchable
@@ -163,7 +165,7 @@ type Mask interface{
 
 // MailInvoker defines an interface that exposes methods
 // to signal status of a mailbox.
-type MailInvoker interface{
+type MailInvoker interface {
 	InvokeFull()
 	InvokeEmpty()
 	InvokeReceived(Envelope)
@@ -173,7 +175,7 @@ type MailInvoker interface{
 // MessageInvoker defines a interface that exposes
 // methods to signal different state of a process
 // for external systems to plugin.
-type MessageInvoker interface{
+type MessageInvoker interface {
 	InvokeRequest(Mask, Envelope)
 	InvokeMessageProcessed(Envelope)
 	InvokeMessageProcessing(Envelope)
@@ -190,7 +192,7 @@ type MessageInvoker interface{
 
 // Receiver defines an interface that exposes methods
 // to receive envelopes and it's own used address.
-type Receiver interface{
+type Receiver interface {
 	Receive(myMask Mask, envelope Envelope)
 }
 
@@ -200,7 +202,7 @@ type Receiver interface{
 
 // Sender defines an interface that exposes methods
 // to sending messages.
-type Sender interface{
+type Sender interface {
 	// Send will deliver a message to the underline actor
 	// will destination address as Sender.
 	Send(interface{}, Mask)
@@ -220,7 +222,7 @@ type Sender interface{
 // Watchable defines a in interface that exposes methods to add
 // functions to be called on some status change of the implementing
 // instance.
-type Watchable interface{
+type Watchable interface {
 	RemoveWatcher(Mask)
 	AddWatcher(Mask, func(interface{}))
 }
@@ -232,7 +234,7 @@ type Watchable interface{
 // Waiter defines a in interface that exposes a wait method
 // to signal end of a giving operation after blocking call
 // of Waiter.Wait().
-type Waiter interface{
+type Waiter interface {
 	Wait()
 }
 
@@ -242,7 +244,7 @@ type Waiter interface{
 
 // Future represents a computation ongoing awaiting
 // able to provide a future response.
-type Future interface{
+type Future interface {
 	Waiter
 
 	// Addr returns given address of resolving actor.
@@ -261,7 +263,7 @@ type Future interface{
 //***********************************
 
 // Stoppable defines an interface
-type Stoppable interface{
+type Stoppable interface {
 	// Stopped returns true/false if giving value had stopped.
 	Stopped() bool
 
@@ -281,7 +283,7 @@ type Stoppable interface{
 // Actor represents a indivisible unit of computation.
 // Encapsulating itself and it's internal from the outside
 // as a black-box.
-type Actor interface{
+type Actor interface {
 	Respond(myMask Mask, env Envelope, d Distributor)
 }
 
@@ -295,13 +297,13 @@ func FromFunc(b ActorFunc) Actor {
 	return beFunc{b}
 }
 
-type beFunc struct{
+type beFunc struct {
 	b ActorFunc
 }
 
 // Respond implements the Actor interface.
-func (b beFunc) Respond(my Mask,e Envelope, d Distributor){
-	b.b(my, e,d)
+func (b beFunc) Respond(my Mask, e Envelope, d Distributor) {
+	b.b(my, e, d)
 }
 
 //***********************************
@@ -312,7 +314,7 @@ func (b beFunc) Respond(my Mask,e Envelope, d Distributor){
 // ability to adequately push and release a envelope
 // received for later processing. Usually a mailbox is
 // associated with a actor and managed by a distributor.
-type Mailbox interface{
+type Mailbox interface {
 	Cap() int
 	Total() int
 	Empty() bool
@@ -327,7 +329,7 @@ type Mailbox interface{
 
 // Escalator defines an interface that exposes a means to escalate
 // giving failure.
-type Escalator interface{
+type Escalator interface {
 	EscalateFailure(by Mask, envelope Envelope, reason interface{})
 }
 
@@ -336,7 +338,7 @@ type Escalator interface{
 //***********************************
 
 // Identity provides a method to return the ID of a process.
-type Identity interface{
+type Identity interface {
 	ID() string
 }
 
@@ -346,17 +348,17 @@ type Identity interface{
 
 // TerminatedProcess is sent when an Mask processor has already
 // being shutdown/stopped.
-type TerminatedProcess struct{
+type TerminatedProcess struct {
 	ID string
 }
 
 // ProcessStarted is sent when an actor has begun it's operation.
-type ProcessStarted struct{
+type ProcessStarted struct {
 	ID string
 }
 
 // ProcessShuttingDown is send when an actor is in the process of shutdown.
-type ProcessShuttingDown struct{
+type ProcessShuttingDown struct {
 	ID string
 }
 
@@ -364,15 +366,15 @@ type ProcessShuttingDown struct{
 // It tags it's underline mailbox and mask for those wanting to take over it's
 // unfinished business. It also includes a panic field to provide any pack
 // seen during shutdown.
-type ProcessFinishedShutDown struct{
-	ID string
-	Mail Mailbox
+type ProcessFinishedShutDown struct {
+	ID    string
+	Mail  Mailbox
 	Panic interface{}
 }
 
 // Process defines a type which embodies the methods of
 // Stoppable and Sender.
-type Process interface{
+type Process interface {
 	Identity
 	Stoppable
 	Receiver
@@ -386,7 +388,7 @@ type Process interface{
 // ProcessRegistry defines an interface that exposes
 // a method to register an existing Process with its
 // associate service and id.
-type ProcessRegistry interface{
+type ProcessRegistry interface {
 	// GetProcess attempts to return process with associated
 	// id if found else returning false for it's second argument.
 	GetProcess(id string) (Process, error)
@@ -410,13 +412,13 @@ type ProcessRegistry interface{
 
 // Resolver defines an interface that resolves
 // a giving Mask address into a Maskable.
-type Resolver interface{
+type Resolver interface {
 	Resolve(Mask) (Process, bool)
 }
 
 // FleetResolver defines a interface that returns
 // a list of processes that match a giving service.
-type FleetResolver interface{
+type FleetResolver interface {
 	Fleets(service string) ([]Process, error)
 }
 
@@ -428,7 +430,7 @@ type FleetResolver interface{
 // handles distribution of messages to and from actors.
 // It provides ability to identify giving actors based on
 // associated service name.
-type Distributor interface{
+type Distributor interface {
 	Escalator
 
 	// Deadletter returns the address associated with the
@@ -449,11 +451,10 @@ type Distributor interface{
 	// FindAny returns a giving actor associated with giving service.
 	// If service is not found then it's expected that the Mask for
 	// dead letter be returned.
-	FindAny(service string)  Mask
+	FindAny(service string) Mask
 
 	// FindAll returns all actors address providing the required service. This
 	// is to allow discovery of other actors. It should use the FleetResolver
 	// underneath.
-	FindAll(service string)  []Mask
+	FindAll(service string) []Mask
 }
-

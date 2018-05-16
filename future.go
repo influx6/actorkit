@@ -1,29 +1,29 @@
 package actorkit
 
 import (
-	"sync"
 	"errors"
-	"time"
 	"github.com/rs/xid"
+	"sync"
+	"time"
 )
 
 var (
 	ErrFutureTimeout = errors.New("future has timed out")
 )
 
-type futureActor struct{
-	id xid.ID
-	mask Mask
+type futureActor struct {
+	id     xid.ID
+	mask   Mask
 	target Mask
 
-	fl sync.Mutex
-	err error
-	do sync.Once
+	fl     sync.Mutex
+	err    error
+	do     sync.Once
 	result Envelope
 
 	timeout time.Duration
-	wg sync.WaitGroup
-	res chan Envelope
+	wg      sync.WaitGroup
+	res     chan Envelope
 }
 
 func resolvedFuture(value Envelope, m Mask) *futureActor {
@@ -54,33 +54,33 @@ func newFutureActor(d time.Duration, target Mask) *futureActor {
 	return fa
 }
 
-func (f *futureActor) ID()string  {
+func (f *futureActor) ID() string {
 	return f.id.String()
 }
 
-func (f *futureActor) Wait()  {
+func (f *futureActor) Wait() {
 	f.wg.Wait()
 }
 
 // Not supported
-func (f *futureActor) AddWatcher(_ Mask, _ func(interface{}))  {}
+func (f *futureActor) AddWatcher(_ Mask, _ func(interface{})) {}
 
 // Not supported
-func (f *futureActor) RemoveWatcher(_ Mask)  {}
+func (f *futureActor) RemoveWatcher(_ Mask) {}
 
 // GracefulStop is not supported for a future, has it must
 // be either resolved by a timeout or by a response.
-func (f *futureActor) GracefulStop() Waiter  {
+func (f *futureActor) GracefulStop() Waiter {
 	return f
 }
 
-func (f *futureActor) Stopped() bool  {
+func (f *futureActor) Stopped() bool {
 	return false
 }
 
 // Stop is not supported for a future, has it must
 // be either resolved by a timeout or by a response.
-func (f *futureActor) Stop()  {
+func (f *futureActor) Stop() {
 	return
 }
 
@@ -95,8 +95,8 @@ func (f *futureActor) Addr() Mask {
 }
 
 // Receive resolves future with Envelope.Data.
-func (f *futureActor) Receive(through Mask, en Envelope)  {
-	f.do.Do(func(){
+func (f *futureActor) Receive(through Mask, en Envelope) {
+	f.do.Do(func() {
 		f.res <- en
 	})
 }
@@ -117,25 +117,25 @@ func (f *futureActor) Result() Envelope {
 	return f.result
 }
 
-func (f *futureActor) start()  {
+func (f *futureActor) start() {
 	f.wg.Add(1)
 	go f.run()
 }
 
-func (f *futureActor) run()  {
+func (f *futureActor) run() {
 	defer f.wg.Done()
 	for {
 		select {
-		 case <-time.After(f.timeout):
-		 	f.fl.Lock()
+		case <-time.After(f.timeout):
+			f.fl.Lock()
 			f.err = ErrFutureTimeout
 			f.fl.Unlock()
-			 return
-		 case res := <-f.res:
-			 f.fl.Lock()
-			 f.result = res
-			 f.fl.Unlock()
-			 return
+			return
+		case res := <-f.res:
+			f.fl.Lock()
+			f.result = res
+			f.fl.Unlock()
+			return
 		}
 	}
 }

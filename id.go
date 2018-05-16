@@ -21,4 +21,3 @@ func uint64ToId(u uint64) string {
 
 	return string(buf[i:])
 }
-

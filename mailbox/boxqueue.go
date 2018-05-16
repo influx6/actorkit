@@ -12,21 +12,21 @@ var _ actorkit.Mailbox = &BoxQueue{}
 //	return new(node)
 //}}
 
-type node struct{
+type node struct {
 	value actorkit.Envelope
-	next *node
-	prev *node
+	next  *node
+	prev  *node
 }
 
 // BoxQueue defines a queue implementation safe for concurrent-use
 // across go-routines, which provides ability to requeue, pop and push
 // new envelop messages. BoxQueue uses lock to guarantee safe concurrent use.
-type BoxQueue struct{
-	bm sync.Mutex
-	head *node
-	tail *node
-	capped int
-	total int64
+type BoxQueue struct {
+	bm       sync.Mutex
+	head     *node
+	tail     *node
+	capped   int
+	total    int64
 	strategy Strategy
 }
 
@@ -42,9 +42,9 @@ const (
 // BoundedBoxQueue returns a new instance of a unbounded box queue.
 // Items will be queue till the capped is reached and then old items
 // will be dropped till queue has enough space for new item.
-func BoundedBoxQueue(capped int, method Strategy) *BoxQueue{
+func BoundedBoxQueue(capped int, method Strategy) *BoxQueue {
 	bq := &BoxQueue{
-		capped: capped,
+		capped:   capped,
 		strategy: method,
 	}
 	return bq
@@ -52,7 +52,7 @@ func BoundedBoxQueue(capped int, method Strategy) *BoxQueue{
 
 // UnboundedBoxQueue returns a new instance of a unbounded box queue.
 // Items will be queue endlessly.
-func UnboundedBoxQueue() *BoxQueue{
+func UnboundedBoxQueue() *BoxQueue {
 	bq := &BoxQueue{
 		capped: -1,
 	}
@@ -63,10 +63,10 @@ func UnboundedBoxQueue() *BoxQueue{
 //
 // Push can be safely called from multiple goroutines.
 // Based on strategy if capped, then a message will be dropped.
-func (bq *BoxQueue) Push(env actorkit.Envelope){
+func (bq *BoxQueue) Push(env actorkit.Envelope) {
 	available := int(atomic.LoadInt64(&bq.total))
-	if bq.capped != -1 && available >= bq.capped{
-		switch bq.strategy{
+	if bq.capped != -1 && available >= bq.capped {
+		switch bq.strategy {
 		case DropNew:
 			return
 		case DropOld:
@@ -75,10 +75,9 @@ func (bq *BoxQueue) Push(env actorkit.Envelope){
 	}
 
 	atomic.AddInt64(&bq.total, 1)
-	n := &node{value:env}
+	n := &node{value: env}
 	//n := nodePool.Get().(*node)
 	//n.value = env
-
 
 	bq.bm.Lock()
 	if bq.head == nil && bq.tail == nil {
@@ -100,14 +99,14 @@ func (bq *BoxQueue) Push(env actorkit.Envelope){
 // message is removed to make space for message to be added back.
 // This means strategy will be ignored since this is an attempt
 // to re-add an item back into the top of the queue.
-func (bq *BoxQueue) UnPop(env actorkit.Envelope){
+func (bq *BoxQueue) UnPop(env actorkit.Envelope) {
 	available := int(atomic.LoadInt64(&bq.total))
-	if bq.capped != -1 && available >= bq.capped{
-			bq.unshift()
+	if bq.capped != -1 && available >= bq.capped {
+		bq.unshift()
 	}
 
 	atomic.AddInt64(&bq.total, 1)
-	n := &node{value:env}
+	n := &node{value: env}
 	//n := nodePool.Get().(*node)
 	//n.value = env
 
@@ -128,10 +127,10 @@ func (bq *BoxQueue) UnPop(env actorkit.Envelope){
 // Pops removes the item from the front of the queue.
 //
 // Pop can be safely called from multiple goroutines.
-func (bq *BoxQueue) Pop() actorkit.Envelope{
+func (bq *BoxQueue) Pop() actorkit.Envelope {
 	bq.bm.Lock()
 	head := bq.head
-	if head != nil  {
+	if head != nil {
 		atomic.AddInt64(&bq.total, -1)
 
 		v := head.value
@@ -156,7 +155,7 @@ func (bq *BoxQueue) Pop() actorkit.Envelope{
 func (bq *BoxQueue) unshift() {
 	bq.bm.Lock()
 	tail := bq.tail
-	if tail != nil  {
+	if tail != nil {
 		atomic.AddInt64(&bq.total, -1)
 
 		bq.tail = tail.prev
@@ -190,4 +189,3 @@ func (bq *BoxQueue) Empty() bool {
 	bq.bm.Unlock()
 	return empty
 }
-

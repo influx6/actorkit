@@ -1,14 +1,14 @@
 package mailbox
 
 import (
-	"testing"
-	"github.com/stretchr/testify/assert"
 	"github.com/gokit/actorkit"
+	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
 var (
-	eb = actorkit.NewMask(actorkit.AnyNetworkAddr, "bob")
-	env = actorkit.LocalEnvelope("bob", actorkit.Header{}, eb, 1)
+	eb   = actorkit.NewMask(actorkit.AnyNetworkAddr, "bob")
+	env  = actorkit.LocalEnvelope("bob", actorkit.Header{}, eb, 1)
 	env2 = actorkit.LocalEnvelope("bob", actorkit.Header{}, eb, 2)
 )
 
@@ -20,7 +20,7 @@ func BenchmarkBoxQueue_PushPopUnPop(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		q.Push(env)
-		go func(){
+		go func() {
 			q.Pop()
 			q.UnPop(env)
 		}()
@@ -76,7 +76,7 @@ func TestBoxQueue_PushPopUnPop(t *testing.T) {
 	assert.False(t, q.Empty())
 	popped2 := q.Pop()
 	assert.NotNil(t, popped2)
-	assert.True(t,  popped1 == popped)
+	assert.True(t, popped1 == popped)
 	assert.True(t, popped2 != popped)
 
 	assert.True(t, q.Empty())
@@ -108,7 +108,7 @@ func TestBoundedBoxQueue_PushPopUnPop(t *testing.T) {
 	assert.False(t, q.Empty())
 	popped2 := q.Pop()
 	assert.NotNil(t, popped2)
-	assert.True(t,  popped1 == popped)
+	assert.True(t, popped1 == popped)
 	assert.True(t, popped2 != popped)
 
 	assert.True(t, q.Empty())
