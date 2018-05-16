@@ -110,7 +110,7 @@ func (lm *localMask) Watch(m Mask) {
 	}
 
 	m.AddWatcher(lm, func(ev interface{}) {
-		if _, ok := ev.(*ProcessFinishedShutDown); ok {
+		if _, ok := ev.(*ProcessFinishedShutdown); ok {
 			lm.Send(&TerminatedProcess{
 				ID: m.ID(),
 			}, deadMask)

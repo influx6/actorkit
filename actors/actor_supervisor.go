@@ -264,7 +264,7 @@ func (m *actorSyncSupervisor) run() {
 	mymask := actorkit.ForceMaskWithProcess(actorkit.AnyNetworkAddr, "process", m)
 	defer func() {
 		perr := recover()
-		msg := actorkit.ProcessFinishedShutDown{
+		msg := actorkit.ProcessFinishedShutdown{
 			ID:    m.id.String(),
 			Panic: perr,
 			Mail:  m.mail,

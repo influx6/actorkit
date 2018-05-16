@@ -23,7 +23,7 @@ func (h HelloOp) Respond(me actorkit.Mask, e actorkit.Envelope, d actorkit.Distr
 		h.Started <- true
 	case *actorkit.ProcessShuttingDown:
 		h.ShuttingDown <- true
-	case *actorkit.ProcessFinishedShutDown:
+	case *actorkit.ProcessFinishedShutdown:
 		h.FinishedShutdown <- true
 	case *HelloMessage:
 		h.Envelope <- e

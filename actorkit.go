@@ -366,7 +366,7 @@ type ProcessShuttingDown struct {
 // It tags it's underline mailbox and mask for those wanting to take over it's
 // unfinished business. It also includes a panic field to provide any pack
 // seen during shutdown.
-type ProcessFinishedShutDown struct {
+type ProcessFinishedShutdown struct {
 	ID    string
 	Mail  Mailbox
 	Panic interface{}
