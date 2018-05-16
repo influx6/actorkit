@@ -165,8 +165,10 @@ func (m *actorSyncSupervisor) Receive(myMask actorkit.Mask, env actorkit.Envelop
 	myenv.Envelope = env
 
 	atomic.AddInt64(&m.received, 1)
-	m.mail.Push(env)
-	m.mailInvoker.InvokeReceived(env)
+	m.mail.Push(myenv)
+	if m.mailInvoker != nil {
+		m.mailInvoker.InvokeReceived(env)
+	}
 
 	select{
 	case m.actions <- m.doNext:
@@ -180,9 +182,9 @@ func (m *actorSyncSupervisor) doNext()  {
 
 	defer func() {
 		if reason := recover(); reason != nil {
-			if m.invoker == nil {return}
-			m.invoker.InvokePanicked(next.Envelope, reason)
-			return
+			if m.invoker != nil {
+				m.invoker.InvokePanicked(next.Envelope, reason)
+			}
 		}
 
 		next.MyMask = nil
