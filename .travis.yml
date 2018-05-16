@@ -1,0 +1,16 @@
+language: go
+
+go:
+  - 1.9
+  - 1.8
+  - 1.7
+
+before_script:
+after_script:
+script:
+
+jobs:
+ include:
+  - stage: test
+    script: go test -v ./...
+
