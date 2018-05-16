@@ -62,6 +62,12 @@ func (f *futureActor) Wait()  {
 	f.wg.Wait()
 }
 
+// Not supported
+func (f *futureActor) AddWatcher(_ Mask, _ func(interface{}))  {}
+
+// Not supported
+func (f *futureActor) RemoveWatcher(_ Mask)  {}
+
 // GracefulStop is not supported for a future, has it must
 // be either resolved by a timeout or by a response.
 func (f *futureActor) GracefulStop() Waiter  {

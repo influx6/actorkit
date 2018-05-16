@@ -35,11 +35,14 @@ type roundRobinProcessSet struct{
 	lastIndex int32
 	src *LocalResolver
 	set map[string]int
+	ribbon map[int]string
 }
 
-func newRoundRobinProcessSet() *roundRobinProcessSet{
+func newRoundRobinProcessSet(rs *LocalResolver) *roundRobinProcessSet{
 	return &roundRobinProcessSet{
 		set: map[string]int{},
+		ribbon: map[int]string{},
+		src: rs,
 	}
 }
 
@@ -48,7 +51,7 @@ func newRoundRobinProcessSet() *roundRobinProcessSet{
 // for different process to handle messages.
 func (p *roundRobinProcessSet) GetRobin() Process  {
 	var lastIndex int32
-	total := int32(len(p.src.procs))
+	total := int32(len(p.ribbon))
 	if atomic.LoadInt32(&p.lastIndex) >= total {
 		atomic.StoreInt32(&p.lastIndex, -1)
 	}
@@ -56,7 +59,7 @@ func (p *roundRobinProcessSet) GetRobin() Process  {
 	lastIndex = atomic.AddInt32(&p.lastIndex, 1)
 	target := int(lastIndex%total)
 
-	return p.src.procs[target]
+	return p.src.procs[p.set[p.ribbon[target]]]
 }
 
 func (p *roundRobinProcessSet) Total() int  {
@@ -85,7 +88,21 @@ func (p *roundRobinProcessSet) RemoveInSet(proc Process)  {
 	if !p.Has(proc.ID()){
 		return
 	}
+
 	delete(p.set, proc.ID())
+
+	var c = 0
+
+	// we bare the cost of removal here.
+	for k, m := range p.ribbon {
+		if m == proc.ID(){
+			delete(p.ribbon, k)
+			continue
+		}
+
+		p.ribbon[c] = m
+		c++
+	}
 }
 
 
@@ -93,6 +110,8 @@ func (p *roundRobinProcessSet) Add(proc Process)  {
 	if p.Has(proc.ID()){
 		return
 	}
+
+	p.ribbon[len(p.ribbon)] = proc.ID()
 
 	if ind, ok := p.src.seen[proc.ID()]; ok{
 		p.set[proc.ID()] = ind
@@ -154,12 +173,11 @@ func (lr *LocalResolver) Register(process Process, service string)  {
 	defer lr.sm.Unlock()
 
 	if set, ok := lr.service[service]; ok {
-		if !set.Has(process.ID()){
-			set.Add(process)
-		}
+		set.Add(process)
+		return
 	}
 
-	set := newRoundRobinProcessSet()
+	set := newRoundRobinProcessSet(lr)
 	set.Add(process)
 
 	// Add watcher to ensure process gets removed here.

@@ -26,15 +26,15 @@ func TestNewLocalResolver(t *testing.T) {
 	assert.NotEqual(t, proc, proc3)
 	assert.True(t, proc == proc1 || proc == proc2)
 
-	proc, found = lr.Resolve(sumAddr)
+	procx, found := lr.Resolve(sumAddr)
 	assert.True(t, found)
-	assert.NotNil(t, proc)
-	assert.NotEqual(t, proc, proc3)
-	assert.True(t, proc == proc1 || proc == proc2)
+	assert.NotNil(t, procx)
+	assert.NotEqual(t, procx, proc3)
+	assert.True(t, procx == proc1 || procx == proc2)
 
-	proc, found = lr.Resolve(mutAddr)
+	procy, found := lr.Resolve(mutAddr)
 	assert.True(t, found)
-	assert.NotNil(t, proc)
-	assert.NotEqual(t, proc, proc1)
-	assert.NotEqual(t, proc, proc2)
+	assert.NotNil(t, procy)
+	assert.NotEqual(t, procy, proc1)
+	assert.NotEqual(t, procy, proc2)
 }

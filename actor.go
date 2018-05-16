@@ -17,8 +17,12 @@ func newNoActorProcess() *noActorProcess{
 	return &noActorProcess{id:xid.New()}
 }
 
+// Not supported
 func (m noActorProcess) AddWatcher(_ Mask, _ func(interface{}))  {}
+
+// Not supported
 func (m noActorProcess) RemoveWatcher(_ Mask)  {}
+
 func (m noActorProcess) Wait()  {}
 func (m noActorProcess) Stop()  {}
 func (m noActorProcess) Receive(mi Mask, env Envelope) {}
