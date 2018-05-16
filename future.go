@@ -89,7 +89,7 @@ func (f *futureActor) Addr() Mask {
 }
 
 // Receive resolves future with Envelope.Data.
-func (f *futureActor) Receive(en Envelope)  {
+func (f *futureActor) Receive(through Mask, en Envelope)  {
 	f.do.Do(func(){
 		f.res <- en
 	})

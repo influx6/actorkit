@@ -8,8 +8,8 @@ import (
 
 var (
 	eb = actorkit.NewMask(actorkit.AnyNetworkAddr, "bob")
-	env = actorkit.NEnvelope("bob", actorkit.Header{}, eb, 1)
-	env2 = actorkit.NEnvelope("bob", actorkit.Header{}, eb, 2)
+	env = actorkit.LocalEnvelope("bob", actorkit.Header{}, eb, 1)
+	env2 = actorkit.LocalEnvelope("bob", actorkit.Header{}, eb, 2)
 )
 
 func BenchmarkBoxQueue_PushPopUnPop(b *testing.B) {

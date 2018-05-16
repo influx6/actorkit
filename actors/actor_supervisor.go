@@ -14,19 +14,11 @@ var (
 	ErrAlreadySupervising = errors.New("already supervising")
 )
 
-
-//**************************************************
-//  actorkit.Actor System Messages
-//**************************************************
-
-// ActorStarted is sent when an actor has begun it's operation.
-type ActorStarted struct{}
-
-// ActorShuttingDown is send when an actor is requested to shutdown.
-type ActorShuttingDown struct{
-	Mask actorkit.Mask
-	Mail actorkit.Mailbox
-}
+var (
+	queuedPool = sync.Pool{New: func() interface{} {
+		return new(actorkit.QueuedEnvelope)
+	}}
+)
 
 //**************************************************
 //  actorSyncSupervisor implements Process and actorkit.Actor
@@ -91,6 +83,7 @@ func FromActor(action actorkit.Actor, ops ...ActorSyncOption) actorkit.Process {
 	ac.behaviour = action
 	ac.closer = make(chan struct{}, 1)
 	ac.actions = make(chan func(), 1)
+	ac.watchers = actorkit.NewWatchers()
 
 	for _, op := range ops {
 		op(ac)
@@ -125,6 +118,15 @@ type actorSyncSupervisor struct{
 	escalator *escalateDistributor
 	invoker actorkit.MessageInvoker
 	mailInvoker actorkit.MailInvoker
+	watchers *actorkit.Watchers
+}
+
+func (m *actorSyncSupervisor) RemoveWatcher(mw actorkit.Mask)  {
+	m.watchers.RemoveWatcher(mw)
+}
+
+func (m *actorSyncSupervisor) AddWatcher(mw actorkit.Mask, fn func(interface{}))  {
+	m.watchers.AddWatcher(mw, fn)
 }
 
 // ID returns the associated ID of the implementation.
@@ -157,44 +159,57 @@ func (m *actorSyncSupervisor) Stop()  {
 }
 
 // Receive delivers an incoming message to process actor for processing.
-func (m *actorSyncSupervisor) Receive(env actorkit.Envelope) {
+func (m *actorSyncSupervisor) Receive(myMask actorkit.Mask, env actorkit.Envelope) {
+	myenv := queuedPool.Get().(*actorkit.QueuedEnvelope)
+	myenv.MyMask = myMask
+	myenv.Envelope = env
+
 	atomic.AddInt64(&m.received, 1)
 	m.mail.Push(env)
+	m.mailInvoker.InvokeReceived(env)
 
 	select{
 	case m.actions <- m.doNext:
-		if m.invoker != nil {
-			m.invoker.InvokeRequest(env)
-		}
 	default:
 	}
 }
 
+
 func (m *actorSyncSupervisor) doNext()  {
-	var next actorkit.Envelope
+	var next *actorkit.QueuedEnvelope
 
 	defer func() {
 		if reason := recover(); reason != nil {
 			if m.invoker == nil {return}
-			m.invoker.InvokePanicked(next, reason)
+			m.invoker.InvokePanicked(next.Envelope, reason)
+			return
 		}
+
+		next.MyMask = nil
+		next.Envelope = nil
+		queuedPool.Put(next)
 	}()
 
-	if next = m.mail.Pop(); next != nil {
+	var ok bool
+	if next, ok = m.mail.Pop().(*actorkit.QueuedEnvelope); next != nil && ok {
+		if m.invoker != nil {
+			m.invoker.InvokeRequest(next.MyMask, next.Envelope)
+		}
+
 		atomic.AddInt64(&m.processed, 1)
 
 		if m.invoker != nil {
-			m.invoker.InvokeMessageProcessing(next)
+			m.invoker.InvokeMessageProcessing(next.Envelope)
 		}
 
 		if m.escalator != nil {
-			m.behaviour.Respond(next, m.escalator)
+			m.behaviour.Respond(next.MyMask, next.Envelope, m.escalator)
 		}else{
-			m.behaviour.Respond(next, actorkit.GetDistributor())
+			m.behaviour.Respond(next.MyMask,next.Envelope, actorkit.GetDistributor())
 		}
 
 		if m.invoker != nil {
-			m.invoker.InvokeMessageProcessed(next)
+			m.invoker.InvokeMessageProcessed(next.Envelope)
 		}
 
 		// if we still have message, then signal to
@@ -208,14 +223,64 @@ func (m *actorSyncSupervisor) doNext()  {
 func (m *actorSyncSupervisor) run()  {
 	defer m.wg.Done()
 
+	mymask := actorkit.ForceMaskWithProcess(actorkit.AnyNetworkAddr, "process", m)
+	defer func(){
+		perr := recover()
+		msg := actorkit.ProcessFinishedShutDown{
+			ID: m.id.String(),
+			Panic: perr,
+			Mail: m.mail,
+		}
+
+		// inform all watchers
+		m.watchers.Inform(msg)
+
+		// inform all listeners
+		actorkit.Publish(msg)
+
+		if m.escalator != nil {
+			m.behaviour.Respond(
+				mymask,
+				actorkit.LocalEnvelope(
+					m.id.String(),
+					actorkit.Header{},
+					actorkit.GetDeadletter(),
+					&msg,
+				),
+				m.escalator,
+			)
+		}else{
+			m.behaviour.Respond(
+				mymask,
+				actorkit.LocalEnvelope(
+					m.id.String(),
+					actorkit.Header{},
+					actorkit.GetDeadletter(),
+					&msg,
+				),
+				actorkit.GetDistributor(),
+			)
+		}
+	}()
+
+	initialMsg := actorkit.ProcessStarted{ID: m.id.String()}
+
+	// inform all watchers
+	m.watchers.Inform(initialMsg)
+
+	// inform all listeners
+	actorkit.Publish(initialMsg)
+
 	if m.escalator != nil {
 		m.behaviour.Respond(
-			actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &ActorStarted{}),
+			mymask,
+			actorkit.LocalEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &initialMsg),
 			m.escalator,
 		)
 	}else{
 		m.behaviour.Respond(
-			actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &ActorStarted{}),
+			mymask,
+			actorkit.LocalEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &initialMsg),
 			actorkit.GetDistributor(),
 		)
 	}
@@ -223,25 +288,33 @@ func (m *actorSyncSupervisor) run()  {
 	for {
 		select {
 		case <-m.closer:
-			mymask := actorkit.ForceMaskWithProcess(actorkit.AnyNetworkAddr, "process", m)
+			lastMsg := actorkit.ProcessShuttingDown{ID: m.id.String()}
+			// inform all watchers
+			m.watchers.Inform(lastMsg)
 
-			// ensure we deal with system messages.
-			// if we have pending system messages, ensure all
-			// system messages are dealt with first.
+			// inform all listeners
+			actorkit.Publish(lastMsg)
+
 			if m.escalator != nil {
 				m.behaviour.Respond(
-					actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &ActorShuttingDown{
-						Mail: m.mail,
-						Mask: mymask,
-					}),
+					mymask,
+					actorkit.LocalEnvelope(
+						m.id.String(),
+						actorkit.Header{},
+						actorkit.GetDeadletter(),
+						&lastMsg,
+					),
 					m.escalator,
 				)
 			}else{
 				m.behaviour.Respond(
-					actorkit.NEnvelope(m.id.String(), actorkit.Header{}, actorkit.GetDeadletter(), &ActorShuttingDown{
-						Mail: m.mail,
-						Mask: mymask,
-					}),
+					mymask,
+					actorkit.LocalEnvelope(
+						m.id.String(),
+						actorkit.Header{},
+						actorkit.GetDeadletter(),
+						&lastMsg,
+					),
 					actorkit.GetDistributor(),
 				)
 			}

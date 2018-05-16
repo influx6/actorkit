@@ -63,6 +63,14 @@ func (m Header) Has(n string) bool {
 	return ok
 }
 
+// QueuedEnvelope defines a struct which holds
+// the address which an envelope is delivered
+// to and the delivered envelope.
+type QueuedEnvelope struct{
+	Envelope
+	MyMask Mask
+}
+
 // Envelope defines an interface representing a received message.
 type Envelope interface{
 	ReadOnlyHeader
@@ -71,8 +79,8 @@ type Envelope interface{
 	Data() interface{}
 }
 
-// NEnvelope returns a new Envelope from provided arguments.
-func NEnvelope(id string, header Header, sender Mask, data interface{}) Envelope{
+// LocalEnvelope returns a new Envelope from provided arguments.
+func LocalEnvelope(id string, header Header, sender Mask, data interface{}) Envelope{
 	return &localEnvelope{
 		id:id,
 		data: data,
@@ -105,12 +113,17 @@ func (le *localEnvelope) ID() string {
 //***********************************
 
 // Mask defines an interface to represent the associated address of the underline
-// Actor. Multiple actors are allowed to have same service name but must have
-// specifically different service ports. Where the network represents the
-// zone of the actor be it local or remote.
+// Actor based of the service the Mask represent. Mask are like capabilities in that
+// they are not singular and have a many to one relationships with Processes. They
+// basically tell which Process through an unique Id and and what capability through
+// the service value associated with the Mask, that such a process offers it.
+// Because an actor may be plural in its functionality (i.e handling different types of
+// messages), Mask are the means to represent them in such a way, apart from a means of
+// reaching an Actor process.
 type Mask interface{
 	Sender
 	Stoppable
+	Watchable
 
 	// ID returns the unique id value for the given
 	// actor which the mask points to.
@@ -128,6 +141,11 @@ type Mask interface{
 	// String returns the full representation of associated
 	// Mask.
 	String() string
+
+	// RemoveService is called when we desire to disconnect the
+	// underline process from the ProcessRegistry has offering
+	// the service associated with this Mask.
+	RemoveService()
 }
 
 //***********************************
@@ -147,7 +165,7 @@ type MailInvoker interface{
 // methods to signal different state of a process
 // for external systems to plugin.
 type MessageInvoker interface{
-	InvokeRequest(Envelope)
+	InvokeRequest(Mask, Envelope)
 	InvokeMessageProcessed(Envelope)
 	InvokeMessageProcessing(Envelope)
 	InvokeSystemRequest(Envelope)
@@ -162,9 +180,9 @@ type MessageInvoker interface{
 //***********************************
 
 // Receiver defines an interface that exposes methods
-// to receive envelopes.
+// to receive envelopes and it's own used address.
 type Receiver interface{
-	Receive(envelope Envelope)
+	Receive(myMask Mask, envelope Envelope)
 }
 
 //***********************************
@@ -175,7 +193,7 @@ type Receiver interface{
 // to sending messages.
 type Sender interface{
 	// Send will deliver a message to the underline actor
-	// will destination address.
+	// will destination address as Sender.
 	Send(interface{}, Mask)
 
 	// Forward forwards giving envelope to actor.
@@ -184,6 +202,18 @@ type Sender interface{
 	// SendFuture will deliver given message to Mask's actor inbox
 	// for processing and returns a Future has destination of response.
 	SendFuture(interface{}, time.Duration) Future
+}
+
+//***********************************
+//  Watchers
+//***********************************
+
+// Watchable defines a in interface that exposes methods to add
+// functions to be called on some status change of the implementing
+// instance.
+type Watchable interface{
+	RemoveWatcher(Mask)
+	AddWatcher(Mask, func(interface{}))
 }
 
 //***********************************
@@ -243,12 +273,12 @@ type Stoppable interface{
 // Encapsulating itself and it's internal from the outside
 // as a black-box.
 type Actor interface{
-	Respond(Envelope, Distributor)
+	Respond(myMask Mask, env Envelope, d Distributor)
 }
 
 // ActorFunc defines a function type representing
 // the argument for a behaviour.
-type ActorFunc func(Envelope, Distributor)
+type ActorFunc func(my Mask, env Envelope, d Distributor)
 
 // FromFunc returns a Actor that uses the function has a
 // resolver.
@@ -261,8 +291,8 @@ type beFunc struct{
 }
 
 // Respond implements the Actor interface.
-func (b beFunc) Respond(e Envelope, d Distributor){
-	b.b(e,d)
+func (b beFunc) Respond(my Mask,e Envelope, d Distributor){
+	b.b(my, e,d)
 }
 
 //***********************************
@@ -305,12 +335,33 @@ type Identity interface{
 //  Process
 //***********************************
 
+// ProcessStarted is sent when an actor has begun it's operation.
+type ProcessStarted struct{
+	ID string
+}
+
+// ProcessShuttingDown is send when an actor is in the process of shutdown.
+type ProcessShuttingDown struct{
+	ID string
+}
+
+// ProcessFinishedShutdown is send when an actor is in the done of shutting down.
+// It tags it's underline mailbox and mask for those wanting to take over it's
+// unfinished business. It also includes a panic field to provide any pack
+// seen during shutdown.
+type ProcessFinishedShutDown struct{
+	ID string
+	Mail Mailbox
+	Panic interface{}
+}
+
 // Process defines a type which embodies the methods of
 // Stoppable and Sender.
 type Process interface{
 	Identity
 	Stoppable
 	Receiver
+	Watchable
 }
 
 //***********************************
@@ -321,7 +372,21 @@ type Process interface{
 // a method to register an existing Process with its
 // associate service and id.
 type ProcessRegistry interface{
-	Register(p Process, service string) error
+	// GetProcess attempts to return process with associated
+	// id if found else returning false for it's second argument.
+	GetProcess(id string) (Process, error)
+
+	// Remove removes process from registering and
+	// all associated service record related to it.
+	Remove(p Process)
+
+	// Unregister removes process from servicing service
+	// has an option.
+	Unregister(p Process, service string)
+
+	// Register adds process into register and
+	// adds it has a provider of service.
+	Register(p Process, service string)
 }
 
 //***********************************

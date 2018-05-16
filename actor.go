@@ -17,9 +17,11 @@ func newNoActorProcess() *noActorProcess{
 	return &noActorProcess{id:xid.New()}
 }
 
+func (m noActorProcess) AddWatcher(_ Mask, _ func(interface{}))  {}
+func (m noActorProcess) RemoveWatcher(_ Mask)  {}
 func (m noActorProcess) Wait()  {}
 func (m noActorProcess) Stop()  {}
-func (m noActorProcess) Receive(env Envelope) {}
+func (m noActorProcess) Receive(mi Mask, env Envelope) {}
 func (m noActorProcess) Stopped() bool  {return true}
 func (m noActorProcess) GracefulStop()  Waiter { return m}
 func (m noActorProcess) ID() string  {

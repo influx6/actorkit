@@ -27,28 +27,27 @@ var (
  deadMask = newMask(AnyNetworkAddr, "deadletter", ResolveAlways(deadletter))
 )
 
-type deadletterProcess struct{}
-func (d deadletterProcess) Wait(){}
-func (d deadletterProcess) Stop(){}
-func (d deadletterProcess) Stopped() bool {return true}
-func (d deadletterProcess) GracefulStop() Waiter {
-	return d
+type deadletterProcess struct{
+	noActorProcess
 }
+
 func (d deadletterProcess) ID() string {
 	return deadletterId.String()
 }
 
 // DeadletterEvent is sent when a envelope arrives to a deadletter.
 type DeadletterEvent struct{
-	Addr Mask
+	Sender Mask
+	SentThrough Mask
 	Message Envelope
 }
 
 // Receive will publish a DeadletterEvent with envelope.
-func (d deadletterProcess) Receive(en Envelope){
+func (d deadletterProcess) Receive(m Mask, en Envelope){
 	events.Publish(DeadletterEvent{
 		Message: en,
-		Addr: en.Sender(),
+		SentThrough: m,
+		Sender: en.Sender(),
 	})
 }
 

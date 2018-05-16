@@ -75,49 +75,69 @@ func newMask(addr string, srv string, r Resolver) *localMask {
 	}
 }
 
-func (lm *localMask) proc() Process {
+func (lm *localMask) proc(update bool) Process {
 	if lm.m == nil {
 		var ok bool
 		if lm.m, ok = lm.rsv.Resolve(lm); !ok {
 			lm.m = deadletter
 		}
 	}
+
+	// if we must update due to process not offering
+	// our service anymore, then swap to using to nil,
+	// return it and let localMask, resolve again for
+	// another process offering service.
+	// This allows seamless handover.
+	if update {
+		last := lm.m
+		lm.m = nil
+		return last
+	}
+
 	return lm.m
 }
 
+func (lm *localMask) RemoveWatcher(m Mask) {
+	lm.proc(false).RemoveWatcher(m)
+}
+
+func (lm *localMask) AddWatcher(m Mask, fn func(interface{})) {
+	lm.proc(false).AddWatcher(m, fn)
+}
+
 func (lm *localMask) GracefulStop() Waiter {
-	return lm.proc().GracefulStop()
+	return lm.proc(false).GracefulStop()
 }
 
 func (lm *localMask) Stopped() bool {
-	return lm.proc().Stopped()
+	return lm.proc(false).Stopped()
 }
 
 func (lm *localMask) Stop() {
-	lm.proc().Stop()
+	lm.proc(false).Stop()
 }
 
 func (lm *localMask) Forward(v Envelope)  {
-	lm.proc().Receive(v)
+	lm.proc(false).Receive(lm, v)
 }
 
 func (lm *localMask) Send(v interface{}, dest Mask)  {
-	env := NEnvelope(xid.New().String(),Header{},dest, v)
-	lm.proc().Receive(env)
+	env := LocalEnvelope(xid.New().String(),Header{},dest, v)
+	lm.proc(false).Receive(lm, env)
 }
 
 func (lm *localMask) SendFuture(v interface{}, d time.Duration) Future  {
-	if _, ok := lm.proc().(*deadletterProcess); ok {
+	if _, ok := lm.proc(false).(*deadletterProcess); ok {
 		return resolvedFutureWithError(ErrDeadDoesNotStopp, lm)
 	}
 
-	if lm.proc().Stopped() {
+	if lm.proc(false).Stopped() {
 		return resolvedFutureWithError(ErrUnresolveableByProc, lm)
 	}
 
 	future := newFutureActor(d, lm)
-	env := NEnvelope(xid.New().String(),Header{},future.Mask(), v)
-	lm.proc().Receive(env)
+	env := LocalEnvelope(xid.New().String(),Header{},future.Mask(), v)
+	lm.proc(false).Receive(lm, env)
 	future.start()
 	return future
 }
@@ -127,7 +147,7 @@ func (lm *localMask) String() string {
 }
 
 func (lm *localMask) ID() string {
-	return lm.proc().ID()
+	return lm.proc(false).ID()
 }
 
 func (lm *localMask) Address() string {
@@ -136,4 +156,8 @@ func (lm *localMask) Address() string {
 
 func (lm *localMask) Service() string {
 	return lm.srv
+}
+
+func (lm *localMask) RemoveService()  {
+	defaultResolver.Unregister(lm.proc(true), lm.srv)
 }

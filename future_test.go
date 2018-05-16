@@ -20,7 +20,7 @@ func TestFutureResolvedWithError(t *testing.T){
 }
 
 func TestFutureResolved(t *testing.T){
-	env := NEnvelope("bob", Header{}, eb, 1)
+	env := LocalEnvelope("bob", Header{}, eb, 1)
 	tf := resolvedFuture(env, &localMask{})
 	assert.NotNil(t, tf.Result())
 	assert.Nil(t, tf.Err())
@@ -45,8 +45,8 @@ func TestFutureResolutionCloseToTimeout(t *testing.T){
 	assert.Nil(t, tf.Err())
 	assert.Nil(t, tf.Result())
 
-	env := NEnvelope("bob", Header{}, eb, 1)
-	tf.Receive(env)
+	env := LocalEnvelope("bob", Header{}, eb, 1)
+	tf.Receive(&localMask{}, env)
 	tf.Wait()
 
 	assert.Equal(t,tf.Result().Data(), 1)
@@ -62,8 +62,8 @@ func TestFutureResolutionCloseToTimeoutErr(t *testing.T){
 
 	err := errors.New("no")
 
-	env := NEnvelope("bob", Header{}, eb, err)
-	tf.Receive(env)
+	env := LocalEnvelope("bob", Header{}, eb, err)
+	tf.Receive(&localMask{}, env)
 	tf.Wait()
 
 	assert.Equal(t,tf.Err(), nil)

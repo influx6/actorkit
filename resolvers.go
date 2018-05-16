@@ -13,6 +13,9 @@ var (
 var (
 	// ErrIDAlreadyExists is returned when a process is already registered with id.
 	ErrIDAlreadyExists = errors.New("Process.ID already existing")
+
+	// ErrProcNotFound is returned when a process does not exists in registry.
+	ErrProcNotFound = errors.New("Process not found in registry")
 )
 
 // GetProcessRegistry returns the default resolver for the package.
@@ -30,9 +33,8 @@ func GetProcessRegistry() ProcessRegistry {
 // is needed for communication.
 type roundRobinProcessSet struct{
 	lastIndex int32
-	sl sync.RWMutex
+	src *LocalResolver
 	set map[string]int
-	procs []Process
 }
 
 func newRoundRobinProcessSet() *roundRobinProcessSet{
@@ -45,58 +47,45 @@ func newRoundRobinProcessSet() *roundRobinProcessSet{
 // random fashion, allowing some form of distributed calls
 // for different process to handle messages.
 func (p *roundRobinProcessSet) GetRobin() Process  {
-	p.sl.Lock()
-	defer p.sl.Unlock()
-
 	var lastIndex int32
-
-	total := int32(len(p.procs))
+	total := int32(len(p.src.procs))
 	if atomic.LoadInt32(&p.lastIndex) >= total {
 		atomic.StoreInt32(&p.lastIndex, -1)
 	}
 
 	lastIndex = atomic.AddInt32(&p.lastIndex, 1)
-
 	target := int(lastIndex%total)
-	return p.procs[target]
+
+	return p.src.procs[target]
 }
 
 func (p *roundRobinProcessSet) Total() int  {
-	p.sl.RLock()
-	defer p.sl.RUnlock()
-	return len(p.procs)
+	return len(p.set)
 }
 
-func (p *roundRobinProcessSet) Copy() []Process  {
-	p.sl.RLock()
-	defer p.sl.RUnlock()
-
-	set := make([]Process, 0, len(p.procs))
-	set = append(set, p.procs...)
-	return set
+func (p *roundRobinProcessSet) CopyOnly(target []Process) []Process  {
+	for _, ind := range p.set{
+		target = append(target, p.src.procs[ind])
+	}
+	return target
 }
 
-func (p *roundRobinProcessSet) Remove(proc Process)  {
+func (p *roundRobinProcessSet) Copy(target []Process,seen map[string]struct{}) []Process  {
+	for key, ind := range p.set{
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		target = append(target, p.src.procs[ind])
+		seen[key] = struct{}{}
+	}
+	return target
+}
+
+func (p *roundRobinProcessSet) RemoveInSet(proc Process)  {
 	if !p.Has(proc.ID()){
 		return
 	}
-
-	p.sl.Lock()
-	defer p.sl.Unlock()
-
-	index := p.set[proc.ID()]
-	total := len(p.procs)
-
-	item := p.procs[total-1]
-	if total == 1 {
-		delete(p.set, proc.ID())
-		p.procs = nil
-		return
-	}
-
-	p.procs[index] = item
-	p.set[item.ID()] = index
-	p.procs = p.procs[:total-1]
+	delete(p.set, proc.ID())
 }
 
 
@@ -105,15 +94,17 @@ func (p *roundRobinProcessSet) Add(proc Process)  {
 		return
 	}
 
-	p.sl.Lock()
-	defer p.sl.Unlock()
-	p.set[proc.ID()] = len(p.procs)
-	p.procs = append(p.procs, proc)
+	if ind, ok := p.src.seen[proc.ID()]; ok{
+		p.set[proc.ID()] = ind
+		return
+	}
+
+	p.set[proc.ID()] = len(p.src.procs)
+	p.src.seen[proc.ID()] = len(p.src.procs)
+	p.src.procs = append(p.src.procs, proc)
 }
 
 func (p *roundRobinProcessSet) Has(s string) bool {
-	p.sl.RLock()
-	defer p.sl.RUnlock()
 	_, ok := p.set[s]
 	return ok
 }
@@ -121,43 +112,72 @@ func (p *roundRobinProcessSet) Has(s string) bool {
 // LocalResolver implements the Resolver interface.
 type LocalResolver struct{
 	sm sync.RWMutex
+	seen map[string]int
 	service map[string]*roundRobinProcessSet
+	procs []Process
 }
 
 // NewLocalResolver returns a new instance of LocalResolver.
 // It implements the Resolver and FleetResolver interface.
 func NewLocalResolver() *LocalResolver{
 	return &LocalResolver{
+		seen: map[string]int{},
 		service: map[string]*roundRobinProcessSet{},
 	}
 }
 
-// Register adds giving set into LocalResolver.
-func (lr *LocalResolver) Register(process Process, service string) error {
+// GetProcess attempts to retrieve process using provided id
+// else returning a false if not found.
+func (lr *LocalResolver) GetProcess(id string) (Process, error)  {
 	lr.sm.Lock()
+	defer lr.sm.Unlock()
+
+	if index, ok := lr.seen[id]; ok {
+		return lr.procs[index], nil
+	}
+
+	return nil, ErrProcNotFound
+}
+
+func (lr *LocalResolver) Unregister(process Process, service string)  {
+	lr.sm.Lock()
+	defer lr.sm.Unlock()
+
 	if set, ok := lr.service[service]; ok {
-		lr.sm.Unlock()
+		set.RemoveInSet(process)
+	}
+}
+
+// Register adds giving set into LocalResolver.
+func (lr *LocalResolver) Register(process Process, service string)  {
+	lr.sm.Lock()
+	defer lr.sm.Unlock()
+
+	if set, ok := lr.service[service]; ok {
 		if !set.Has(process.ID()){
 			set.Add(process)
 		}
-		return ErrIDAlreadyExists
 	}
-	lr.sm.Unlock()
 
 	set := newRoundRobinProcessSet()
 	set.Add(process)
 
-	lr.sm.Lock()
+	// Add watcher to ensure process gets removed here.
+	process.AddWatcher(deadMask, func(msg interface{}) {
+		if _, ok := msg.(ProcessShuttingDown); ok {
+			lr.Remove(process)
+		}
+	})
+
 	lr.service[service] = set
-	lr.sm.Unlock()
-	return nil
 }
 
 func (lr *LocalResolver) Fleets(service string) ([]Process, error) {
 	lr.sm.RLock()
+	defer lr.sm.RUnlock()
+
 	if set, ok := lr.service[service]; ok {
-		lr.sm.RUnlock()
-		return set.Copy(), nil
+		return set.CopyOnly(make([]Process, 0, set.Total())), nil
 	}
 
 	return nil, ErrFleetsNotFound
@@ -165,11 +185,38 @@ func (lr *LocalResolver) Fleets(service string) ([]Process, error) {
 
 func (lr *LocalResolver) Resolve(m Mask) (Process, bool) {
 	lr.sm.RLock()
+	defer lr.sm.RUnlock()
 	if set, ok := lr.service[m.Service()]; ok {
-		lr.sm.RUnlock()
 		return set.GetRobin(), true
 	}
 	return nil, false
+}
+
+func (p *LocalResolver) Remove(proc Process)  {
+	// go-routine this due to possible locks
+	go proc.RemoveWatcher(deadMask)
+
+	p.sm.Lock()
+	defer p.sm.Unlock()
+
+	for _, set := range p.service {
+		set.RemoveInSet(proc)
+	}
+
+	index := p.seen[proc.ID()]
+	total := len(p.procs)
+
+	item := p.procs[total-1]
+	if total == 1 {
+		delete(p.seen, proc.ID())
+		p.procs = nil
+		return
+	}
+
+	delete(p.seen, proc.ID())
+	p.procs[index] = item
+	p.seen[item.ID()] = index
+	p.procs = p.procs[:total-1]
 }
 
 //**************************************
