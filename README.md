@@ -50,7 +50,7 @@ func main(){
 	started := make(chan bool, 1)
 	shutdown := make(chan bool, 1)
 	finished := make(chan bool, 1)
-	envelope := make(chan actorkit.Envelope,1)
+	envelope := make(chan string,1)
 
 	ax := actors.FromActor(&HelloOp{
 		Started: started,
