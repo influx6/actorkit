@@ -95,7 +95,6 @@ func FromActor(action actorkit.Actor, ops ...ActorSyncOption) actorkit.Process {
 
 	ac.wg.Add(1)
 	go ac.run()
-
 	return ac
 }
 
