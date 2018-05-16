@@ -97,10 +97,37 @@ func (lm *localMask) proc(update bool) Process {
 	return lm.m
 }
 
+func (lm *localMask) Unwatch(m Mask) {
+	m.RemoveWatcher(lm)
+}
+
+func (lm *localMask) Watch(m Mask) {
+	if m.Stopped()	{
+		lm.Send(&TerminatedProcess{
+			ID: m.ID(),
+		}, deadMask)
+		return
+	}
+
+	m.AddWatcher(lm, func(ev interface{}) {
+		if _, ok := ev.(*ProcessFinishedShutDown); ok {
+			lm.Send(&TerminatedProcess{
+				ID: m.ID(),
+			}, deadMask)
+
+			go m.RemoveWatcher(lm)
+			return
+		}
+	})
+}
+
 func (lm *localMask) RemoveWatcher(m Mask) {
 	lm.proc(false).RemoveWatcher(m)
 }
 
+// AddWatcher registers a function into this Mask watcher list
+// indicating that the provided Mask wishes to be informed
+// of certain things.
 func (lm *localMask) AddWatcher(m Mask, fn func(interface{})) {
 	lm.proc(false).AddWatcher(m, fn)
 }

@@ -25,14 +25,14 @@ func TestMSPQueue_PushPopUnPop(t *testing.T) {
 
 	q.Push(env)
 	q.Push(env2)
-	assert.Equal(t, 1, q.Pop().Data)
-	assert.Equal(t, 2, q.Pop().Data)
+	assert.Equal(t, 1, q.Pop().Data())
+	assert.Equal(t, 2, q.Pop().Data())
 
 	q.Push(env)
 	q.Push(env2)
 
 	popped := q.Pop()
-	assert.Equal(t, 1, popped.Data)
+	assert.Equal(t, 1, popped.Data())
 	q.UnPop(popped)
 
 	popped1 := q.Pop()

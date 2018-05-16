@@ -125,6 +125,15 @@ type Mask interface{
 	Stoppable
 	Watchable
 
+	// Watch will have the called Mask be notified
+	// of events from the provided Mask especially
+	// about it's running state.
+	Watch(Mask)
+
+	// Unwatch will remove this mask from notifications
+	// about the state of provided Mask.
+	Unwatch(Mask)
+
 	// ID returns the unique id value for the given
 	// actor which the mask points to.
 	ID() string
@@ -334,6 +343,12 @@ type Identity interface{
 //***********************************
 //  Process
 //***********************************
+
+// TerminatedProcess is sent when an Mask processor has already
+// being shutdown/stopped.
+type TerminatedProcess struct{
+	ID string
+}
 
 // ProcessStarted is sent when an actor has begun it's operation.
 type ProcessStarted struct{
