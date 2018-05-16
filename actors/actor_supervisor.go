@@ -81,8 +81,8 @@ func FromActor(action actorkit.Actor, ops ...ActorSyncOption) actorkit.Process {
 	ac := new(actorSyncSupervisor)
 	ac.id = xid.New()
 	ac.behaviour = action
-	ac.closer = make(chan struct{}, 1)
 	ac.actions = make(chan func(), 1)
+	ac.closer = make(chan struct{}, 1)
 	ac.watchers = actorkit.NewWatchers()
 
 	for _, op := range ops {
