@@ -2,9 +2,10 @@ package actorkit
 
 import (
 	"errors"
-	"github.com/rs/xid"
 	"sync"
 	"time"
+
+	"github.com/rs/xid"
 )
 
 var (
@@ -31,7 +32,7 @@ func resolvedFuture(value Envelope, m Mask) *futureActor {
 	fa.target = m
 	fa.id = xid.New()
 	fa.result = value
-	fa.mask = newMask(AnyNetworkAddr, "future-srv", ResolveAlways(fa))
+	fa.mask = newMask("future-srv", ResolveAlways(fa))
 	return fa
 }
 
@@ -40,7 +41,7 @@ func resolvedFutureWithError(value error, m Mask) *futureActor {
 	fa.target = m
 	fa.id = xid.New()
 	fa.err = value
-	fa.mask = newMask(AnyNetworkAddr, "future-srv", ResolveAlways(fa))
+	fa.mask = newMask("future-srv", ResolveAlways(fa))
 	return fa
 }
 
@@ -50,8 +51,12 @@ func newFutureActor(d time.Duration, target Mask) *futureActor {
 	fa.id = xid.New()
 	fa.target = target
 	fa.res = make(chan Envelope, 1)
-	fa.mask = newMask(AnyNetworkAddr, "future-srv", ResolveAlways(fa))
+	fa.mask = newMask("future-srv", ResolveAlways(fa))
 	return fa
+}
+
+func (f *futureActor) Address() string {
+	return LocalNetworkAddr
 }
 
 func (f *futureActor) ID() string {

@@ -1,10 +1,15 @@
 package mailbox
 
 import (
-	"github.com/gokit/actorkit"
+	"errors"
 	"sync"
 	"sync/atomic"
+
+	"github.com/gokit/actorkit"
 )
+
+// ErrPushFailed is returned when mailbox has reached storage limit.
+var ErrPushFailed = errors.New("failed to push into mailbox")
 
 var _ actorkit.Mailbox = &BoxQueue{}
 
@@ -63,12 +68,12 @@ func UnboundedBoxQueue() *BoxQueue {
 //
 // Push can be safely called from multiple goroutines.
 // Based on strategy if capped, then a message will be dropped.
-func (bq *BoxQueue) Push(env actorkit.Envelope) {
+func (bq *BoxQueue) Push(env actorkit.Envelope) error {
 	available := int(atomic.LoadInt64(&bq.total))
 	if bq.capped != -1 && available >= bq.capped {
 		switch bq.strategy {
 		case DropNew:
-			return
+			return ErrPushFailed
 		case DropOld:
 			bq.Pop()
 		}
@@ -83,13 +88,14 @@ func (bq *BoxQueue) Push(env actorkit.Envelope) {
 	if bq.head == nil && bq.tail == nil {
 		bq.head, bq.tail = n, n
 		bq.bm.Unlock()
-		return
+		return nil
 	}
 
 	bq.tail.next = n
 	n.prev = bq.tail
 	bq.tail = n
 	bq.bm.Unlock()
+	return nil
 }
 
 // UnPop adds back item to the font of the queue.

@@ -3,8 +3,9 @@ package actorkit
 import (
 	"errors"
 	"fmt"
-	"github.com/rs/xid"
 	"time"
+
+	"github.com/rs/xid"
 )
 
 // errors ...
@@ -19,23 +20,23 @@ var (
 
 // NewMask returns a new Mask with provided address and srv string.
 // The Mask processor will be resolved by the root distributor.
-func NewMask(addr string, srv string) Mask {
-	return newMask(addr, srv, rootDistributor)
+func NewMask(srv string) Mask {
+	return newMask(srv, rootDistributor)
 }
 
 // GetMask provides a method to create a Mask address for a Process.
 // Use this method to create Mask ID for giving targets.
 // IDs are generated from a global increasing id generator.
 // Uses https://github.com/rs/xid for generating id.
-func GetMask(addr string, srv string, m Resolver) Mask {
-	return newMask(addr, srv, m)
+func GetMask(srv string, m Resolver) Mask {
+	return newMask(srv, m)
 }
 
 // ForceMaskWithProcess returns a mask which gets routed to provided
 // process and address. Generally it's desired to always obtain a
 // Mask from a Resolver.
-func ForceMaskWithProcess(addr string, srv string, m Process) Mask {
-	return newMaskWithP(addr, srv, m)
+func ForceMaskWithProcess(srv string, m Process) Mask {
+	return newMaskWithP(srv, m)
 }
 
 //***********************************
@@ -49,29 +50,26 @@ var _ Mask = &localMask{}
 // specifically different service ports. Where the network represents the
 // zone of the actor be it local or remote.
 type localMask struct {
-	srv     string
-	address string
+	srv string
 
 	rsv Resolver
 	m   Process
 }
 
 // newMaskWithP returns a new instance of localMask using the provided process.
-func newMaskWithP(addr string, srv string, m Process) *localMask {
+func newMaskWithP(srv string, m Process) *localMask {
 	return &localMask{
-		m:       m,
-		srv:     srv,
-		address: addr,
+		m:   m,
+		srv: srv,
 	}
 }
 
 // newMaskWithP returns a new instance of localMask using the provided resolver
 // to resolve the exact process.
-func newMask(addr string, srv string, r Resolver) *localMask {
+func newMask(srv string, r Resolver) *localMask {
 	return &localMask{
-		rsv:     r,
-		srv:     srv,
-		address: addr,
+		rsv: r,
+		srv: srv,
 	}
 }
 
@@ -170,15 +168,17 @@ func (lm *localMask) SendFuture(v interface{}, d time.Duration) Future {
 }
 
 func (lm *localMask) String() string {
-	return fmt.Sprintf("actor://%s/%s/%s", lm.address, lm.srv, lm.ID())
+	return fmt.Sprintf("actor://%s/%s/%s", lm.Address(), lm.srv, lm.ID())
 }
 
 func (lm *localMask) ID() string {
 	return lm.proc(false).ID()
 }
 
+// Address returns the address associated with the process
+// represented by the mask.
 func (lm *localMask) Address() string {
-	return lm.address
+	return lm.proc(false).Address()
 }
 
 func (lm *localMask) Service() string {

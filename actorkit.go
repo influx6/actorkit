@@ -1,8 +1,9 @@
 package actorkit
 
 import (
-	"github.com/gokit/es"
 	"time"
+
+	"github.com/gokit/es"
 )
 
 //***********************************
@@ -318,9 +319,9 @@ type Mailbox interface {
 	Cap() int
 	Total() int
 	Empty() bool
-	Push(Envelope)
 	Pop() Envelope
 	UnPop(Envelope)
+	Push(Envelope) error
 }
 
 //***********************************
@@ -331,6 +332,16 @@ type Mailbox interface {
 // giving failure.
 type Escalator interface {
 	EscalateFailure(by Mask, envelope Envelope, reason interface{})
+}
+
+//***********************************
+//  Addressable
+//***********************************
+
+// Addressable defines an interface which exposes a method for retrieving
+// associated address of implementer.
+type Addressable interface {
+	Address() string
 }
 
 //***********************************
@@ -379,6 +390,7 @@ type Process interface {
 	Stoppable
 	Receiver
 	Watchable
+	Addressable
 }
 
 //***********************************

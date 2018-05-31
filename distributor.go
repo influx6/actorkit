@@ -2,14 +2,15 @@ package actorkit
 
 import (
 	"errors"
-	"github.com/rs/xid"
 	"sync"
+
+	"github.com/rs/xid"
 )
 
 const (
-	// AnyNetworkAddr is used to represent any actor on any network
+	// LocalNetworkAddr is used to represent any actor on any network
 	// local or remote.
-	AnyNetworkAddr = "any:0"
+	LocalNetworkAddr = "localhost:0"
 )
 
 var (
@@ -24,7 +25,7 @@ var (
 var (
 	deadletter   = deadletterProcess{newNoActorProcess()}
 	deadletterId = xid.ID{0x4d, 0x88, 0xe1, 0x5b, 0x60, 0xf4, 0x86, 0xe4, 0x28, 0x41, 0x2d, 0xc9}
-	deadMask     = newMask(AnyNetworkAddr, "deadletter", ResolveAlways(deadletter))
+	deadMask     = newMask("deadletter", ResolveAlways(deadletter))
 )
 
 type deadletterProcess struct {
@@ -170,7 +171,7 @@ func (pb *processDistributor) FindAny(service string) Mask {
 	pb.rl.RLock()
 	defer pb.rl.RUnlock()
 
-	wanted := newMaskWithP(AnyNetworkAddr, service, nil)
+	wanted := newMaskWithP(service, nil)
 	for _, rsv := range pb.resolvers {
 		if proc, found := rsv.Resolve(wanted); found {
 			wanted.m = proc
@@ -192,11 +193,11 @@ func (pb *processDistributor) FindAll(service string) []Mask {
 	if fleets, err := pb.Fleets(service); err == nil {
 		addrs = make([]Mask, 0, len(fleets))
 		for _, proc := range fleets {
-			wanted := newMaskWithP(AnyNetworkAddr, service, proc)
+			wanted := newMaskWithP(service, proc)
 			addrs = append(addrs, wanted)
 		}
 	} else {
-		wanted := newMaskWithP(AnyNetworkAddr, service, &deadletterProcess{})
+		wanted := newMaskWithP(service, &deadletterProcess{})
 		addrs = append(addrs, wanted)
 	}
 

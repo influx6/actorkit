@@ -1,13 +1,14 @@
 package mailbox
 
 import (
+	"testing"
+
 	"github.com/gokit/actorkit"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 var (
-	eb   = actorkit.NewMask(actorkit.AnyNetworkAddr, "bob")
+	eb   = actorkit.NewMask("bob")
 	env  = actorkit.LocalEnvelope("bob", actorkit.Header{}, eb, 1)
 	env2 = actorkit.LocalEnvelope("bob", actorkit.Header{}, eb, 2)
 )

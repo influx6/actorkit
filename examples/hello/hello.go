@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/actors"
 )
@@ -44,7 +45,7 @@ func main() {
 		Envelope:         envelope,
 	})
 
-	axMask := actorkit.ForceMaskWithProcess("local", "yay", ax)
+	axMask := actorkit.ForceMaskWithProcess("yay", ax)
 	axMask.Send(&HelloMessage{Name: "Wally"}, actorkit.GetDeadletter())
 
 	env := <-envelope

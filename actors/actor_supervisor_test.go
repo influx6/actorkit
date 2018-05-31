@@ -1,9 +1,10 @@
 package actors
 
 import (
+	"testing"
+
 	"github.com/gokit/actorkit"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 type HelloOp struct {
@@ -43,7 +44,7 @@ func TestFromActorWithMessage(t *testing.T) {
 		Envelope:         envelope,
 	})
 
-	axMask := actorkit.ForceMaskWithProcess("local", "yay", ax)
+	axMask := actorkit.ForceMaskWithProcess("yay", ax)
 	axMask.Send(&HelloMessage{Name: "Wally"}, actorkit.GetDeadletter())
 
 	env := <-envelope

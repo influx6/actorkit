@@ -2,13 +2,14 @@ package actorkit
 
 import (
 	"errors"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var (
-	eb = NewMask(AnyNetworkAddr, "bob")
+	eb = NewMask("bob")
 )
 
 func TestFutureResolvedWithError(t *testing.T) {

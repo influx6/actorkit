@@ -6,6 +6,8 @@ import "github.com/rs/xid"
 //  noActorProcess implements Wait and Process
 //**********************************************
 
+var _ Process = noActorProcess{}
+
 // noActorProcess implements a no-action Process
 // which can be used as stand-in for processes that
 // do nothing.
@@ -30,4 +32,8 @@ func (m noActorProcess) Stopped() bool                 { return true }
 func (m noActorProcess) GracefulStop() Waiter          { return m }
 func (m noActorProcess) ID() string {
 	return m.id.String()
+}
+
+func (m noActorProcess) Address() string {
+	return LocalNetworkAddr
 }

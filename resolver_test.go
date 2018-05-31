@@ -1,8 +1,9 @@
 package actorkit
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewLocalResolver(t *testing.T) {
@@ -16,8 +17,8 @@ func TestNewLocalResolver(t *testing.T) {
 	lr.Register(proc2, "sum")
 	lr.Register(proc3, "mut")
 
-	sumAddr := NewMask(AnyNetworkAddr, "sum")
-	mutAddr := NewMask(AnyNetworkAddr, "mut")
+	sumAddr := NewMask("sum")
+	mutAddr := NewMask("mut")
 
 	proc, found := lr.Resolve(sumAddr)
 	assert.True(t, found)

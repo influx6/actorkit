@@ -2,11 +2,12 @@ package actors
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
+
 	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/mailbox"
 	"github.com/rs/xid"
-	"sync"
-	"sync/atomic"
 )
 
 var (
@@ -71,6 +72,13 @@ func WithInvoker(in Invoker) ActorSyncOption {
 	}
 }
 
+// WithAddrs sets the address of the provided actorSyncSupervisor.
+func WithAddrs(addr string) ActorSyncOption {
+	return func(s *actorSyncSupervisor) {
+		s.addr = addr
+	}
+}
+
 // WithID sets the actor processor ID.
 func WithID(id xid.ID) ActorSyncOption {
 	return func(s *actorSyncSupervisor) {
@@ -130,6 +138,10 @@ func FromActor(action actorkit.Actor, ops ...ActorSyncOption) actorkit.Process {
 		ac.mail = mailbox.UnboundedBoxQueue()
 	}
 
+	if ac.addr == "" {
+		ac.addr = actorkit.LocalNetworkAddr
+	}
+
 	ac.wg.Add(1)
 	go ac.run()
 	return ac
@@ -138,7 +150,8 @@ func FromActor(action actorkit.Actor, ops ...ActorSyncOption) actorkit.Process {
 // actorSyncSupervisor implements the Process interface and
 // provides a basic processor management for an actorkit.Actor.
 type actorSyncSupervisor struct {
-	id xid.ID
+	id   xid.ID
+	addr string
 
 	do        sync.Once
 	wg        sync.WaitGroup
@@ -164,6 +177,11 @@ func (m *actorSyncSupervisor) RemoveWatcher(mw actorkit.Mask) {
 
 func (m *actorSyncSupervisor) AddWatcher(mw actorkit.Mask, fn func(interface{})) {
 	m.watchers.AddWatcher(mw, fn)
+}
+
+// Address returns the associated network address of the actor.
+func (m *actorSyncSupervisor) Address() string {
+	return m.addr
 }
 
 // ID returns the associated ID of the implementation.
@@ -261,7 +279,7 @@ func (m *actorSyncSupervisor) doNext() {
 func (m *actorSyncSupervisor) run() {
 	defer m.wg.Done()
 
-	mymask := actorkit.ForceMaskWithProcess(actorkit.AnyNetworkAddr, "process", m)
+	mymask := actorkit.ForceMaskWithProcess("process", m)
 	defer func() {
 		perr := recover()
 		msg := actorkit.ProcessFinishedShutdown{

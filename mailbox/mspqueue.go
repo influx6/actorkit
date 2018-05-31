@@ -1,9 +1,10 @@
 package mailbox
 
 import (
-	"github.com/gokit/actorkit"
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/gokit/actorkit"
 )
 
 // MSQueue provides an efficient implementation of a multi-producer, single-consumer lock-free queue.
@@ -28,13 +29,14 @@ func NewMSPQueue() *MSPQueue {
 // Push adds x to the back of the queue.
 //
 // Push can be safely called from multiple goroutines
-func (q *MSPQueue) Push(x actorkit.Envelope) {
+func (q *MSPQueue) Push(x actorkit.Envelope) error {
 	n := &node{value: x}
 	// current producer acquires head node
 	prev := (*node)(atomic.SwapPointer((*unsafe.Pointer)(unsafe.Pointer(&q.head)), unsafe.Pointer(n)))
 
 	// release node to consumer
 	prev.next = n
+	return nil
 }
 
 // UnPop adds x back into the head of the queue.
