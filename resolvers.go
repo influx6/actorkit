@@ -38,7 +38,7 @@ type roundRobinProcessSet struct {
 	ribbon    map[int]string
 }
 
-func newRoundRobinProcessSet(rs *LocalResolver) *roundRobinProcessSet {
+func newroundRobinProcessSet(rs *LocalResolver) *roundRobinProcessSet {
 	return &roundRobinProcessSet{
 		set:    map[string]int{},
 		ribbon: map[int]string{},
@@ -62,10 +62,12 @@ func (p *roundRobinProcessSet) GetRobin() Process {
 	return p.src.procs[p.set[p.ribbon[target]]]
 }
 
+// Total returns total of set.
 func (p *roundRobinProcessSet) Total() int {
 	return len(p.set)
 }
 
+// Copy returns a copy of all process within set.
 func (p *roundRobinProcessSet) CopyOnly(target []Process) []Process {
 	for _, ind := range p.set {
 		target = append(target, p.src.procs[ind])
@@ -73,6 +75,7 @@ func (p *roundRobinProcessSet) CopyOnly(target []Process) []Process {
 	return target
 }
 
+// Copy retuirns a slice of all process within set.
 func (p *roundRobinProcessSet) Copy(target []Process, seen map[string]struct{}) []Process {
 	for key, ind := range p.set {
 		if _, ok := seen[key]; ok {
@@ -84,6 +87,7 @@ func (p *roundRobinProcessSet) Copy(target []Process, seen map[string]struct{}) 
 	return target
 }
 
+// RemoveInSet removes process form set.
 func (p *roundRobinProcessSet) RemoveInSet(proc Process) {
 	if !p.Has(proc.ID()) {
 		return
@@ -105,6 +109,7 @@ func (p *roundRobinProcessSet) RemoveInSet(proc Process) {
 	}
 }
 
+// Add adds giving Process into list.
 func (p *roundRobinProcessSet) Add(proc Process) {
 	if p.Has(proc.ID()) {
 		return
@@ -122,6 +127,7 @@ func (p *roundRobinProcessSet) Add(proc Process) {
 	p.src.procs = append(p.src.procs, proc)
 }
 
+// Has returns true/false if set has giving string.
 func (p *roundRobinProcessSet) Has(s string) bool {
 	_, ok := p.set[s]
 	return ok
@@ -157,6 +163,7 @@ func (lr *LocalResolver) GetProcess(id string) (Process, error) {
 	return nil, ErrProcNotFound
 }
 
+// Unregister a process from giving service.
 func (lr *LocalResolver) Unregister(process Process, service string) {
 	lr.sm.Lock()
 	defer lr.sm.Unlock()
@@ -176,7 +183,7 @@ func (lr *LocalResolver) Register(process Process, service string) {
 		return
 	}
 
-	set := newRoundRobinProcessSet(lr)
+	set := newroundRobinProcessSet(lr)
 	set.Add(process)
 
 	// Add watcher to ensure process gets removed here.
