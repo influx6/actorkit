@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gokit/actorkit"
 )
@@ -13,9 +14,9 @@ var ErrPushFailed = errors.New("failed to push into mailbox")
 
 var _ actorkit.Mailbox = &BoxQueue{}
 
-//var nodePool = sync.Pool{New: func() interface{} {
-//	return new(node)
-//}}
+var nodePool = sync.Pool{New: func() interface{} {
+	return new(node)
+}}
 
 type node struct {
 	value actorkit.Envelope
@@ -64,6 +65,29 @@ func UnboundedBoxQueue() *BoxQueue {
 	return bq
 }
 
+// WaitUntilPush will do a for-loop block until it successfully pushes giving
+// envelope into queue.
+func (bq *BoxQueue) WaitUntilPush(env actorkit.Envelope) {
+	for true {
+		if err := bq.Push(env); err != nil {
+			continue
+		}
+	}
+}
+
+// TryPushUntil will do a for-loop block for a giving number of tries with a giving wait duration in between
+// that pushing of giving envelope, if tries runs out then an error is returned.
+func (bq *BoxQueue) TryPushUntil(env actorkit.Envelope, retries int, timeout time.Duration) error {
+	for i := 0; i < retries; i++ {
+		if err := bq.Push(env); err != nil {
+			<-time.After(timeout)
+			continue
+		}
+		return nil
+	}
+	return ErrPushFailed
+}
+
 // Push adds the item to the back of the queue.
 //
 // Push can be safely called from multiple goroutines.
@@ -80,9 +104,9 @@ func (bq *BoxQueue) Push(env actorkit.Envelope) error {
 	}
 
 	atomic.AddInt64(&bq.total, 1)
-	n := &node{value: env}
-	//n := nodePool.Get().(*node)
-	//n.value = env
+	//n := &node{value: env}
+	n := nodePool.Get().(*node)
+	n.value = env
 
 	bq.bm.Lock()
 	if bq.head == nil && bq.tail == nil {
@@ -112,9 +136,9 @@ func (bq *BoxQueue) UnPop(env actorkit.Envelope) {
 	}
 
 	atomic.AddInt64(&bq.total, 1)
-	n := &node{value: env}
-	//n := nodePool.Get().(*node)
-	//n.value = env
+	//n := &node{value: env}
+	n := nodePool.Get().(*node)
+	n.value = env
 
 	bq.bm.Lock()
 	head := bq.head
@@ -151,7 +175,7 @@ func (bq *BoxQueue) Pop() actorkit.Envelope {
 		head.value = nil
 		bq.bm.Unlock()
 
-		//nodePool.Put(head)
+		nodePool.Put(head)
 		return v
 	}
 	bq.bm.Unlock()
