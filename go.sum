@@ -1,10 +1,14 @@
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/gokit/errors v0.0.0-20181009182346-15cf66a82a98 h1:f1jOPatbZPT2BONfZA3fzLfG/+5RDKBv/lJ28y11zcc=
+github.com/gokit/errors v0.0.0-20181009182346-15cf66a82a98/go.mod h1:ipykB/QrFXRTDj7gnqpIPJGoH8TN0FRQqAuKUUOZg9E=
+github.com/gokit/es v0.0.0-20180512190614-307788b0fa08 h1:pk/aFOYUHj3RLpP03uu7CwLRcwJrfzGW7bMeN3XX7Oo=
+github.com/gokit/es v0.0.0-20180512190614-307788b0fa08/go.mod h1:u590NupW7qC90r1MhdNhQoHKY0WYGdHDo/4YszwlS1o=
+github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7 h1:9JJfPoUUpjeImyRSPb9BD3jL3ASS0a/9uo9EFXdRbCM=
+github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7/go.mod h1:u590NupW7qC90r1MhdNhQoHKY0WYGdHDo/4YszwlS1o=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/rs/xid v1.2.1 h1:mhH9Nq+C1fY2l1XIpgxIiUOfNpRBYH1kKcr+qfKgjRc=
 github.com/rs/xid v1.2.1/go.mod h1:+uKXf+4Djp6Md1KODXJxgGQPKngRmWyn10oCKFzNHOQ=
-github.com/stretchr/objx v0.1.1 h1:2vfRuCMp5sSVIDSqO8oNnWJq7mPa6KVP3iPIwFBuy8A=
-github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.2.2 h1:bSDNvY7ZPG5RlJ8otE/7V6gMiyenm9RtJ7IUVIAoJ1w=
 github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=

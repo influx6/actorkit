@@ -1,16 +1,19 @@
 package mailbox
 
 import (
-	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gokit/actorkit"
+	"github.com/gokit/errors"
 )
 
 // ErrPushFailed is returned when mailbox has reached storage limit.
 var ErrPushFailed = errors.New("failed to push into mailbox")
+
+// ErrMailboxEmpty is returned when mailbox is empty of pending envelopes.
+var ErrMailboxEmpty = errors.New("mailbox is empty")
 
 var _ actorkit.Mailbox = &BoxQueue{}
 
@@ -19,7 +22,7 @@ var nodePool = sync.Pool{New: func() interface{} {
 }}
 
 type node struct {
-	value actorkit.Envelope
+	value *actorkit.Envelope
 	next  *node
 	prev  *node
 }
@@ -29,6 +32,7 @@ type node struct {
 // new envelop messages. BoxQueue uses lock to guarantee safe concurrent use.
 type BoxQueue struct {
 	bm       sync.Mutex
+	cm       *sync.Cond
 	head     *node
 	tail     *node
 	capped   int
@@ -48,11 +52,14 @@ const (
 // BoundedBoxQueue returns a new instance of a unbounded box queue.
 // Items will be queue till the capped is reached and then old items
 // will be dropped till queue has enough space for new item.
+// A cap value of -1 means there will be no maximum limit
+// of allow messages in queue.
 func BoundedBoxQueue(capped int, method Strategy) *BoxQueue {
 	bq := &BoxQueue{
 		capped:   capped,
 		strategy: method,
 	}
+	bq.cm = sync.NewCond(&bq.bm)
 	return bq
 }
 
@@ -62,6 +69,7 @@ func UnboundedBoxQueue() *BoxQueue {
 	bq := &BoxQueue{
 		capped: -1,
 	}
+	bq.cm = sync.NewCond(&bq.bm)
 	return bq
 }
 
@@ -72,6 +80,7 @@ func (bq *BoxQueue) WaitUntilPush(env actorkit.Envelope) {
 		if err := bq.Push(env); err != nil {
 			continue
 		}
+		break
 	}
 }
 
@@ -88,6 +97,19 @@ func (bq *BoxQueue) TryPushUntil(env actorkit.Envelope, retries int, timeout tim
 	return ErrPushFailed
 }
 
+// Wait will block current goroutine till there is a message pushed into
+// the queue, allowing you to effectively rely on it as a schedule and processing
+// signal for when messages are in queue.
+func (bq *BoxQueue) Wait() {
+	bq.cm.L.Lock()
+	if !bq.isEmpty() {
+		bq.cm.L.Unlock()
+		return
+	}
+	bq.cm.Wait()
+	bq.cm.L.Unlock()
+}
+
 // Push adds the item to the back of the queue.
 //
 // Push can be safely called from multiple goroutines.
@@ -99,26 +121,32 @@ func (bq *BoxQueue) Push(env actorkit.Envelope) error {
 		case DropNew:
 			return ErrPushFailed
 		case DropOld:
-			bq.Pop()
+			if _, err := bq.Pop(); err != nil && err != ErrMailboxEmpty {
+				return err
+			}
 		}
 	}
 
 	atomic.AddInt64(&bq.total, 1)
 	//n := &node{value: env}
 	n := nodePool.Get().(*node)
-	n.value = env
+	n.value = &env
 
-	bq.bm.Lock()
+	bq.cm.L.Lock()
 	if bq.head == nil && bq.tail == nil {
 		bq.head, bq.tail = n, n
-		bq.bm.Unlock()
+		bq.cm.L.Unlock()
+
+		bq.cm.Broadcast()
 		return nil
 	}
 
 	bq.tail.next = n
 	n.prev = bq.tail
 	bq.tail = n
-	bq.bm.Unlock()
+	bq.cm.L.Unlock()
+
+	bq.cm.Broadcast()
 	return nil
 }
 
@@ -138,27 +166,31 @@ func (bq *BoxQueue) UnPop(env actorkit.Envelope) {
 	atomic.AddInt64(&bq.total, 1)
 	//n := &node{value: env}
 	n := nodePool.Get().(*node)
-	n.value = env
+	n.value = &env
 
-	bq.bm.Lock()
+	bq.cm.L.Lock()
 	head := bq.head
 	if head != nil {
 		n.next = head
 		bq.head = n
-		bq.bm.Unlock()
+		bq.cm.L.Unlock()
+
+		bq.cm.Broadcast()
 		return
 	}
 
 	bq.head = n
 	bq.tail = n
-	bq.bm.Unlock()
+	bq.cm.L.Unlock()
+
+	bq.cm.Broadcast()
 }
 
-// Pops removes the item from the front of the queue.
+// Pop removes the item from the front of the queue.
 //
 // Pop can be safely called from multiple goroutines.
-func (bq *BoxQueue) Pop() actorkit.Envelope {
-	bq.bm.Lock()
+func (bq *BoxQueue) Pop() (actorkit.Envelope, error) {
+	bq.cm.L.Lock()
 	head := bq.head
 	if head != nil {
 		atomic.AddInt64(&bq.total, -1)
@@ -173,17 +205,18 @@ func (bq *BoxQueue) Pop() actorkit.Envelope {
 		head.next = nil
 		head.prev = nil
 		head.value = nil
-		bq.bm.Unlock()
+		bq.cm.L.Unlock()
 
 		nodePool.Put(head)
-		return v
+		return *v, nil
 	}
-	bq.bm.Unlock()
-	return nil
+	bq.cm.L.Unlock()
+	return actorkit.Envelope{}, ErrMailboxEmpty
 }
 
+// unshift discards the tail of queue, allowing new space.
 func (bq *BoxQueue) unshift() {
-	bq.bm.Lock()
+	bq.cm.L.Lock()
 	tail := bq.tail
 	if tail != nil {
 		atomic.AddInt64(&bq.total, -1)
@@ -197,7 +230,7 @@ func (bq *BoxQueue) unshift() {
 		tail.prev = nil
 		tail.value = nil
 	}
-	bq.bm.Unlock()
+	bq.cm.L.Unlock()
 	return
 }
 
@@ -214,8 +247,12 @@ func (bq *BoxQueue) Total() int {
 // Empty returns true/false if the queue is empty.
 func (bq *BoxQueue) Empty() bool {
 	var empty bool
-	bq.bm.Lock()
-	empty = bq.head == nil && bq.tail == nil
-	bq.bm.Unlock()
+	bq.cm.L.Lock()
+	empty = bq.isEmpty()
+	bq.cm.L.Unlock()
 	return empty
+}
+
+func (bq *BoxQueue) isEmpty() bool {
+	return bq.head == nil && bq.tail == nil
 }

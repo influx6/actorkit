@@ -15,6 +15,7 @@ func NewWatchers() *Watchers {
 	}
 }
 
+// Inform delivers a giving value to all registered subscriers.
 func (w *Watchers) Inform(k interface{}) {
 	w.wl.RLock()
 	defer w.wl.RUnlock()
@@ -23,13 +24,15 @@ func (w *Watchers) Inform(k interface{}) {
 	}
 }
 
+// RemoveWatchers removes all registered subscribers from watcher.
 func (w *Watchers) RemoveWatchers() {
 	w.wl.Lock()
 	defer w.wl.Unlock()
 	w.watchers = map[string]func(interface{}){}
 }
 
-func (w *Watchers) RemoveWatcher(m Mask) {
+// RemoveWatcher disconnects giving subscription function for giving Addr.
+func (w *Watchers) RemoveWatcher(m Addr) {
 	w.wl.Lock()
 	defer w.wl.Unlock()
 	if _, ok := w.watchers[m.ID()]; !ok {
@@ -37,7 +40,9 @@ func (w *Watchers) RemoveWatcher(m Mask) {
 	}
 }
 
-func (w *Watchers) AddWatcher(m Mask, fn func(interface{})) {
+// AddWatcher adds giving function as subscription function to
+// watch list for giving Addr.
+func (w *Watchers) AddWatcher(m Addr, fn func(interface{})) {
 	w.wl.Lock()
 	defer w.wl.Unlock()
 	if _, ok := w.watchers[m.ID()]; !ok {
