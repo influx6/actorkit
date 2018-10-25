@@ -1,4 +1,4 @@
-package mailbox
+package actorkit_test
 
 import (
 	"sync"
@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	eb   = actorkit.AddrImpl{}
+	eb   = &actorkit.AddrImpl{}
 	env  = actorkit.CreateEnvelope(eb, actorkit.Header{}, 1)
 	env2 = actorkit.CreateEnvelope(eb, actorkit.Header{}, 2)
 )
@@ -17,14 +17,14 @@ var (
 func BenchmarkBoxQueue_PushPopUnPop(b *testing.B) {
 	b.ReportAllocs()
 
-	q := UnboundedBoxQueue()
+	q := actorkit.UnboundedBoxQueue(nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		q.Push(env)
+		q.Push(nil, env)
 		go func() {
 			q.Pop()
-			q.UnPop(env)
+			q.Unpop(nil, env)
 		}()
 	}
 	b.StopTimer()
@@ -33,11 +33,11 @@ func BenchmarkBoxQueue_PushPopUnPop(b *testing.B) {
 func BenchmarkBoxQueue_PushPop(b *testing.B) {
 	b.ReportAllocs()
 
-	q := UnboundedBoxQueue()
+	q := actorkit.UnboundedBoxQueue(nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		q.Push(env)
+		q.Push(nil, env)
 		q.Pop()
 	}
 	b.StopTimer()
@@ -46,11 +46,11 @@ func BenchmarkBoxQueue_PushPop(b *testing.B) {
 func BenchmarkBoxQueue_PushAndPop(b *testing.B) {
 	b.ReportAllocs()
 
-	q := UnboundedBoxQueue()
+	q := actorkit.UnboundedBoxQueue(nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		q.Push(env)
+		q.Push(nil, env)
 	}
 
 	for i := 0; i < b.N; i++ {
@@ -60,29 +60,29 @@ func BenchmarkBoxQueue_PushAndPop(b *testing.B) {
 }
 
 func TestBoxQueue_PushPopUnPop(t *testing.T) {
-	q := UnboundedBoxQueue()
+	q := actorkit.UnboundedBoxQueue(nil)
 
-	q.Push(env)
-	q.Push(env2)
+	q.Push(nil, env)
+	q.Push(nil, env2)
 
-	popped, err := q.Pop()
+	_, popped, err := q.Pop()
 	assert.NoError(t, err)
 	assert.Equal(t, 1, popped.Data)
 
-	q.Push(env)
-	q.Push(env2)
+	q.Push(nil, env)
+	q.Push(nil, env2)
 
-	popped2, err := q.Pop()
+	_, popped2, err := q.Pop()
 	assert.NoError(t, err)
 	assert.Equal(t, 2, popped2.Data)
 
-	popped3, err := q.Pop()
+	_, popped3, err := q.Pop()
 	assert.NoError(t, err)
 	assert.NotNil(t, popped3)
 
 	assert.False(t, q.Empty())
 
-	popped4, err := q.Pop()
+	_, popped4, err := q.Pop()
 	assert.NoError(t, err)
 	assert.NotNil(t, popped4)
 
@@ -93,7 +93,7 @@ func TestBoxQueue_WaitLoop(t *testing.T) {
 	var w sync.WaitGroup
 	w.Add(1)
 
-	q := UnboundedBoxQueue()
+	q := actorkit.UnboundedBoxQueue(nil)
 	assert.True(t, q.Empty())
 
 	go func() {
@@ -101,20 +101,20 @@ func TestBoxQueue_WaitLoop(t *testing.T) {
 
 		var c int
 		for {
+			if c >= 100 {
+				assert.True(t, q.Empty())
+				assert.Equal(t, 100, c)
+				return
+			}
+
 			q.Wait()
 			q.Pop()
 			c++
-
-			if q.Empty() {
-				break
-			}
 		}
-		assert.True(t, q.Empty())
-		assert.Equal(t, 100, c)
 	}()
 
 	for i := 100; i > 0; i-- {
-		q.Push(env)
+		q.Push(nil, env)
 	}
 
 	w.Wait()
@@ -123,7 +123,7 @@ func TestBoxQueue_Wait(t *testing.T) {
 	var w sync.WaitGroup
 	w.Add(1)
 
-	q := UnboundedBoxQueue()
+	q := actorkit.UnboundedBoxQueue(nil)
 	assert.True(t, q.Empty())
 
 	go func() {
@@ -132,62 +132,62 @@ func TestBoxQueue_Wait(t *testing.T) {
 		assert.False(t, q.Empty())
 	}()
 
-	q.Push(env)
+	q.Push(nil, env)
 	w.Wait()
 }
 
 func TestBoxQueue_Empty(t *testing.T) {
-	q := UnboundedBoxQueue()
+	q := actorkit.UnboundedBoxQueue(nil)
 	assert.True(t, q.Empty())
-	q.Push(env)
+	q.Push(nil, env)
 	assert.False(t, q.Empty())
 }
 
 func TestBoundedBoxQueue_Empty(t *testing.T) {
-	q := BoundedBoxQueue(10, DropOld)
+	q := actorkit.BoundedBoxQueue(10, actorkit.DropOld, nil)
 	assert.True(t, q.Empty())
-	q.Push(env)
+	q.Push(nil, env)
 	assert.False(t, q.Empty())
 }
 
 func TestBoundedBoxQueue_DropOldest(t *testing.T) {
-	q := BoundedBoxQueue(1, DropOld)
+	q := actorkit.BoundedBoxQueue(1, actorkit.DropOld, nil)
 	assert.True(t, q.Empty())
 
-	q.Push(env)
+	q.Push(nil, env)
 	assert.Equal(t, q.Total(), 1)
-	q.Push(env2)
+	q.Push(nil, env2)
 	assert.Equal(t, q.Total(), 1)
 
-	popped2, err := q.Pop()
+	_, popped2, err := q.Pop()
 	assert.NoError(t, err)
 	assert.NotEqual(t, popped2.Data, 1)
 }
 
 func TestBoundedBoxQueue_DropNewest(t *testing.T) {
-	q := BoundedBoxQueue(1, DropNew)
+	q := actorkit.BoundedBoxQueue(1, actorkit.DropNew, nil)
 	assert.True(t, q.Empty())
 
-	q.Push(env)
+	q.Push(nil, env)
 	assert.Equal(t, q.Total(), 1)
-	q.Push(env2)
+	q.Push(nil, env2)
 	assert.Equal(t, q.Total(), 1)
 
-	popped, err := q.Pop()
+	_, popped, err := q.Pop()
 	assert.NoError(t, err)
 	assert.NotEqual(t, popped.Data, 2)
 }
 
 func TestBoundedBoxQueue_Drop_Unpop(t *testing.T) {
-	q := BoundedBoxQueue(1, DropNew)
+	q := actorkit.BoundedBoxQueue(1, actorkit.DropNew, nil)
 	assert.True(t, q.Empty())
 
-	q.Push(env)
+	q.Push(nil, env)
 	assert.Equal(t, q.Total(), 1)
-	q.UnPop(env2)
+	q.Unpop(nil, env2)
 	assert.Equal(t, q.Total(), 1)
 
-	popped, err := q.Pop()
+	_, popped, err := q.Pop()
 	assert.NoError(t, err)
 	assert.NotEqual(t, popped.Data, 1)
 	assert.Equal(t, popped.Data, 2)

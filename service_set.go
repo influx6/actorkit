@@ -73,8 +73,8 @@ func (lr *ServiceSet) Register(process Actor, service string) {
 		set.Add(process)
 
 		// Add watcher to ensure process gets removed here.
-		lr.subs[process.Addr()] = process.Fn(func(msg interface{}) {
-			if _, ok := msg.(*ActorStopped); ok {
+		lr.subs[process.Addr()] = process.Watch(func(msg interface{}) {
+			if _, ok := msg.(*ActorDestroyed); ok {
 				lr.Remove(process)
 			}
 		})
@@ -86,7 +86,7 @@ func (lr *ServiceSet) Register(process Actor, service string) {
 	set.Add(process)
 
 	// Add watcher to ensure process gets removed here.
-	lr.subs[process.Addr()] = process.Fn(func(msg interface{}) {
+	lr.subs[process.Addr()] = process.Watch(func(msg interface{}) {
 		if _, ok := msg.(*ActorStopped); ok {
 			lr.Remove(process)
 		}

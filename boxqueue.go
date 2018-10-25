@@ -1,11 +1,9 @@
-package mailbox
+package actorkit
 
 import (
 	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/gokit/actorkit"
 	"github.com/gokit/errors"
 )
 
@@ -15,14 +13,16 @@ var ErrPushFailed = errors.New("failed to push into mailbox")
 // ErrMailboxEmpty is returned when mailbox is empty of pending envelopes.
 var ErrMailboxEmpty = errors.New("mailbox is empty")
 
-var _ actorkit.Mailbox = &BoxQueue{}
-
-var nodePool = sync.Pool{New: func() interface{} {
-	return new(node)
-}}
+var (
+	_        Mailbox = &BoxQueue{}
+	nodePool         = sync.Pool{New: func() interface{} {
+		return new(node)
+	}}
+)
 
 type node struct {
-	value *actorkit.Envelope
+	addr  Addr
+	value *Envelope
 	next  *node
 	prev  *node
 }
@@ -38,6 +38,7 @@ type BoxQueue struct {
 	capped   int
 	total    int64
 	strategy Strategy
+	invoker  MailInvoker
 }
 
 // Strategy defines a int type to represent a giving strategy.
@@ -54,10 +55,11 @@ const (
 // will be dropped till queue has enough space for new item.
 // A cap value of -1 means there will be no maximum limit
 // of allow messages in queue.
-func BoundedBoxQueue(capped int, method Strategy) *BoxQueue {
+func BoundedBoxQueue(capped int, method Strategy, invoker MailInvoker) *BoxQueue {
 	bq := &BoxQueue{
 		capped:   capped,
 		strategy: method,
+		invoker:  invoker,
 	}
 	bq.cm = sync.NewCond(&bq.bm)
 	return bq
@@ -65,36 +67,19 @@ func BoundedBoxQueue(capped int, method Strategy) *BoxQueue {
 
 // UnboundedBoxQueue returns a new instance of a unbounded box queue.
 // Items will be queue endlessly.
-func UnboundedBoxQueue() *BoxQueue {
+func UnboundedBoxQueue(invoker MailInvoker) *BoxQueue {
 	bq := &BoxQueue{
-		capped: -1,
+		capped:  -1,
+		invoker: invoker,
 	}
 	bq.cm = sync.NewCond(&bq.bm)
 	return bq
 }
 
-// WaitUntilPush will do a for-loop block until it successfully pushes giving
-// envelope into queue.
-func (bq *BoxQueue) WaitUntilPush(env actorkit.Envelope) {
-	for true {
-		if err := bq.Push(env); err != nil {
-			continue
-		}
-		break
-	}
-}
-
-// TryPushUntil will do a for-loop block for a giving number of tries with a giving wait duration in between
-// that pushing of giving envelope, if tries runs out then an error is returned.
-func (bq *BoxQueue) TryPushUntil(env actorkit.Envelope, retries int, timeout time.Duration) error {
-	for i := 0; i < retries; i++ {
-		if err := bq.Push(env); err != nil {
-			<-time.After(timeout)
-			continue
-		}
-		return nil
-	}
-	return ErrPushFailed
+// Signal sends a signal to all listening go-routines to
+// attempt checks for new message.
+func (bq *BoxQueue) Signal() {
+	bq.cm.Broadcast()
 }
 
 // Wait will block current goroutine till there is a message pushed into
@@ -114,23 +99,36 @@ func (bq *BoxQueue) Wait() {
 //
 // Push can be safely called from multiple goroutines.
 // Based on strategy if capped, then a message will be dropped.
-func (bq *BoxQueue) Push(env actorkit.Envelope) error {
+func (bq *BoxQueue) Push(addr Addr, env Envelope) error {
 	available := int(atomic.LoadInt64(&bq.total))
 	if bq.capped != -1 && available >= bq.capped {
+		if bq.invoker != nil {
+			bq.invoker.InvokedFull()
+		}
+
 		switch bq.strategy {
 		case DropNew:
-			return ErrPushFailed
+			if bq.invoker != nil {
+				bq.invoker.InvokedDropped(addr, env)
+			}
+			return errors.Wrap(ErrPushFailed, "")
 		case DropOld:
-			if _, err := bq.Pop(); err != nil && err != ErrMailboxEmpty {
-				return err
+			if addrs, envs, err := bq.Pop(); err == nil {
+				if bq.invoker != nil {
+					bq.invoker.InvokedDropped(addrs, envs)
+				}
 			}
 		}
 	}
 
 	atomic.AddInt64(&bq.total, 1)
-	//n := &node{value: env}
 	n := nodePool.Get().(*node)
 	n.value = &env
+	n.addr = addr
+
+	if bq.invoker != nil {
+		bq.invoker.InvokedReceived(addr, env)
+	}
 
 	bq.cm.L.Lock()
 	if bq.head == nil && bq.tail == nil {
@@ -150,23 +148,27 @@ func (bq *BoxQueue) Push(env actorkit.Envelope) error {
 	return nil
 }
 
-// UnPop adds back item to the font of the queue.
+// Unpop adds back item to the font of the queue.
 //
-// UnPop can be safely called from multiple goroutines.
+// Unpop can be safely called from multiple goroutines.
 // If queue is capped and max was reached, then last added
 // message is removed to make space for message to be added back.
 // This means strategy will be ignored since this is an attempt
 // to re-add an item back into the top of the queue.
-func (bq *BoxQueue) UnPop(env actorkit.Envelope) {
+func (bq *BoxQueue) Unpop(addr Addr, env Envelope) {
 	available := int(atomic.LoadInt64(&bq.total))
 	if bq.capped != -1 && available >= bq.capped {
 		bq.unshift()
 	}
 
 	atomic.AddInt64(&bq.total, 1)
-	//n := &node{value: env}
 	n := nodePool.Get().(*node)
 	n.value = &env
+	n.addr = addr
+
+	if bq.invoker != nil {
+		bq.invoker.InvokedReceived(addr, env)
+	}
 
 	bq.cm.L.Lock()
 	head := bq.head
@@ -189,13 +191,18 @@ func (bq *BoxQueue) UnPop(env actorkit.Envelope) {
 // Pop removes the item from the front of the queue.
 //
 // Pop can be safely called from multiple goroutines.
-func (bq *BoxQueue) Pop() (actorkit.Envelope, error) {
+func (bq *BoxQueue) Pop() (Addr, Envelope, error) {
 	bq.cm.L.Lock()
 	head := bq.head
 	if head != nil {
 		atomic.AddInt64(&bq.total, -1)
 
 		v := head.value
+		addr := head.addr
+
+		if bq.invoker != nil {
+			bq.invoker.InvokedDispatched(addr, *v)
+		}
 
 		bq.head = head.next
 		if bq.tail == head {
@@ -204,14 +211,21 @@ func (bq *BoxQueue) Pop() (actorkit.Envelope, error) {
 
 		head.next = nil
 		head.prev = nil
+		head.addr = nil
 		head.value = nil
 		bq.cm.L.Unlock()
 
 		nodePool.Put(head)
-		return *v, nil
+
+		return addr, *v, nil
 	}
 	bq.cm.L.Unlock()
-	return actorkit.Envelope{}, ErrMailboxEmpty
+
+	if bq.invoker != nil {
+		bq.invoker.InvokedEmpty()
+	}
+
+	return nil, Envelope{}, errors.Wrap(ErrMailboxEmpty, "empty mailbox")
 }
 
 // unshift discards the tail of queue, allowing new space.
