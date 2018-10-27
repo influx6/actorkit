@@ -396,7 +396,7 @@ func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
 
 	// signal children of actor to start as well.
 	ati.tree.Each(func(actor Actor) bool {
-		chain = chain.Then(func() error {
+		chain.Go(func() error {
 			return actor.Start(data).Wait()
 		})
 		return true
@@ -460,7 +460,7 @@ func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
 	})
 
 	ati.tree.Each(func(actor Actor) bool {
-		chain = chain.Then(func() error {
+		chain.Go(func() error {
 			return actor.Stop(data).Wait()
 		})
 		return true
