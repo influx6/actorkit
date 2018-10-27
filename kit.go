@@ -326,13 +326,6 @@ type Restartable interface {
 	Restart(interface{}) ErrWaiter
 }
 
-// RestartState defines a set of methods to be called on
-// a restart.
-type RestartState interface {
-	PreRestart(interface{}) error
-	PostRestart(interface{}) error
-}
-
 //***********************************
 //  Stoppable
 //***********************************
@@ -365,7 +358,7 @@ type StopState interface {
 // Spawner exposes a single method to spawn an underline actor returning
 // the address for spawned actor.
 type Spawner interface {
-	Spawn(string, Behaviour) (Addr, error)
+	Spawn(service string, bh Behaviour, initial interface{}) (Addr, error)
 }
 
 //***********************************

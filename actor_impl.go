@@ -4,19 +4,21 @@ import (
 	"context"
 	"sync"
 
+	"github.com/gokit/futurechain"
+
 	"github.com/gokit/errors"
 	"github.com/gokit/es"
 	"github.com/gokit/xid"
-	"golang.org/x/sync/errgroup"
 )
 
 // errors ...
 var (
-	ErrAlreadyStopped    = errors.New("Actor already stopped")
-	ErrAlreadyStarted    = errors.New("Actor already started")
-	ErrAlreadyStopping   = errors.New("Actor already stopping")
-	ErrAlreadyStarting   = errors.New("Actor already starting")
-	ErrAlreadyRestarting = errors.New("Actor already restarting")
+	ErrActorState        = errors.New("Actor is within an error state")
+	ErrAlreadyStopped    = errors.Wrap(ErrActorState, "Actor already stopped")
+	ErrAlreadyStarted    = errors.Wrap(ErrActorState, "Actor already started")
+	ErrAlreadyStopping   = errors.Wrap(ErrActorState, "Actor already stopping")
+	ErrAlreadyStarting   = errors.Wrap(ErrActorState, "Actor already starting")
+	ErrAlreadyRestarting = errors.Wrap(ErrActorState, "Actor already restarting")
 )
 
 //********************************************************
@@ -76,10 +78,6 @@ func UseBehaviour(bh Behaviour) ActorImplOption {
 		if ss, ok := bh.(StopState); ok {
 			ac.stopState = ss
 		}
-
-		if rs, ok := bh.(RestartState); ok {
-			ac.restartState = rs
-		}
 	}
 }
 
@@ -119,10 +117,9 @@ type ActorImpl struct {
 	signal     chan struct{}
 	waiter     sync.WaitGroup
 
-	receiver     Behaviour
-	stopState    StopState
-	startState   StartState
-	restartState RestartState
+	receiver   Behaviour
+	stopState  StopState
+	startState StartState
 
 	chl   sync.RWMutex
 	chain []DiscoveryService
@@ -174,9 +171,9 @@ func (ati *ActorImpl) Mailbox() Mailbox {
 
 // Spawn spawns a new actor under this parents tree returning address of
 // created actor.
-func (ati *ActorImpl) Spawn(service string, rec Behaviour) (Addr, error) {
+func (ati *ActorImpl) Spawn(service string, rec Behaviour, conf interface{}) (Addr, error) {
 	am := NewActorImpl(ati.protocol, ati.namespace, UseParent(ati))
-	return ati.manageActor(service, am)
+	return ati.manageActor(service, am, conf)
 }
 
 // Discover returns actor's Addr from this actor's
@@ -187,7 +184,7 @@ func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
 	defer ati.chl.RUnlock()
 	for _, disco := range ati.chain {
 		if actor, err := disco.Discover(service); err == nil {
-			return ati.manageActor(service, actor)
+			return ati.manageActor(service, actor, nil)
 		}
 	}
 	if ati.parent == nil {
@@ -221,7 +218,7 @@ func (ati *ActorImpl) Receive(a Addr, e Envelope) error {
 }
 
 // manageActor handles addition of new actor into actor tree.
-func (ati *ActorImpl) manageActor(service string, an Actor) (Addr, error) {
+func (ati *ActorImpl) manageActor(service string, an Actor, conf interface{}) (Addr, error) {
 	ati.tree.AddActor(an)
 
 	an.Watch(func(event interface{}) {
@@ -231,7 +228,20 @@ func (ati *ActorImpl) manageActor(service string, an Actor) (Addr, error) {
 		}
 	})
 
+	go ati.setupActor(an, conf)
+
 	return AddressOf(an, service), nil
+}
+
+// SetupActor will initialize and start provided actor, if an error
+// occurred which is not an ErrActorState then it will be handled to
+// this parent's supervisor, which will mitigation actions.
+func (ati *ActorImpl) setupActor(ac Actor, initial interface{}) {
+	if err := ac.Start(initial).Wait(); err != nil {
+		if !errors.IsAny(err, ErrActorState) {
+			ati.supervisor.Handle(err, AccessOf(ac), ac, ati)
+		}
+	}
 }
 
 // Addr returns a url-like representation of giving service by following two giving
@@ -308,172 +318,178 @@ func (ati *ActorImpl) Kill(data interface{}) error {
 // Start returns a giving waiter which will return a waiter
 // which can be used to block until assurance of start completion.
 func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
-	errwc, _ := errgroup.WithContext(context.Background())
+	chain := futurechain.NewFutureChain(context.Background(), func() error {
+		if ati.stopping.IsOn() {
+			return errors.Wrap(ErrAlreadyStopping, "Actor %q already stopping", ati.id.String())
+		}
 
-	if ati.stopping.IsOn() {
-		errwc.Go(func() error {
-			return errors.WrapOnly(ErrAlreadyStopping)
+		if ati.restarting.IsOn() {
+			return errors.Wrap(ErrAlreadyRestarting, "Actor %q is restarting", ati.id.String())
+		}
+
+		if ati.running.IsOn() {
+			return errors.Wrap(ErrAlreadyStarted, "Actor %q is running", ati.id.String())
+		}
+
+		if ati.starting.IsOn() {
+			return errors.Wrap(ErrAlreadyStarting, "Actor %q is starting", ati.id.String())
+		}
+
+		return nil
+	}).When(func() error {
+		ati.running.Off()
+		ati.stopping.Off()
+		ati.restarting.Off()
+
+		ati.starting.On()
+
+		ati.events.Publish(ActorStartRequested{
+			ID:   ati.id.String(),
+			Addr: ati.Addr(),
 		})
-		return errwc
-	}
 
-	if ati.restarting.IsOn() {
-		errwc.Go(func() error {
-			return errors.WrapOnly(ErrAlreadyRestarting)
+		if ati.startState != nil {
+			if err := ati.startState.PreStart(data); err != nil {
+				ati.starting.Off()
+				return err
+			}
+		}
+
+		return nil
+	}).When(func() error {
+		ati.waiter.Add(1)
+
+		// We need a means of validating that the read message
+		// goroutine has started, so we will use a signal channel
+		// which will block till it's running.
+		up := make(chan struct{}, 1)
+		go func() {
+			up <- struct{}{}
+			ati.readMessages()
+		}()
+
+		// Release go-routine once we are sure, readMessage as
+		// started.
+		<-up
+		return nil
+	}).When(func() error {
+
+		if ati.startState != nil {
+			if err := ati.startState.PostStart(data); err != nil {
+				ati.starting.Off()
+				ati.signal <- struct{}{}
+				ati.mails.Signal()
+				return err
+			}
+		}
+
+		ati.events.Publish(ActorStarted{
+			ID:   ati.id.String(),
+			Addr: ati.Addr(),
 		})
-		return errwc
-	}
 
-	if ati.running.IsOn() {
-		errwc.Go(func() error {
-			return errors.WrapOnly(ErrAlreadyStarted)
-		})
-		return errwc
-	}
+		ati.starting.Off()
+		ati.running.On()
 
-	if ati.starting.IsOn() {
-		errwc.Go(func() error {
-			return errors.WrapOnly(ErrAlreadyStarting)
-		})
-		return errwc
-	}
-
-	if ati.startState != nil {
-		ati.startState.PreStart(data)
-	}
-
-	ati.events.Publish(ActorStartRequested{
-		ID:   ati.id.String(),
-		Addr: ati.Addr(),
-	})
-
-	ati.running.Off()
-	ati.restarting.Off()
-
-	ati.starting.On()
-	ati.starting.On()
-
-	ati.waiter.Add(1)
-	go ati.readMessages(ati.receiver)
-
-	ati.events.Publish(ActorStarted{
-		ID:   ati.id.String(),
-		Addr: ati.Addr(),
-	})
-
-	if ati.startState != nil {
-		ati.startState.PostStart(data)
-	}
-
-	return errwc
-}
-
-// Stop stops the operations of the actor.
-func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
-	errwc, _ := errgroup.WithContext(context.Background())
-	if !ati.running.IsOn() {
-		errwc.Go(func() error {
-			return errors.WrapOnly(ErrAlreadyStopped)
-		})
-		return errwc
-	}
-
-	if ati.stopping.IsOn() {
-		errwc.Go(func() error {
-			return errors.WrapOnly(ErrAlreadyStopping)
-		})
-		return errwc
-	}
-
-	if ati.stopState != nil {
-		ati.stopState.PreStop(data)
-	}
-
-	// signal we are attempting to stop.
-	ati.stopping.On()
-
-	// schedule closure of actor operation.
-	ati.signal <- struct{}{}
-
-	// signal waiter to recheck for new message or close signal.
-	ati.mails.Signal()
-
-	errwc.Go(func() error {
-		ati.waiter.Wait()
 		return nil
 	})
 
-	ati.events.Publish(ActorStopRequested{
-		ID:   ati.id.String(),
-		Addr: ati.Addr(),
-	})
-
+	// signal children of actor to start as well.
 	ati.tree.Each(func(actor Actor) bool {
-		errwc.Go(func() error {
-			return actor.Stop(data).Wait()
+		chain.Go(func() error {
+			return actor.Start(data).Wait()
 		})
 		return true
 	})
 
-	// block till we truly have stopped, then immediately
-	// publish stop event.
-	go func() {
-		errwc.Wait()
+	return chain
+}
 
-		if ati.stopState != nil {
-			ati.stopState.PostStop(data)
+// Stop stops the operations of the actor.
+func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
+	chain := futurechain.NewFutureChain(context.Background(), func() error {
+		if !ati.running.IsOn() {
+			return errors.Wrap(ErrAlreadyStopped, "Actor %q already stopped", ati.id.String())
 		}
 
+		if ati.stopping.IsOn() {
+			return errors.Wrap(ErrAlreadyStopping, "Actor %q already stopping", ati.id.String())
+		}
+
+		return nil
+	}).When(func() error {
+		ati.events.Publish(ActorStopRequested{
+			ID:   ati.id.String(),
+			Addr: ati.Addr(),
+		})
+
+		// signal we are attempting to stop.
+		ati.stopping.On()
+
+		if ati.stopState != nil {
+			return ati.stopState.PreStop(data)
+		}
+
+		return nil
+	}).Then(func() error {
+
+		// schedule closure of actor operation.
+		ati.signal <- struct{}{}
+
+		// signal waiter to recheck for new message or close signal.
+		ati.mails.Signal()
+
+		ati.waiter.Wait()
+
 		ati.running.Off()
+
+		if ati.stopState != nil {
+			return ati.stopState.PostStop(data)
+		}
+
+		return nil
+	}).Then(func() error {
 		ati.stopping.Off()
 
 		ati.events.Publish(ActorStopped{
 			ID:   ati.id.String(),
 			Addr: ati.Addr(),
 		})
-	}()
 
-	return errwc
+		return nil
+	})
+
+	ati.tree.Each(func(actor Actor) bool {
+		chain.Go(func() error {
+			return actor.Stop(data).Wait()
+		})
+		return true
+	})
+
+	return chain
 }
 
 // Restart will at attempt to restart actor and it's children.
 func (ati *ActorImpl) Restart(data interface{}) ErrWaiter {
-	errwc, _ := errgroup.WithContext(context.Background())
-
 	if !ati.running.IsOn() {
 		return ati.Start(data)
 	}
 
-	if ati.restarting.IsOn() {
-		return errwc
-	}
-
-	if ati.restartState != nil {
-		ati.restartState.PreRestart(data)
-	}
-
-	ati.restarting.On()
-
-	ati.events.Publish(ActorRestartRequested{
-		ID:   ati.id.String(),
-		Addr: ati.Addr(),
-	})
-
-	errwc.Go(func() error {
-		return ati.Stop(data).Wait()
-	})
-
-	errwc.Go(func() error {
-		return ati.Start(data).Wait()
-	})
-
-	go func() {
-		_ = errwc.Wait()
-
-		if ati.restartState != nil {
-			ati.restartState.PostRestart(data)
+	chain := futurechain.NewFutureChain(context.Background(), func() error {
+		if ati.restarting.IsOn() {
+			return errors.Wrap(ErrAlreadyRestarting, "Actor %q already restarting", ati.id.String())
 		}
+		return nil
+	}).When(func() error {
+		ati.events.Publish(ActorRestartRequested{
+			ID:   ati.id.String(),
+			Addr: ati.Addr(),
+		})
 
+		ati.restarting.On()
+
+		return ati.Stop(data).Wait()
+	}).Then(func() error {
 		ati.restarting.Off()
 
 		ati.events.Publish(ActorRestarted{
@@ -481,9 +497,13 @@ func (ati *ActorImpl) Restart(data interface{}) ErrWaiter {
 			Addr: ati.Addr(),
 			ID:   ati.id.String(),
 		})
-	}()
 
-	return errwc
+		return nil
+	}).Then(func() error {
+		return ati.Start(data).Wait()
+	})
+
+	return chain
 }
 
 // Destroy stops giving actor and emits a destruction event which
@@ -499,8 +519,9 @@ func (ati *ActorImpl) Destroy(data interface{}) ErrWaiter {
 	return wc
 }
 
-func (ati *ActorImpl) readMessages(receiver Behaviour) {
+func (ati *ActorImpl) readMessages() {
 	defer ati.waiter.Done()
+
 	for {
 		// block until we have a message, internally
 		// we will be put to sleep till there is a message.
@@ -541,7 +562,7 @@ func (ati *ActorImpl) readMessages(receiver Behaviour) {
 				}
 			}()
 
-			receiver.Action(a, x)
+			ati.receiver.Action(a, x)
 		}(addr, msg)
 	}
 }

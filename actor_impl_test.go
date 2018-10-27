@@ -22,5 +22,11 @@ func TestActorImpl(t *testing.T) {
 	)
 
 	assert.NoError(t, am.Start("ready").Wait())
+	assert.False(t, am.Stopped())
+
+	assert.NoError(t, am.Restart("ready").Wait())
+	assert.False(t, am.Stopped())
+
 	assert.NoError(t, am.Stop("end").Wait())
+	assert.True(t, am.Stopped())
 }

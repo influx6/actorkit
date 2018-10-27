@@ -12,6 +12,13 @@ type AddrImpl struct {
 	service string
 }
 
+// AccessOf returns a default "actor:access" service name, it's
+// expected to be used when desiring a default address for an
+// actor.
+func AccessOf(actor Actor) *AddrImpl {
+	return AddressOf(actor, "actor:access")
+}
+
 // AddressOf returns a new instance of AddrImpl which directly uses the provided
 // process as it's underline target for messages.
 func AddressOf(actor Actor, service string) *AddrImpl {
@@ -47,8 +54,8 @@ func (a *AddrImpl) Children() []Addr {
 
 // Spawn creates a new actor based on giving service name by requesting all
 // discovery services registered to giving underline address actor.
-func (a *AddrImpl) Spawn(service string, rec Behaviour) (Addr, error) {
-	return a.actor.Spawn(service, rec)
+func (a *AddrImpl) Spawn(service string, rec Behaviour, initial interface{}) (Addr, error) {
+	return a.actor.Spawn(service, rec, initial)
 }
 
 // AddressOf returns the address of giving actor matching giving service name.

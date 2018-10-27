@@ -37,6 +37,11 @@ type FutureImpl struct {
 func NewFuture(parent Addr) *FutureImpl {
 	var ft FutureImpl
 	ft.parent = parent
+
+	var condMutex sync.Mutex
+	ft.cw = &condMutex
+	ft.cond = sync.NewCond(&condMutex)
+
 	return &ft
 }
 
@@ -45,6 +50,11 @@ func TimedFuture(parent Addr, dur time.Duration) *FutureImpl {
 	var ft FutureImpl
 	ft.parent = parent
 	ft.timer = time.NewTimer(dur)
+
+	var condMutex sync.Mutex
+	ft.cw = &condMutex
+	ft.cond = sync.NewCond(&condMutex)
+
 	go ft.timedResolved()
 	return &ft
 }
@@ -168,12 +178,12 @@ func (f *FutureImpl) AddressOf(service string, ancestry bool) (Addr, error) {
 }
 
 // Spawn requests giving service and Receiver from future's parent Spawn method.
-func (f *FutureImpl) Spawn(service string, rr Behaviour) (Addr, error) {
-	return f.parent.Spawn(service, rr)
+func (f *FutureImpl) Spawn(service string, rr Behaviour, initial interface{}) (Addr, error) {
+	return f.parent.Spawn(service, rr, initial)
 }
 
 // Wait blocks till the giving future is resolved and returns error if
-// occured.
+// occurred.
 func (f *FutureImpl) Wait() error {
 	var err error
 	f.cond.L.Lock()
