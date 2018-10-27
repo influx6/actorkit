@@ -213,7 +213,6 @@ func (ati *ActorImpl) Receive(a Addr, e Envelope) error {
 	if ati.messageInvoker != nil {
 		ati.messageInvoker.InvokedRequest(a, e)
 	}
-
 	return ati.mails.Push(a, e)
 }
 
@@ -373,7 +372,6 @@ func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
 		<-up
 		return nil
 	}).When(func() error {
-
 		if ati.startState != nil {
 			if err := ati.startState.PostStart(data); err != nil {
 				ati.starting.Off()
@@ -509,14 +507,15 @@ func (ati *ActorImpl) Restart(data interface{}) ErrWaiter {
 // Destroy stops giving actor and emits a destruction event which
 // will remove giving actor from it's ancestry trees.
 func (ati *ActorImpl) Destroy(data interface{}) ErrWaiter {
-	wc := ati.Stop(data)
-
-	ati.events.Publish(ActorDestroyed{
-		Addr: ati.Addr(),
-		ID:   ati.id.String(),
+	return futurechain.NewFutureChain(context.Background(), func() error {
+		return ati.Stop(data).Wait()
+	}).Then(func() error {
+		ati.events.Publish(ActorDestroyed{
+			Addr: ati.Addr(),
+			ID:   ati.id.String(),
+		})
+		return nil
 	})
-
-	return wc
 }
 
 func (ati *ActorImpl) readMessages() {

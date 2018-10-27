@@ -38,6 +38,16 @@ func (a *AddrImpl) Parent() Addr {
 	return a
 }
 
+// Future returns a new future instance from giving source.
+func (a *AddrImpl) Future() Future {
+	return NewFuture(a)
+}
+
+// TimedFuture returns a new future instance from giving source.
+func (a *AddrImpl) TimedFuture(d time.Duration) Future {
+	return TimedFuture(a, d)
+}
+
 // Ancestor returns the address of the root ancestor. If giving underline
 // ancestor is the same as this address actor then we return address.
 func (a *AddrImpl) Ancestor() Addr {
@@ -73,25 +83,14 @@ func (a *AddrImpl) Send(data interface{}, h Header, sender Addr) error {
 	return a.actor.Receive(a, CreateEnvelope(sender, h, data))
 }
 
-// SendFuture returns a Future which will be fulfilled when message is delivered and process.
-func (a *AddrImpl) SendFuture(data interface{}, h Header, sender Addr) Future {
-	panic("implement me")
-}
-
-// SendFutureTimeout returns a Future which will be fulfilled when message is delivered and processed
-// else will be rejected after provided duration.
-func (a *AddrImpl) SendFutureTimeout(data interface{}, h Header, sender Addr, d time.Duration) Future {
-	panic("implement me")
-}
-
 // Stopped returns true/false if giving process of Addr as being stopped.
 func (a *AddrImpl) Stopped() bool {
-	panic("implement me")
+	return a.actor.Stopped()
 }
 
 // Kill sends a kill signal to the underline process to stop all operations and to close immediately.
-func (a *AddrImpl) Kill() {
-	panic("implement me")
+func (a *AddrImpl) Kill(data interface{}) error {
+	return a.actor.Kill(data)
 }
 
 // Escalate implements the Escalator interface.

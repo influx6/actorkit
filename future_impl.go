@@ -27,8 +27,8 @@ type FutureImpl struct {
 	ac    sync.Mutex
 	pipes []Addr
 
-	cw     *sync.Mutex
-	cond   *sync.Cond
+	w      sync.WaitGroup
+	cw     sync.Mutex
 	err    error
 	result *Envelope
 }
@@ -37,11 +37,7 @@ type FutureImpl struct {
 func NewFuture(parent Addr) *FutureImpl {
 	var ft FutureImpl
 	ft.parent = parent
-
-	var condMutex sync.Mutex
-	ft.cw = &condMutex
-	ft.cond = sync.NewCond(&condMutex)
-
+	ft.w.Add(1)
 	return &ft
 }
 
@@ -50,10 +46,7 @@ func TimedFuture(parent Addr, dur time.Duration) *FutureImpl {
 	var ft FutureImpl
 	ft.parent = parent
 	ft.timer = time.NewTimer(dur)
-
-	var condMutex sync.Mutex
-	ft.cw = &condMutex
-	ft.cond = sync.NewCond(&condMutex)
+	ft.w.Add(1)
 
 	go ft.timedResolved()
 	return &ft
@@ -66,11 +59,7 @@ func (f *FutureImpl) Forward(reply Envelope) error {
 		return errors.Wrap(ErrFutureResolved, "Future %q already resolved", f.Addr())
 	}
 
-	f.cond.L.Lock()
-	f.result = &reply
-	f.cond.L.Unlock()
-	f.cond.Broadcast()
-
+	f.Resolve(reply)
 	f.broadcast()
 	return nil
 }
@@ -83,43 +72,32 @@ func (f *FutureImpl) Send(data interface{}, h Header, addr Addr) error {
 		return errors.Wrap(ErrFutureResolved, "Future %q already resolved", f.Addr())
 	}
 
-	env := CreateEnvelope(addr, h, data)
-
-	f.cond.L.Lock()
-	f.result = &env
-	f.cond.L.Unlock()
-	f.cond.Broadcast()
-
+	f.Resolve(CreateEnvelope(addr, h, data))
 	f.broadcast()
 	return nil
 }
 
-// SendFuture will return a Future which will be finalized when present
-// future as resolved and finalized it's response. It simply creates a
-// future chain where each get's resolved automatically by the resolution of
-// it's previous chain.
-func (f *FutureImpl) SendFuture(data interface{}, h Header, addr Addr) Future {
-	if f.resolved() {
-		return f
+// Escalate escalates giving value into the parent of giving future, which also fails future
+// and resolves it as a failure.
+func (f *FutureImpl) Escalate(m interface{}) {
+	if merr, ok := m.(error); ok {
+		f.Reject(merr)
+	} else {
+		f.Reject(ErrFutureEscalatedFailure)
 	}
 
-	f.Send(data, h, addr)
-	return f
+	f.broadcastError()
+	f.parent.Escalate(m)
 }
 
-// SendFutureTimeout will return a Future which will be finalized either by the
-// resolution of it's previous chain or the failure of it's previous chain to
-// reach a resolution before a giving duration.
-// Not only the returned Future and it's own chain after itself will be affected.
-func (f *FutureImpl) SendFutureTimeout(data interface{}, h Header, addr Addr, dur time.Duration) Future {
-	if f.resolved() {
-		return f
-	}
+// Future returns a new future instance from giving source.
+func (f *FutureImpl) Future() Future {
+	return NewFuture(f.parent)
+}
 
-	timedFuture := TimedFuture(f, dur)
-	f.Pipe(timedFuture)
-	f.Send(data, h, addr)
-	return timedFuture
+// TimedFuture returns a new future instance from giving source.
+func (f *FutureImpl) TimedFuture(d time.Duration) Future {
+	return TimedFuture(f.parent, d)
 }
 
 // Watch adds giving function into event system for future.
@@ -161,17 +139,6 @@ func (f *FutureImpl) Addr() string {
 	return f.parent.Addr() + "/:future/" + f.id.String()
 }
 
-// Escalate escalates giving value into the parent of giving future, which also fails future
-// and resolves it as a failure.
-func (f *FutureImpl) Escalate(m interface{}) {
-	f.cond.L.Lock()
-	f.err = ErrFutureEscalatedFailure
-	f.cond.L.Unlock()
-
-	f.cond.Broadcast()
-	f.parent.Escalate(m)
-}
-
 // AddressOf requests giving service from future's parent AddressOf method.
 func (f *FutureImpl) AddressOf(service string, ancestry bool) (Addr, error) {
 	return f.parent.AddressOf(service, ancestry)
@@ -186,10 +153,10 @@ func (f *FutureImpl) Spawn(service string, rr Behaviour, initial interface{}) (A
 // occurred.
 func (f *FutureImpl) Wait() error {
 	var err error
-	f.cond.L.Lock()
-	f.cond.Wait()
+	f.w.Wait()
+	f.cw.Lock()
 	err = f.err
-	f.cond.L.Unlock()
+	f.cw.Unlock()
 	return err
 }
 
@@ -210,38 +177,72 @@ func (f *FutureImpl) Pipe(addrs ...Addr) {
 // Err returns the error for the failure of
 // giving error.
 func (f *FutureImpl) Err() error {
-	f.cond.L.Lock()
-	defer f.cond.L.Unlock()
+	f.cw.Lock()
+	defer f.cw.Unlock()
 	return f.err
 }
 
 // Result returns the envelope which is used to resolve the future.
 func (f *FutureImpl) Result() Envelope {
-	f.cond.L.Lock()
-	defer f.cond.L.Unlock()
+	f.cw.Lock()
+	defer f.cw.Unlock()
 	return *f.result
 }
 
+// Resolve resolves giving future with envelope.
+func (f *FutureImpl) Resolve(env Envelope) {
+	if f.resolved() {
+		return
+	}
+
+	f.cw.Lock()
+	f.result = &env
+	f.cw.Unlock()
+	f.w.Done()
+}
+
+// Reject rejects giving future with error.
+func (f *FutureImpl) Reject(err error) {
+	if f.resolved() {
+		return
+	}
+
+	f.cw.Lock()
+	f.err = err
+	f.cw.Unlock()
+	f.w.Done()
+}
+
 func (f *FutureImpl) resolved() bool {
-	f.cond.L.Lock()
-	defer f.cond.L.Unlock()
+	f.cw.Lock()
+	defer f.cw.Unlock()
 	return f.result != nil || f.err != nil
 }
 
-func (f *FutureImpl) broadcast() {
+func (f *FutureImpl) broadcastError() {
+	var res error
+
 	f.ac.Lock()
-	defer f.ac.Unlock()
+	res = f.err
+	f.ac.Unlock()
 
 	for _, addr := range f.pipes {
-		addr.Forward(*f.result)
+		if rr, ok := addr.(Resolvables); ok {
+			rr.Reject(res)
+		}
 	}
 }
 
-func (f *FutureImpl) sendError(err error) {
-	f.cond.L.Lock()
-	f.err = err
-	f.cond.L.Unlock()
-	f.cond.Broadcast()
+func (f *FutureImpl) broadcast() {
+	var res *Envelope
+
+	f.ac.Lock()
+	res = f.result
+	f.ac.Unlock()
+
+	for _, addr := range f.pipes {
+		addr.Forward(*res)
+	}
 }
 
 func (f *FutureImpl) timedResolved() {
@@ -249,5 +250,5 @@ func (f *FutureImpl) timedResolved() {
 	if f.resolved() {
 		return
 	}
-	f.sendError(ErrFutureTimeout)
+	f.Reject(ErrFutureTimeout)
 }

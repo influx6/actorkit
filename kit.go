@@ -384,12 +384,27 @@ type Addr interface {
 	Service
 	Spawner
 	Identity
+	Futures
 	Watchable
 	Descendants
 	Addressable
 	Escalatable
 	AncestralAddr
 	AddressService
+}
+
+//***********************************
+//  Futures
+//***********************************
+
+// Futures defines an interface which exposes methods creating
+// futures from a source
+type Futures interface {
+	// Future returns a new future instance from giving source.
+	Future() Future
+
+	// TimedFuture returns a new timed future instance from giving source.
+	TimedFuture(time.Duration) Future
 }
 
 //***********************************
@@ -475,14 +490,17 @@ type Sender interface {
 	// Send will deliver a message to the underline actor
 	// with Addr set as sender .
 	Send(interface{}, Header, Addr) error
+}
 
-	// SendFuture will deliver given message to Addr's actor inbox
-	// for processing and returns a Addr for Future actor has destination of response.
-	SendFuture(interface{}, Header, Addr) Future
+//***********************************
+//  Resolvables
+//***********************************
 
-	// SendFutureTimeout will deliver given message to Addr's actor inbox
-	// for processing and returns a Future has destination of response.
-	SendFutureTimeout(interface{}, Header, Addr, time.Duration) Future
+// Resolvables defines an interface which exposes methods for
+// resolving an implementation
+type Resolvables interface {
+	Reject(error)
+	Resolve(Envelope)
 }
 
 //***********************************
