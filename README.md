@@ -15,37 +15,35 @@ go get github.com/gokit/actorkit
 
 ## Hello World
 
-Using actorkit is pretty easy and below is the usual hello word sample with a twist.
-
 ```go
 import (
-	"github.com/gokit/actorkit"
-	"github.com/gokit/actorkit/actors"
 	"fmt"
+
+	"github.com/gokit/actorkit"
 )
 
-type HelloMessage struct{
+type HelloMessage struct {
 	Name string
 }
 
-type HelloOp struct{}
-func (h HelloOp) Action(me actorkit.Addr, e actorkit.Envelope){
-	switch mo := e.Data().(type) {
-	case *HelloMessage:
-		fmt.Sprintf("Hello World %q", mo.Name)
+type HelloOp struct {
+	Done chan struct{}
+}
+
+func (h *HelloOp) Action(me actorkit.Addr, e actorkit.Envelope) {
+	switch mo := e.Data.(type) {
+	case HelloMessage:
+		fmt.Printf("Hello World %q\n", mo.Name)
 	}
 }
 
-func main(){
+func main() {
+	addr, _, err := actorkit.System(&HelloOp{}, "kit", "localhos:0", nil)
+	if err != nil {
+		panic(err)
+	}
 
-	ax := actors.FromBehaviour(&HelloOp{})
-
-	axMask.Send(&HelloMessage{Name:"Wally"}, actorkit.GetDeadletter())
-
-	env := <-envelope
-	fmt.Printf("Received: %#v\n", env)
-
-	ax.GracefulStop().Wait()
+	addr.Send(HelloMessage{Name: "Wally"}, actorkit.Header{}, actorkit.DeadLetters())
+	actorkit.Destroy(addr, nil).Wait()
 }
-
 ```

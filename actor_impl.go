@@ -147,22 +147,37 @@ type ActorImpl struct {
 
 // FromProtocol returns a partial function which taking a provided initial data which is optional
 // will return a new root actor with giving behaviour, protocol and namespace.
-func FromProtocol(ac Behaviour, protocol string, namespace string) func(interface{}) Actor {
-	return func(conf interface{}) Actor {
+func FromProtocol(ac Behaviour, protocol string, namespace string) func(interface{}) (Actor, error) {
+	return func(conf interface{}) (Actor, error) {
 		actor := NewActorImpl(protocol, namespace, UseBehaviour(ac))
-		actor.Start(conf).Wait()
-		return actor
+		err := actor.Start(conf).Wait()
+		return actor, err
 	}
 }
 
 // FromBehaviour returns a partial function which taking a provided initial data which is optional
 // will return a new root actor with giving behaviour as factory behaviour for it's message processing.
-func FromBehaviour(ac Behaviour) func(interface{}, string, string) Actor {
-	return func(conf interface{}, protocol string, namespace string) Actor {
+func FromBehaviour(ac Behaviour) func(interface{}, string, string) (Actor, error) {
+	return func(conf interface{}, protocol string, namespace string) (Actor, error) {
 		actor := NewActorImpl(protocol, namespace, UseBehaviour(ac))
-		actor.Start(conf).Wait()
-		return actor
+		err := actor.Start(conf).Wait()
+		return actor, err
 	}
+}
+
+// System is generally used to create an Ancestor actor with a default behaviour, it returns
+// the actor itself, it's access address and an error if failed.
+//
+// Usually you always have one root or system actor per namespace (i.e host:port, ipv6, ..etc),
+// then build off your actor system off of it, so do ensure to minimize the
+// use of multiple system or ancestor actor roots.
+//
+// Remember all child actors spawned from an ancestor always takes its protocol and
+// namespace.
+func System(ac Behaviour, protocol string, namespace string, initial interface{}) (Addr, Actor, error) {
+	actor := NewActorImpl(protocol, namespace, UseBehaviour(ac))
+	err := actor.Start(initial).Wait()
+	return AccessOf(actor), actor, err
 }
 
 // NewActorImpl returns a new instance of an ActorImpl assigned giving protocol and service name.
