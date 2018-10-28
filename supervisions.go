@@ -3,7 +3,87 @@ package actorkit
 import (
 	"math/rand"
 	"time"
+
+	"github.com/gokit/errors"
 )
+
+//*****************************************************************
+// AllForOneSupervisor
+//*****************************************************************
+
+// AllForOneSupervisor implements a one-to-one supervising strategy for giving actors.
+type AllForOneSupervisor struct {
+	Max       int
+	Direction Direction
+	Invoker   SupervisionInvoker
+}
+
+// Handle implements the Supervisor interface and provides the algorithm logic for the
+// all-for-one monitoring strategy, where a failed actor causes the same effect to be applied
+// to all siblings and parent.
+func (sp *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
+	var on allForOne
+	on.max = sp.Max
+	on.err = err
+	on.actor = parent
+	on.addr = targetAddr
+	on.Decider = sp.Direction
+	on.invoker = sp.Invoker
+	go on.Handle()
+}
+
+type allForOne struct {
+	max     int
+	count   int
+	addr    Addr
+	actor   Actor
+	err     interface{}
+	Decider Direction
+	invoker SupervisionInvoker
+}
+
+func (on *allForOne) Handle() {
+	on.count++
+	if on.count >= on.max {
+		return
+	}
+
+	switch on.Decider(on.err) {
+	case KillDirective:
+		waiter := on.actor.Kill(nil)
+		if on.invoker != nil {
+			on.invoker.InvokedKill(on.err, on.addr, on.actor)
+		}
+		waiter.Wait()
+	case StopDirective:
+		waiter := on.actor.Stop(nil)
+		if on.invoker != nil {
+			on.invoker.InvokedStop(on.err, on.addr, on.actor)
+		}
+		waiter.Wait()
+	case RestartDirective:
+		waiter := on.actor.Restart(nil)
+		if on.invoker != nil {
+			on.invoker.InvokedRestart(on.err, Stat{Max: on.max, Count: on.count}, on.addr, on.actor)
+		}
+
+		if err := waiter.Wait(); err != nil {
+			if errors.IsAny(err, ErrActorState) {
+				return
+			}
+			on.Handle()
+			return
+		}
+	case DestroyDirective:
+		waiter := on.actor.Destroy(nil)
+		if on.invoker != nil {
+			on.invoker.InvokedDestroy(on.err, on.addr, on.actor)
+		}
+		waiter.Wait()
+	case IgnoreDirective:
+		return
+	}
+}
 
 //*****************************************************************
 // OneForOneSupervisor
@@ -21,7 +101,7 @@ type OneForOneSupervisor struct {
 
 // Handle implements the Supervisor interface and provides the algorithm logic for the
 // one-for-one monitoring strategy, where a failed actor is dealt with singularly without affecting
-// it's children.
+// it's siblings.
 func (sp *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
 	var on oneForOne
 	on.max = sp.Max
@@ -51,10 +131,36 @@ func (on *oneForOne) Handle() {
 
 	switch on.Decider(on.err) {
 	case KillDirective:
-
+		waiter := on.actor.Kill(nil)
+		if on.invoker != nil {
+			on.invoker.InvokedKill(on.err, on.addr, on.actor)
+		}
+		waiter.Wait()
 	case StopDirective:
+		waiter := on.actor.Stop(nil)
+		if on.invoker != nil {
+			on.invoker.InvokedStop(on.err, on.addr, on.actor)
+		}
+		waiter.Wait()
 	case RestartDirective:
+		waiter := on.actor.Restart(nil)
+		if on.invoker != nil {
+			on.invoker.InvokedRestart(on.err, Stat{Max: on.max, Count: on.count}, on.addr, on.actor)
+		}
+
+		if err := waiter.Wait(); err != nil {
+			if errors.IsAny(err, ErrActorState) {
+				return
+			}
+			on.Handle()
+			return
+		}
 	case DestroyDirective:
+		waiter := on.actor.Destroy(nil)
+		if on.invoker != nil {
+			on.invoker.InvokedDestroy(on.err, on.addr, on.actor)
+		}
+		waiter.Wait()
 	case IgnoreDirective:
 		return
 	}
@@ -78,6 +184,9 @@ func (sp *RestartingSupervisor) Handle(err interface{}, targetAddr Addr, target 
 	}
 
 	if err := waiter.Wait(); err != nil {
+		if errors.IsAny(err, ErrActorState) {
+			return
+		}
 		target.Escalate(err, targetAddr)
 	}
 }
@@ -136,6 +245,9 @@ func (en *exponentialStrategy) Handle() {
 		}
 
 		if err := waiter.Wait(); err != nil {
+			if errors.IsAny(err, ErrActorState) {
+				return
+			}
 			en.Handle()
 		}
 	})

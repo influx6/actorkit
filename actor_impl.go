@@ -380,7 +380,7 @@ func (ati *ActorImpl) Kill(data interface{}) ErrWaiter {
 }
 
 func (ati *ActorImpl) kill(data interface{}) *futurechain.FutureChain {
-	return ati.stop(data, KillDirective).Then(func(_ context.Context) error {
+	return ati.stop(data, KillDirective, true).Then(func(_ context.Context) error {
 		ati.mails.Clear()
 		return nil
 	})
@@ -389,10 +389,10 @@ func (ati *ActorImpl) kill(data interface{}) *futurechain.FutureChain {
 // Start starts off or resumes giving actor operations for processing
 // received messages.
 func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
-	return ati.start(data)
+	return ati.start(data, true)
 }
 
-func (ati *ActorImpl) start(data interface{}) *futurechain.FutureChain {
+func (ati *ActorImpl) start(data interface{}, children bool) *futurechain.FutureChain {
 	chain := futurechain.NewFutureChain(context.Background(), func(_ context.Context) error {
 		if ati.stopping.IsOn() {
 			return errors.Wrap(ErrAlreadyStopping, "Actor %q already stopping", ati.id.String())
@@ -469,12 +469,14 @@ func (ati *ActorImpl) start(data interface{}) *futurechain.FutureChain {
 	})
 
 	// signal children of actor to start as well.
-	ati.tree.Each(func(actor Actor) bool {
-		chain.Go(func(_ context.Context) error {
-			return actor.Start(data).Wait()
+	if children {
+		ati.tree.Each(func(actor Actor) bool {
+			chain.Go(func(_ context.Context) error {
+				return actor.Start(data).Wait()
+			})
+			return true
 		})
-		return true
-	})
+	}
 
 	return chain
 }
@@ -483,10 +485,10 @@ func (ati *ActorImpl) start(data interface{}) *futurechain.FutureChain {
 // All pending messages will be kept, so the actor can continue once started.
 // To both stop and clear all messages, use ActorImpl.Kill().
 func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
-	return ati.stop(data, StopDirective)
+	return ati.stop(data, StopDirective, true)
 }
 
-func (ati *ActorImpl) stop(data interface{}, dir Directive) *futurechain.FutureChain {
+func (ati *ActorImpl) stop(data interface{}, dir Directive, children bool) *futurechain.FutureChain {
 	chain := futurechain.NewFutureChain(context.Background(), func(_ context.Context) error {
 		if !ati.running.IsOn() {
 			return errors.Wrap(ErrAlreadyStopped, "Actor %q already stopped", ati.id.String())
@@ -539,19 +541,21 @@ func (ati *ActorImpl) stop(data interface{}, dir Directive) *futurechain.FutureC
 		return nil
 	})
 
-	ati.tree.Each(func(actor Actor) bool {
-		chain.Go(func(_ context.Context) error {
-			switch dir {
-			case DestroyDirective:
-				return actor.Destroy(data).Wait()
-			case KillDirective:
-				return actor.Kill(data).Wait()
-			default:
-				return actor.Stop(data).Wait()
-			}
+	if children {
+		ati.tree.Each(func(actor Actor) bool {
+			chain.Go(func(_ context.Context) error {
+				switch dir {
+				case DestroyDirective:
+					return actor.Destroy(data).Wait()
+				case KillDirective:
+					return actor.Kill(data).Wait()
+				default:
+					return actor.Stop(data).Wait()
+				}
+			})
+			return true
 		})
-		return true
-	})
+	}
 
 	return chain
 }
@@ -560,12 +564,12 @@ func (ati *ActorImpl) stop(data interface{}, dir Directive) *futurechain.FutureC
 // will immediately resume operations from pending messages within
 // mailbox.
 func (ati *ActorImpl) Restart(data interface{}) ErrWaiter {
-	return ati.restart(data)
+	return ati.restart(data, true)
 }
 
-func (ati *ActorImpl) restart(data interface{}) *futurechain.FutureChain {
+func (ati *ActorImpl) restart(data interface{}, children bool) *futurechain.FutureChain {
 	if !ati.running.IsOn() {
-		return ati.start(data)
+		return ati.start(data, children)
 	}
 
 	chain := futurechain.NewFutureChain(context.Background(), func(_ context.Context) error {
@@ -581,10 +585,10 @@ func (ati *ActorImpl) restart(data interface{}) *futurechain.FutureChain {
 
 		ati.restarting.On()
 
-		return ati.Stop(data).Wait()
+		return ati.stop(data, StopDirective, children).Wait()
 	}).Then(func(_ context.Context) error {
 		ati.restarting.Off()
-		return ati.Start(data).Wait()
+		return ati.start(data, children).Wait()
 	}).Then(func(_ context.Context) error {
 		ati.events.Publish(ActorRestarted{
 			Data: data,
@@ -601,7 +605,7 @@ func (ati *ActorImpl) restart(data interface{}) *futurechain.FutureChain {
 // Destroy stops giving actor and emits a destruction event which
 // will remove giving actor from it's ancestry trees.
 func (ati *ActorImpl) Destroy(data interface{}) ErrWaiter {
-	return ati.stop(data, DestroyDirective).Then(func(_ context.Context) error {
+	return ati.stop(data, DestroyDirective, true).Then(func(_ context.Context) error {
 		ati.mails.Clear()
 		return nil
 	}).Then(func(_ context.Context) error {

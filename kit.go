@@ -523,6 +523,7 @@ type Stat struct {
 // giving action taken for a giving error.
 type SupervisionInvoker interface {
 	InvokedStop(cause interface{}, addr Addr, target Actor)
+	InvokedKill(cause interface{}, addr Addr, target Actor)
 	InvokedDestroy(cause interface{}, addr Addr, target Actor)
 	InvokedRestart(cause interface{}, stat Stat, addr Addr, target Actor)
 }
