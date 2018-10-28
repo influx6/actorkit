@@ -651,13 +651,16 @@ func (ati *ActorImpl) readMessages() {
 				}
 
 				if err := recover(); err != nil {
-					ati.Escalate(ActorPanic{
+					event := ActorPanic{
 						CausedAddr:    a,
 						CausedMessage: x,
 						Panic:         err,
 						Addr:          ati.Addr(),
 						ID:            ati.id.String(),
-					}, a)
+					}
+
+					ati.events.Publish(event)
+					ati.Escalate(event, a)
 				}
 			}()
 
