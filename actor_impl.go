@@ -145,6 +145,26 @@ type ActorImpl struct {
 	subs map[string]Subscription
 }
 
+// FromProtocol returns a partial function which taking a provided initial data which is optional
+// will return a new root actor with giving behaviour, protocol and namespace.
+func FromProtocol(ac Behaviour, protocol string, namespace string) func(interface{}) Actor {
+	return func(conf interface{}) Actor {
+		actor := NewActorImpl(protocol, namespace, UseBehaviour(ac))
+		actor.Start(conf).Wait()
+		return actor
+	}
+}
+
+// FromBehaviour returns a partial function which taking a provided initial data which is optional
+// will return a new root actor with giving behaviour as factory behaviour for it's message processing.
+func FromBehaviour(ac Behaviour) func(interface{}, string, string) Actor {
+	return func(conf interface{}, protocol string, namespace string) Actor {
+		actor := NewActorImpl(protocol, namespace, UseBehaviour(ac))
+		actor.Start(conf).Wait()
+		return actor
+	}
+}
+
 // NewActorImpl returns a new instance of an ActorImpl assigned giving protocol and service name.
 func NewActorImpl(protocol string, namespace string, ops ...ActorImplOption) *ActorImpl {
 	var ac ActorImpl
@@ -163,7 +183,15 @@ func NewActorImpl(protocol string, namespace string, ops ...ActorImplOption) *Ac
 
 	// if we have no set provider then use a one-for-one strategy.
 	if ac.supervisor == nil {
-		ac.supervisor = &OneForOneSupervisor{}
+		ac.supervisor = &OneForOneSupervisor{
+			Max: 10,
+			Invoker: &EventSupervisingInvoker{
+				Event: ac.events,
+			},
+			Direction: func(_ interface{}) Directive {
+				return IgnoreDirective
+			},
+		}
 	}
 
 	ac.id = xid.New()
@@ -381,7 +409,11 @@ func (ati *ActorImpl) Kill(data interface{}) ErrWaiter {
 
 func (ati *ActorImpl) kill(data interface{}) *futurechain.FutureChain {
 	return ati.stop(data, KillDirective, true).Then(func(_ context.Context) error {
-		ati.mails.Clear()
+		for !ati.mails.IsEmpty() {
+			if nextAddr, next, err := ati.mails.Pop(); err == nil {
+				deadLetters.Publish(DeadMail{To: nextAddr, Message: next})
+			}
+		}
 		return nil
 	})
 }
@@ -606,7 +638,11 @@ func (ati *ActorImpl) restart(data interface{}, children bool) *futurechain.Futu
 // will remove giving actor from it's ancestry trees.
 func (ati *ActorImpl) Destroy(data interface{}) ErrWaiter {
 	return ati.stop(data, DestroyDirective, true).Then(func(_ context.Context) error {
-		ati.mails.Clear()
+		for !ati.mails.IsEmpty() {
+			if nextAddr, next, err := ati.mails.Pop(); err == nil {
+				deadLetters.Publish(DeadMail{To: nextAddr, Message: next})
+			}
+		}
 		return nil
 	}).Then(func(_ context.Context) error {
 		ati.events.Publish(ActorDestroyed{

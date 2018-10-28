@@ -10,6 +10,8 @@ github.com/gokit/errors v0.0.0-20181026114739-c7f9deedc84f h1:rOsbuFK3yuqr9E44ry
 github.com/gokit/errors v0.0.0-20181026114739-c7f9deedc84f/go.mod h1:ipykB/QrFXRTDj7gnqpIPJGoH8TN0FRQqAuKUUOZg9E=
 github.com/gokit/errors v0.0.0-20181026120426-7a8e9e77d6a3 h1:TD1Lg0mqXKbjneWHZmR9b4l++vVAvY0xBgtBHMOvMAc=
 github.com/gokit/errors v0.0.0-20181026120426-7a8e9e77d6a3/go.mod h1:ipykB/QrFXRTDj7gnqpIPJGoH8TN0FRQqAuKUUOZg9E=
+github.com/gokit/errors v0.0.0-20181028180812-faa548fa487e h1:Fe31UPAhrBzCyqTGm9UMQ94ayrZ9zv07m+ovFT47le4=
+github.com/gokit/errors v0.0.0-20181028180812-faa548fa487e/go.mod h1:ipykB/QrFXRTDj7gnqpIPJGoH8TN0FRQqAuKUUOZg9E=
 github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7 h1:9JJfPoUUpjeImyRSPb9BD3jL3ASS0a/9uo9EFXdRbCM=
 github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7/go.mod h1:u590NupW7qC90r1MhdNhQoHKY0WYGdHDo/4YszwlS1o=
 github.com/gokit/futurechain v0.0.0-20181027053849-6f35d2aed70b h1:+pY/JwoxrcoS3uVuGClbA2LumPHVT94aM8UgOh+e8SE=
@@ -24,6 +26,8 @@ github.com/gokit/futurechain v0.0.0-20181027102352-a22d34a28e2f h1:whZhtrGM0LJmA
 github.com/gokit/futurechain v0.0.0-20181027102352-a22d34a28e2f/go.mod h1:gGl5VWei4qAvUe2lOfTlixAs51xMV0+OmKE3H4k0ntc=
 github.com/gokit/futurechain v0.0.0-20181028091207-7fc8ae61dfed h1:F5nFcAld4xDFLQcEkUPj5sWiosMNr/JRvYgyKvlc6oM=
 github.com/gokit/futurechain v0.0.0-20181028091207-7fc8ae61dfed/go.mod h1:gGl5VWei4qAvUe2lOfTlixAs51xMV0+OmKE3H4k0ntc=
+github.com/gokit/futurechain v0.0.0-20181028092304-940f8b7a813d h1:qBcMHjD55Uof5bjbwfwQdNE1V1jhz7PgUcq/Ru6YPC0=
+github.com/gokit/futurechain v0.0.0-20181028092304-940f8b7a813d/go.mod h1:gGl5VWei4qAvUe2lOfTlixAs51xMV0+OmKE3H4k0ntc=
 github.com/gokit/xid v1.2.2 h1:F/WWbn9+tOOXM1Fi6/D+VJNaY4vY1BjwPW2apD3kHjc=
 github.com/gokit/xid v1.2.2/go.mod h1:Uzq+MT5Jix7O/f+fugfoXLUcm2K3hr4nlM+mQDPvIMQ=
 github.com/gopherjs/gopherjs v0.0.0-20181017120253-0766667cb4d1 h1:EGx4pi6eqNxGaHF6qqu48+N2wcFQ5qg5FXgOdqsJ5d8=

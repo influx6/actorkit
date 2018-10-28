@@ -3,8 +3,27 @@ package actorkit
 import (
 	"time"
 
+	"github.com/gokit/es"
+
 	"github.com/gokit/xid"
 )
+
+var (
+	deadLetters = es.New()
+)
+
+// DeadMail defines the type of event triggered by the deadletters
+// event pipeline.
+type DeadMail struct {
+	To      Addr
+	Message Envelope
+}
+
+// DeadLetters returns the central event pipeline where unprocessed
+// messages are sent when actors are killed or destroyed.
+func DeadLetters() *es.EventStream {
+	return deadLetters
+}
 
 //***************************************************************************
 // Header

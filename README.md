@@ -24,36 +24,21 @@ import (
 	"fmt"
 )
 
-type HelloOp struct{
-	Started chan bool
-	ShuttingDown chan bool
-	FinishedShutdown chan bool
-	Envelope chan string
-}
-
 type HelloMessage struct{
 	Name string
 }
 
-func (h HelloOp) Respond(me actorkit.Mask,e actorkit.Envelope, d actorkit.Distributor){
+type HelloOp struct{}
+
+
+func (h HelloOp) Action(me actorkit.Addr, e actorkit.Envelope){
 	switch mo := e.Data().(type) {
-	case *actorkit.ProcessStarted:
-		h.Started <- true
-	case *actorkit.ProcessShuttingDown:
-		h.ShuttingDown <- true
-	case *actorkit.ProcessFinishedShutdown:
-		h.FinishedShutdown <- true
 	case *HelloMessage:
-		h.Envelope <- fmt.Sprintf("Hello World %q", mo.Name)
+		fmt.Sprintf("Hello World %q", mo.Name)
 	}
 }
 
 func main(){
-
-	started := make(chan bool, 1)
-	shutdown := make(chan bool, 1)
-	finished := make(chan bool, 1)
-	envelope := make(chan string,1)
 
 	ax := actors.FromActor(&HelloOp{
 		Started: started,
