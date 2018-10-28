@@ -22,6 +22,23 @@ var (
 )
 
 //********************************************************
+// Directives
+//********************************************************
+
+// Directive defines a int type which represents a giving action to be taken
+// for an actor.
+type Directive int
+
+// directive sets...
+const (
+	IgnoreDirective Directive = iota
+	DestroyDirective
+	KillDirective
+	StopDirective
+	RestartDirective
+)
+
+//********************************************************
 // ActorImpl
 //********************************************************
 
@@ -123,6 +140,9 @@ type ActorImpl struct {
 
 	chl   sync.RWMutex
 	chain []DiscoveryService
+
+	sml  sync.Mutex
+	subs map[string]Subscription
 }
 
 // NewActorImpl returns a new instance of an ActorImpl assigned giving protocol and service name.
@@ -150,6 +170,7 @@ func NewActorImpl(protocol string, namespace string, ops ...ActorImplOption) *Ac
 	ac.protocol = protocol
 	ac.namespace = namespace
 	ac.signal = make(chan struct{}, 1)
+	ac.subs = map[string]Subscription{}
 	ac.tree = NewActorTree(10)
 	return &ac
 }
@@ -216,16 +237,61 @@ func (ati *ActorImpl) Receive(a Addr, e Envelope) error {
 	return ati.mails.Push(a, e)
 }
 
+// AdoptChildren processes provided actor by adopting all children of providing actor.
+// It moves all children of actor into it's own children tree and clears all
+// connection of said actor
+func (ati *ActorImpl) AdoptChildren(a Actor) error {
+	am, ok := a.(*ActorImpl)
+	if ok {
+		return errors.New("%T is not an instance of *ActorImpl")
+	}
+
+	am.tree.Each(func(actor Actor) bool {
+		ati.tree.AddActor(actor)
+		return true
+	})
+
+	am.clearChildSubs()
+	am.tree.Reset()
+	return nil
+}
+
+func (ati *ActorImpl) clearChildSubs() {
+	ati.sml.Lock()
+	defer ati.sml.Unlock()
+	for _, sub := range ati.subs {
+		go sub.Stop()
+	}
+
+	ati.subs = map[string]Subscription{}
+}
+
 // manageActor handles addition of new actor into actor tree.
 func (ati *ActorImpl) manageActor(service string, an Actor, conf interface{}) (Addr, error) {
 	ati.tree.AddActor(an)
 
-	an.Watch(func(event interface{}) {
+	sub := an.Watch(func(event interface{}) {
 		switch event.(type) {
 		case ActorDestroyed:
 			ati.tree.RemoveActor(an)
+
+			// Get subscription, remove and delete from parent
+			// and end subscription to self.
+			var sub Subscription
+			ati.sml.Lock()
+			sub = ati.subs[an.ID()]
+			delete(ati.subs, an.ID())
+			ati.sml.Unlock()
+
+			if sub != nil {
+				go sub.Stop()
+			}
 		}
 	})
+
+	ati.sml.Lock()
+	ati.subs[an.ID()] = sub
+	ati.sml.Unlock()
 
 	go ati.setupActor(an, conf)
 
@@ -308,16 +374,26 @@ func (ati *ActorImpl) Stopped() bool {
 	return !ati.running.IsOn()
 }
 
-// Kill immediately stops the actor and all message processing operations.
-// It blocks till actor is absolutely stopped.
-func (ati *ActorImpl) Kill(data interface{}) error {
-	return ati.Stop(data).Wait()
+// Kill immediately stops the actor and clears all pending messages.
+func (ati *ActorImpl) Kill(data interface{}) ErrWaiter {
+	return ati.kill(data)
 }
 
-// Start returns a giving waiter which will return a waiter
-// which can be used to block until assurance of start completion.
+func (ati *ActorImpl) kill(data interface{}) *futurechain.FutureChain {
+	return ati.stop(data, KillDirective).Then(func(_ context.Context) error {
+		ati.mails.Clear()
+		return nil
+	})
+}
+
+// Start starts off or resumes giving actor operations for processing
+// received messages.
 func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
-	chain := futurechain.NewFutureChain(context.Background(), func() error {
+	return ati.start(data)
+}
+
+func (ati *ActorImpl) start(data interface{}) *futurechain.FutureChain {
+	chain := futurechain.NewFutureChain(context.Background(), func(_ context.Context) error {
 		if ati.stopping.IsOn() {
 			return errors.Wrap(ErrAlreadyStopping, "Actor %q already stopping", ati.id.String())
 		}
@@ -335,7 +411,7 @@ func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
 		}
 
 		return nil
-	}).When(func() error {
+	}).When(func(_ context.Context) error {
 		ati.running.Off()
 		ati.stopping.Off()
 		ati.restarting.Off()
@@ -355,7 +431,7 @@ func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
 		}
 
 		return nil
-	}).When(func() error {
+	}).When(func(_ context.Context) error {
 		ati.waiter.Add(1)
 
 		// We need a means of validating that the read message
@@ -371,7 +447,7 @@ func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
 		// started.
 		<-up
 		return nil
-	}).When(func() error {
+	}).When(func(_ context.Context) error {
 		if ati.startState != nil {
 			if err := ati.startState.PostStart(data); err != nil {
 				ati.starting.Off()
@@ -394,7 +470,7 @@ func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
 
 	// signal children of actor to start as well.
 	ati.tree.Each(func(actor Actor) bool {
-		chain.Go(func() error {
+		chain.Go(func(_ context.Context) error {
 			return actor.Start(data).Wait()
 		})
 		return true
@@ -403,9 +479,15 @@ func (ati *ActorImpl) Start(data interface{}) ErrWaiter {
 	return chain
 }
 
-// Stop stops the operations of the actor.
+// Stop stops the operations of the actor on processing received messages.
+// All pending messages will be kept, so the actor can continue once started.
+// To both stop and clear all messages, use ActorImpl.Kill().
 func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
-	chain := futurechain.NewFutureChain(context.Background(), func() error {
+	return ati.stop(data, StopDirective)
+}
+
+func (ati *ActorImpl) stop(data interface{}, dir Directive) *futurechain.FutureChain {
+	chain := futurechain.NewFutureChain(context.Background(), func(_ context.Context) error {
 		if !ati.running.IsOn() {
 			return errors.Wrap(ErrAlreadyStopped, "Actor %q already stopped", ati.id.String())
 		}
@@ -415,7 +497,7 @@ func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
 		}
 
 		return nil
-	}).When(func() error {
+	}).When(func(_ context.Context) error {
 		ati.events.Publish(ActorStopRequested{
 			ID:   ati.id.String(),
 			Addr: ati.Addr(),
@@ -429,7 +511,7 @@ func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
 		}
 
 		return nil
-	}).Then(func() error {
+	}).Then(func(_ context.Context) error {
 
 		// schedule closure of actor operation.
 		ati.signal <- struct{}{}
@@ -446,7 +528,7 @@ func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
 		}
 
 		return nil
-	}).Then(func() error {
+	}).Then(func(_ context.Context) error {
 		ati.stopping.Off()
 
 		ati.events.Publish(ActorStopped{
@@ -458,8 +540,15 @@ func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
 	})
 
 	ati.tree.Each(func(actor Actor) bool {
-		chain.Go(func() error {
-			return actor.Stop(data).Wait()
+		chain.Go(func(_ context.Context) error {
+			switch dir {
+			case DestroyDirective:
+				return actor.Destroy(data).Wait()
+			case KillDirective:
+				return actor.Kill(data).Wait()
+			default:
+				return actor.Stop(data).Wait()
+			}
 		})
 		return true
 	})
@@ -467,18 +556,24 @@ func (ati *ActorImpl) Stop(data interface{}) ErrWaiter {
 	return chain
 }
 
-// Restart will at attempt to restart actor and it's children.
+// Restart restarts the actors message processing operations. It
+// will immediately resume operations from pending messages within
+// mailbox.
 func (ati *ActorImpl) Restart(data interface{}) ErrWaiter {
+	return ati.restart(data)
+}
+
+func (ati *ActorImpl) restart(data interface{}) *futurechain.FutureChain {
 	if !ati.running.IsOn() {
-		return ati.Start(data)
+		return ati.start(data)
 	}
 
-	chain := futurechain.NewFutureChain(context.Background(), func() error {
+	chain := futurechain.NewFutureChain(context.Background(), func(_ context.Context) error {
 		if ati.restarting.IsOn() {
 			return errors.Wrap(ErrAlreadyRestarting, "Actor %q already restarting", ati.id.String())
 		}
 		return nil
-	}).When(func() error {
+	}).When(func(_ context.Context) error {
 		ati.events.Publish(ActorRestartRequested{
 			ID:   ati.id.String(),
 			Addr: ati.Addr(),
@@ -487,11 +582,10 @@ func (ati *ActorImpl) Restart(data interface{}) ErrWaiter {
 		ati.restarting.On()
 
 		return ati.Stop(data).Wait()
-	}).Then(func() error {
+	}).Then(func(_ context.Context) error {
 		ati.restarting.Off()
-
 		return ati.Start(data).Wait()
-	}).Then(func() error {
+	}).Then(func(_ context.Context) error {
 		ati.events.Publish(ActorRestarted{
 			Data: data,
 			Addr: ati.Addr(),
@@ -507,9 +601,10 @@ func (ati *ActorImpl) Restart(data interface{}) ErrWaiter {
 // Destroy stops giving actor and emits a destruction event which
 // will remove giving actor from it's ancestry trees.
 func (ati *ActorImpl) Destroy(data interface{}) ErrWaiter {
-	return futurechain.NewFutureChain(context.Background(), func() error {
-		return ati.Stop(data).Wait()
-	}).Then(func() error {
+	return ati.stop(data, DestroyDirective).Then(func(_ context.Context) error {
+		ati.mails.Clear()
+		return nil
+	}).Then(func(_ context.Context) error {
 		ati.events.Publish(ActorDestroyed{
 			Addr: ati.Addr(),
 			ID:   ati.id.String(),
@@ -518,6 +613,7 @@ func (ati *ActorImpl) Destroy(data interface{}) ErrWaiter {
 	})
 }
 
+// readMessages runs the process for executing messages.
 func (ati *ActorImpl) readMessages() {
 	defer ati.waiter.Done()
 
@@ -586,6 +682,14 @@ func NewActorTree(initialLength int) *ActorTree {
 		registry: map[string]int{},
 		children: make([]Actor, 0, initialLength),
 	}
+}
+
+// Reset resets content of actor tree, removing all children and registry.
+func (at *ActorTree) Reset() {
+	at.cw.Lock()
+	defer at.cw.Unlock()
+	at.children = nil
+	at.registry = map[string]int{}
 }
 
 // Length returns the length of actors within tree.

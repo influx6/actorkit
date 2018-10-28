@@ -336,11 +336,12 @@ type Stoppable interface {
 	Stopped() bool
 
 	// Stop will immediately stop the target process regardless of
-	// pending operation.
-	Kill(interface{}) error
+	// pending operation and clear all pending messages.
+	Kill(interface{}) ErrWaiter
 
 	// Stop will immediately stop the target regardless of
 	// pending operation and returns a ErrWaiter to await end.
+	// It keeps and maintains currently pending messages in mailbox.
 	Stop(interface{}) ErrWaiter
 }
 
@@ -441,6 +442,9 @@ type Mailbox interface {
 	// Wait will block till a message or set of messages are available.
 	Wait()
 
+	// Clear resets and empties all pending elements of queue.
+	Clear()
+
 	// Signal will broadcast to all listeners to attempt checking for
 	// new messages from blocking state.
 	Signal()
@@ -451,8 +455,8 @@ type Mailbox interface {
 	// Total should return current total message counts in mailbox.
 	Total() int
 
-	// Empty should return true/false if mailbox is empty.
-	Empty() bool
+	// IsEmpty should return true/false if mailbox is empty.
+	IsEmpty() bool
 
 	// Unpop should add giving addr and envelope to head/start of mailbox
 	// ensuring next retrieved message is this added envelope and address.
@@ -506,6 +510,22 @@ type Resolvables interface {
 //***********************************
 //  Invokers
 //***********************************
+
+// Stat defines a struct containing
+// statistics on the stats of a giving actor restart.
+type Stat struct {
+	Max     int           `json:"max"`
+	Count   int           `json:"count"`
+	Backoff time.Duration `json:"backoff"`
+}
+
+// SupervisionInvoker defines a invocation watcher, which reports
+// giving action taken for a giving error.
+type SupervisionInvoker interface {
+	InvokedStop(cause interface{}, addr Addr, target Actor)
+	InvokedDestroy(cause interface{}, addr Addr, target Actor)
+	InvokedRestart(cause interface{}, stat Stat, addr Addr, target Actor)
+}
 
 // MailInvoker defines an interface that exposes methods
 // to signal status of a mailbox.
@@ -579,6 +599,18 @@ type ActorStartRequested struct {
 	ID   string
 	Addr string
 	Data interface{}
+}
+
+// FutureResolved indicates the resolution of a giving future.
+type FutureResolved struct {
+	ID   string
+	Data interface{}
+}
+
+// FutureRejected indicates the rejection of a giving future.
+type FutureRejected struct {
+	ID    string
+	Error error
 }
 
 // ActorRestartRequested indicates giving message sent to actor to

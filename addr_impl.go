@@ -1,6 +1,10 @@
 package actorkit
 
-import "time"
+import (
+	"time"
+
+	"github.com/gokit/errors"
+)
 
 var _ Addr = &AddrImpl{}
 
@@ -10,6 +14,43 @@ type AddrImpl struct {
 	Root    Addressable
 	actor   Actor
 	service string
+}
+
+// Destroy returns a ErrWaiter which provides a means of forceful shutdown
+// and removal of giving actor of address from the system basically making
+// the actor and it's children non existent.
+func Destroy(addr Addr, data interface{}) ErrWaiter {
+	if stopper, ok := addr.(Stoppable); ok {
+		return stopper.Kill(data)
+	}
+	return NewWaiterImpl(errors.New("Addr implementer does not support killing"))
+}
+
+// Kill returns a ErrWaiter which provides a means of shutdown and clearing
+// all pending messages of giving actor through it's address. It also kills
+// actors children.
+func Kill(addr Addr, data interface{}) ErrWaiter {
+	if stopper, ok := addr.(Stoppable); ok {
+		return stopper.Kill(data)
+	}
+	return NewWaiterImpl(errors.New("Addr implementer does not support killing"))
+}
+
+// Restart restarts giving actor through it's address, the messages are maintained and kept
+// safe, the children of actor are also restarted.
+func Restart(addr Addr, data interface{}) ErrWaiter {
+	if stopper, ok := addr.(Restartable); ok {
+		return stopper.Restart(data)
+	}
+	return NewWaiterImpl(errors.New("Addr implementer does not support restarting"))
+}
+
+// Poison stops the actor referenced by giving address, this also causes a restart of actor's children.
+func Poison(addr Addr, data interface{}) ErrWaiter {
+	if stopper, ok := addr.(Stoppable); ok {
+		return stopper.Stop(data)
+	}
+	return NewWaiterImpl(errors.New("Addr implementer does not support stopping"))
 }
 
 // AccessOf returns a default "actor:access" service name, it's
@@ -89,8 +130,24 @@ func (a *AddrImpl) Stopped() bool {
 }
 
 // Kill sends a kill signal to the underline process to stop all operations and to close immediately.
-func (a *AddrImpl) Kill(data interface{}) error {
+func (a *AddrImpl) Kill(data interface{}) ErrWaiter {
 	return a.actor.Kill(data)
+}
+
+// Stop returns a ErrWaiter for the stopping of the underline actor for giving address.
+func (a *AddrImpl) Stop(data interface{}) ErrWaiter {
+	return a.actor.Stop(data)
+}
+
+// Restart returns a ErrWaiter for the restart of the underline actor for giving address.
+func (a *AddrImpl) Restart(data interface{}) ErrWaiter {
+	return a.actor.Restart(data)
+}
+
+// Destroy returns a ErrWaiter for the termination and destruction of the underline
+// actor for giving address.
+func (a *AddrImpl) Destroy(data interface{}) ErrWaiter {
+	return a.actor.Destroy(data)
 }
 
 // Escalate implements the Escalator interface.

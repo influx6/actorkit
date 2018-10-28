@@ -37,6 +37,7 @@ type FutureImpl struct {
 func NewFuture(parent Addr) *FutureImpl {
 	var ft FutureImpl
 	ft.parent = parent
+	ft.events = es.New()
 	ft.w.Add(1)
 	return &ft
 }
@@ -45,6 +46,7 @@ func NewFuture(parent Addr) *FutureImpl {
 func TimedFuture(parent Addr, dur time.Duration) *FutureImpl {
 	var ft FutureImpl
 	ft.parent = parent
+	ft.events = es.New()
 	ft.timer = time.NewTimer(dur)
 	ft.w.Add(1)
 
@@ -87,7 +89,6 @@ func (f *FutureImpl) Escalate(m interface{}) {
 	}
 
 	f.broadcastError()
-	f.parent.Escalate(m)
 }
 
 // Future returns a new future instance from giving source.
@@ -199,6 +200,8 @@ func (f *FutureImpl) Resolve(env Envelope) {
 	f.result = &env
 	f.cw.Unlock()
 	f.w.Done()
+
+	f.events.Publish(FutureResolved{Data: env, ID: f.id.String()})
 }
 
 // Reject rejects giving future with error.
@@ -211,6 +214,8 @@ func (f *FutureImpl) Reject(err error) {
 	f.err = err
 	f.cw.Unlock()
 	f.w.Done()
+
+	f.events.Publish(FutureRejected{Error: err, ID: f.id.String()})
 }
 
 func (f *FutureImpl) resolved() bool {

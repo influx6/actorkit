@@ -20,6 +20,15 @@ var (
 	}}
 )
 
+// Strategy defines a int type to represent a giving strategy.
+type Strategy int
+
+// constants.
+const (
+	DropNew Strategy = iota
+	DropOld
+)
+
 type node struct {
 	addr  Addr
 	value *Envelope
@@ -40,15 +49,6 @@ type BoxQueue struct {
 	strategy Strategy
 	invoker  MailInvoker
 }
-
-// Strategy defines a int type to represent a giving strategy.
-type Strategy int
-
-// constants.
-const (
-	DropNew Strategy = iota
-	DropOld
-)
 
 // BoundedBoxQueue returns a new instance of a unbounded box queue.
 // Items will be queue till the capped is reached and then old items
@@ -79,6 +79,22 @@ func UnboundedBoxQueue(invoker MailInvoker) *BoxQueue {
 // Signal sends a signal to all listening go-routines to
 // attempt checks for new message.
 func (bq *BoxQueue) Signal() {
+	bq.cm.Broadcast()
+}
+
+// Clear resets and deletes all elements pending within queue
+func (bq *BoxQueue) Clear() {
+	bq.cm.L.Lock()
+
+	if bq.isEmpty() {
+		bq.cm.L.Unlock()
+		return
+	}
+
+	bq.tail = nil
+	bq.head = nil
+	bq.cm.L.Unlock()
+
 	bq.cm.Broadcast()
 }
 
@@ -258,8 +274,8 @@ func (bq *BoxQueue) Total() int {
 	return int(atomic.LoadInt64(&bq.total))
 }
 
-// Empty returns true/false if the queue is empty.
-func (bq *BoxQueue) Empty() bool {
+// IsEmpty returns true/false if the queue is empty.
+func (bq *BoxQueue) IsEmpty() bool {
 	var empty bool
 	bq.cm.L.Lock()
 	empty = bq.isEmpty()

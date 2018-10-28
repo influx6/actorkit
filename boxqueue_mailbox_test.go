@@ -80,13 +80,13 @@ func TestBoxQueue_PushPopUnPop(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, popped3)
 
-	assert.False(t, q.Empty())
+	assert.False(t, q.IsEmpty())
 
 	_, popped4, err := q.Pop()
 	assert.NoError(t, err)
 	assert.NotNil(t, popped4)
 
-	assert.True(t, q.Empty())
+	assert.True(t, q.IsEmpty())
 }
 
 func TestBoxQueue_WaitLoop(t *testing.T) {
@@ -94,7 +94,7 @@ func TestBoxQueue_WaitLoop(t *testing.T) {
 	w.Add(1)
 
 	q := actorkit.UnboundedBoxQueue(nil)
-	assert.True(t, q.Empty())
+	assert.True(t, q.IsEmpty())
 
 	go func() {
 		defer w.Done()
@@ -102,7 +102,7 @@ func TestBoxQueue_WaitLoop(t *testing.T) {
 		var c int
 		for {
 			if c >= 100 {
-				assert.True(t, q.Empty())
+				assert.True(t, q.IsEmpty())
 				assert.Equal(t, 100, c)
 				return
 			}
@@ -124,12 +124,12 @@ func TestBoxQueue_Wait(t *testing.T) {
 	w.Add(1)
 
 	q := actorkit.UnboundedBoxQueue(nil)
-	assert.True(t, q.Empty())
+	assert.True(t, q.IsEmpty())
 
 	go func() {
 		defer w.Done()
 		q.Wait()
-		assert.False(t, q.Empty())
+		assert.False(t, q.IsEmpty())
 	}()
 
 	q.Push(nil, env)
@@ -138,21 +138,21 @@ func TestBoxQueue_Wait(t *testing.T) {
 
 func TestBoxQueue_Empty(t *testing.T) {
 	q := actorkit.UnboundedBoxQueue(nil)
-	assert.True(t, q.Empty())
+	assert.True(t, q.IsEmpty())
 	q.Push(nil, env)
-	assert.False(t, q.Empty())
+	assert.False(t, q.IsEmpty())
 }
 
 func TestBoundedBoxQueue_Empty(t *testing.T) {
 	q := actorkit.BoundedBoxQueue(10, actorkit.DropOld, nil)
-	assert.True(t, q.Empty())
+	assert.True(t, q.IsEmpty())
 	q.Push(nil, env)
-	assert.False(t, q.Empty())
+	assert.False(t, q.IsEmpty())
 }
 
 func TestBoundedBoxQueue_DropOldest(t *testing.T) {
 	q := actorkit.BoundedBoxQueue(1, actorkit.DropOld, nil)
-	assert.True(t, q.Empty())
+	assert.True(t, q.IsEmpty())
 
 	q.Push(nil, env)
 	assert.Equal(t, q.Total(), 1)
@@ -166,7 +166,7 @@ func TestBoundedBoxQueue_DropOldest(t *testing.T) {
 
 func TestBoundedBoxQueue_DropNewest(t *testing.T) {
 	q := actorkit.BoundedBoxQueue(1, actorkit.DropNew, nil)
-	assert.True(t, q.Empty())
+	assert.True(t, q.IsEmpty())
 
 	q.Push(nil, env)
 	assert.Equal(t, q.Total(), 1)
@@ -180,7 +180,7 @@ func TestBoundedBoxQueue_DropNewest(t *testing.T) {
 
 func TestBoundedBoxQueue_Drop_Unpop(t *testing.T) {
 	q := actorkit.BoundedBoxQueue(1, actorkit.DropNew, nil)
-	assert.True(t, q.Empty())
+	assert.True(t, q.IsEmpty())
 
 	q.Push(nil, env)
 	assert.Equal(t, q.Total(), 1)

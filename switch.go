@@ -9,6 +9,29 @@ const (
 	off uint64 = 0
 )
 
+//***********************************
+//  WaiterImpl
+//***********************************
+
+// WaiterImpl implements the ErrorWaiter interface.
+type WaiterImpl struct {
+	err error
+}
+
+// NewWaiterImpl returns a new instance of WaiterImpl.
+func NewWaiterImpl(err error) *WaiterImpl {
+	return &WaiterImpl{err: err}
+}
+
+// Wait returns giving error associated with instance.
+func (w *WaiterImpl) Wait() error {
+	return w.err
+}
+
+//***********************************
+//  SwitchImpl
+//***********************************
+
 // SwitchImpl implements a thread-safe switching mechanism, which
 // swaps between a on and off state.
 type SwitchImpl struct {
