@@ -9,7 +9,8 @@ import (
 )
 
 var (
-	deadLetters = es.New()
+	deadLetterID = xid.New()
+	deadLetters  = es.New()
 )
 
 // DeadMail defines the type of event triggered by the deadletters
@@ -17,12 +18,6 @@ var (
 type DeadMail struct {
 	To      Addr
 	Message Envelope
-}
-
-// DeadLetters returns the central event pipeline where unprocessed
-// messages are sent when actors are killed or destroyed.
-func DeadLetters() *es.EventStream {
-	return deadLetters
 }
 
 //***************************************************************************

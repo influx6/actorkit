@@ -8,14 +8,6 @@ import (
 
 var _ Addr = &AddrImpl{}
 
-// AddrImpl implements the Addr interface providing an addressable reference
-// to an existing actor.
-type AddrImpl struct {
-	Root    Addressable
-	actor   Actor
-	service string
-}
-
 // Destroy returns a ErrWaiter which provides a means of forceful shutdown
 // and removal of giving actor of address from the system basically making
 // the actor and it's children non existent.
@@ -53,11 +45,29 @@ func Poison(addr Addr, data interface{}) ErrWaiter {
 	return NewWaiterImpl(errors.New("Addr implementer does not support stopping"))
 }
 
+// AddrImpl implements the Addr interface providing an addressable reference
+// to an existing actor.
+type AddrImpl struct {
+	Root       Addressable
+	actor      Actor
+	service    string
+	deadletter bool
+}
+
 // AccessOf returns a default "actor:access" service name, it's
 // expected to be used when desiring a default address for an
 // actor.
 func AccessOf(actor Actor) *AddrImpl {
 	return AddressOf(actor, "actor:access")
+}
+
+// DeadLetters returns a new instance of AddrImpl which directly delivers
+// responses and messages to the deadletter event pipeline.
+func DeadLetters() *AddrImpl {
+	var addr AddrImpl
+	addr.deadletter = true
+	addr.service = "deadletters"
+	return &addr
 }
 
 // AddressOf returns a new instance of AddrImpl which directly uses the provided
@@ -73,6 +83,10 @@ func AddressOf(actor Actor, service string) *AddrImpl {
 // is not the same as the actor of this address else returning this
 // actor.
 func (a *AddrImpl) Parent() Addr {
+	if a.deadletter {
+		return a
+	}
+
 	if parent := a.actor.Parent(); parent != nil && parent != a.actor {
 		return AddressOf(parent, "access")
 	}
@@ -92,6 +106,10 @@ func (a *AddrImpl) TimedFuture(d time.Duration) Future {
 // Ancestor returns the address of the root ancestor. If giving underline
 // ancestor is the same as this address actor then we return address.
 func (a *AddrImpl) Ancestor() Addr {
+	if a.deadletter {
+		return a
+	}
+
 	if parent := a.actor.Ancestor(); parent != nil && parent != a.actor {
 		return AddressOf(parent, "access")
 	}
@@ -100,69 +118,119 @@ func (a *AddrImpl) Ancestor() Addr {
 
 // Children returns address of all children actors of this address actor.
 func (a *AddrImpl) Children() []Addr {
+	if a.deadletter {
+		return nil
+	}
 	return a.actor.Children()
 }
 
 // Spawn creates a new actor based on giving service name by requesting all
 // discovery services registered to giving underline address actor.
 func (a *AddrImpl) Spawn(service string, rec Behaviour, initial interface{}) (Addr, error) {
+	if a.deadletter {
+		return nil, errors.New("not possible from a deadletter address")
+	}
+
 	return a.actor.Spawn(service, rec, initial)
 }
 
 // AddressOf returns the address of giving actor matching giving service name.
 func (a *AddrImpl) AddressOf(service string, ancestral bool) (Addr, error) {
+	if a.deadletter {
+		return nil, errors.New("not possible from a deadletter address")
+	}
 	return a.actor.Discover(service, ancestral)
 }
 
 // Forward delivers provided envelope to the current mask process.
 func (a *AddrImpl) Forward(e Envelope) error {
+	if a.deadletter {
+		deadLetters.Publish(DeadMail{
+			To:      a,
+			Message: e,
+		})
+		return nil
+	}
 	return a.actor.Receive(a, e)
 }
 
 // Send delivers provided raw data to this mask process providing destination/reply mask.
 func (a *AddrImpl) Send(data interface{}, h Header, sender Addr) error {
+	if a.deadletter {
+		deadLetters.Publish(DeadMail{
+			To:      a,
+			Message: CreateEnvelope(sender, h, data),
+		})
+		return nil
+	}
 	return a.actor.Receive(a, CreateEnvelope(sender, h, data))
 }
 
 // Stopped returns true/false if giving process of Addr as being stopped.
 func (a *AddrImpl) Stopped() bool {
+	if a.deadletter {
+		return false
+	}
 	return a.actor.Stopped()
 }
 
 // Kill sends a kill signal to the underline process to stop all operations and to close immediately.
 func (a *AddrImpl) Kill(data interface{}) ErrWaiter {
+	if a.deadletter {
+		return NewWaiterImpl(nil)
+	}
+
 	return a.actor.Kill(data)
 }
 
 // Stop returns a ErrWaiter for the stopping of the underline actor for giving address.
 func (a *AddrImpl) Stop(data interface{}) ErrWaiter {
+	if a.deadletter {
+		return NewWaiterImpl(nil)
+	}
 	return a.actor.Stop(data)
 }
 
 // Restart returns a ErrWaiter for the restart of the underline actor for giving address.
 func (a *AddrImpl) Restart(data interface{}) ErrWaiter {
+	if a.deadletter {
+		return NewWaiterImpl(nil)
+	}
 	return a.actor.Restart(data)
 }
 
 // Destroy returns a ErrWaiter for the termination and destruction of the underline
 // actor for giving address.
 func (a *AddrImpl) Destroy(data interface{}) ErrWaiter {
+	if a.deadletter {
+		return NewWaiterImpl(nil)
+	}
 	return a.actor.Destroy(data)
 }
 
 // Escalate implements the Escalator interface.
 func (a *AddrImpl) Escalate(v interface{}) {
+	if a.deadletter {
+		deadLetters.Publish(v)
+		return
+	}
 	a.actor.Escalate(v, a)
 }
 
 // Watch adds  a giving function into the subscription
 // listeners of giving address events.
 func (a *AddrImpl) Watch(fn func(interface{})) Subscription {
+	if a.deadletter {
+		return deadLetters.Subscribe(fn)
+	}
 	return a.actor.Watch(fn)
 }
 
 // ID returns unique identification value for underline process of Addr.
 func (a *AddrImpl) ID() string {
+	if a.deadletter {
+		return deadLetterID.String()
+	}
 	return a.actor.ID()
 }
 
@@ -178,6 +246,9 @@ func (a *AddrImpl) Service() string {
 // Address uses a format: ActorAddress/ServiceName
 //
 func (a *AddrImpl) Addr() string {
+	if a.deadletter {
+		return "kit://localhost/" + a.ID() + "/" + a.service
+	}
 	return a.actor.Addr() + "/" + a.service
 }
 

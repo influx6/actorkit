@@ -29,8 +29,6 @@ type HelloMessage struct{
 }
 
 type HelloOp struct{}
-
-
 func (h HelloOp) Action(me actorkit.Addr, e actorkit.Envelope){
 	switch mo := e.Data().(type) {
 	case *HelloMessage:
@@ -40,14 +38,8 @@ func (h HelloOp) Action(me actorkit.Addr, e actorkit.Envelope){
 
 func main(){
 
-	ax := actors.FromActor(&HelloOp{
-		Started: started,
-		ShuttingDown: shutdown,
-		FinishedShutdown: finished,
-		Envelope: envelope,
-	})
+	ax := actors.FromBehaviour(&HelloOp{})
 
-	axMask := actorkit.ForceMaskWithProcess("local:0", "hello.service", ax)
 	axMask.Send(&HelloMessage{Name:"Wally"}, actorkit.GetDeadletter())
 
 	env := <-envelope
