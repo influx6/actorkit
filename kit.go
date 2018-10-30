@@ -667,6 +667,15 @@ type ActorStopped struct {
 	Addr string
 }
 
+// ActorAdopted is sent when an actor is adopted from original parent
+// by another actor.
+type ActorAdopted struct {
+	ID     string
+	Addr   string
+	ByID   string
+	ByAddr string
+}
+
 // ActorDestroyed is sent when an actor is absolutely stopped and is removed
 // totally from network. It's operation will be not allowed to run as it
 // as become un-existent.

@@ -3,8 +3,8 @@ Actorkit
 [![Go Report Card](https://goreportcard.com/badge/github.com/gokit/actorkit)](https://goreportcard.com/report/github.com/gokit/actorkit)
 [![Travis Build](https://travis-ci.org/gokit/actorkit.svg?branch=master)](https://travis-ci.org/gokit/actorkit#)
 
-Actorkit implements a helper package for writing actor based concurrency.
-
+Actorkit implements a helper package for writing actor based concurrency. Actorkit took alot of inspirations from
+the [Akka](https://akka.io) and [Proto.Actor](http://proto.actor/) projects.
 
 ## Install
 

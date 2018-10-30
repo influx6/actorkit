@@ -3,12 +3,17 @@ package actorkit
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/gokit/futurechain"
 
 	"github.com/gokit/errors"
 	"github.com/gokit/es"
 	"github.com/gokit/xid"
+)
+
+const (
+	threeSecond = time.Second * 3
 )
 
 // errors ...
@@ -52,6 +57,20 @@ type ActorImplOption func(*ActorImpl)
 func UseMailbox(m Mailbox) ActorImplOption {
 	return func(ac *ActorImpl) {
 		ac.mails = m
+	}
+}
+
+// UseDeadLockTicker sets the duration which must not be less than
+// 3 second to ensure intermittent checks on available messages by
+// an actor mailbox and also as mitigation of possible deadlocks
+// due to goroutine sleep.
+func UseDeadLockTicking(dur time.Duration) ActorImplOption {
+	return func(ac *ActorImpl) {
+		if dur < threeSecond {
+			dur = threeSecond
+		}
+
+		ac.tickerDur = dur
 	}
 }
 
@@ -125,6 +144,9 @@ type ActorImpl struct {
 	messageInvoker MessageInvoker
 	mailInvoker    MailInvoker
 
+	tickerDur      time.Duration
+	deadlockTicker *time.Ticker
+
 	running    SwitchImpl
 	starting   SwitchImpl
 	stopping   SwitchImpl
@@ -140,9 +162,6 @@ type ActorImpl struct {
 
 	chl   sync.RWMutex
 	chain []DiscoveryService
-
-	sml  sync.Mutex
-	subs map[string]Subscription
 }
 
 // FromProtocol returns a partial function which taking a provided initial data which is optional
@@ -213,8 +232,8 @@ func NewActorImpl(protocol string, namespace string, ops ...ActorImplOption) *Ac
 	ac.protocol = protocol
 	ac.namespace = namespace
 	ac.signal = make(chan struct{}, 1)
-	ac.subs = map[string]Subscription{}
 	ac.tree = NewActorTree(10)
+
 	return &ac
 }
 
@@ -294,57 +313,63 @@ func (ati *ActorImpl) AdoptChildren(a Actor) error {
 		return true
 	})
 
-	am.clearChildSubs()
 	am.tree.Reset()
 	return nil
-}
-
-func (ati *ActorImpl) clearChildSubs() {
-	ati.sml.Lock()
-	defer ati.sml.Unlock()
-	for _, sub := range ati.subs {
-		go sub.Stop()
-	}
-
-	ati.subs = map[string]Subscription{}
 }
 
 // manageActor handles addition of new actor into actor tree.
 func (ati *ActorImpl) manageActor(service string, an Actor, conf interface{}) (Addr, error) {
 	ati.tree.AddActor(an)
 
+	finalize := make(chan struct{}, 1)
 	sub := an.Watch(func(event interface{}) {
 		switch event.(type) {
+		case ActorAdopted:
+			// ensure if finalize is full, we don't end up blocking, but simply skip.
+			select {
+			case finalize <- struct{}{}:
+			default:
+			}
 		case ActorDestroyed:
-			ati.tree.RemoveActor(an)
-
-			// Get subscription, remove and delete from parent
-			// and end subscription to self.
-			var sub Subscription
-			ati.sml.Lock()
-			sub = ati.subs[an.ID()]
-			delete(ati.subs, an.ID())
-			ati.sml.Unlock()
-
-			if sub != nil {
-				go sub.Stop()
+			// ensure if finalize is full, we don't end up blocking, but simply skip.
+			select {
+			case finalize <- struct{}{}:
+			default:
 			}
 		}
 	})
 
-	ati.sml.Lock()
-	ati.subs[an.ID()] = sub
-	ati.sml.Unlock()
-
+	ati.waiter.Add(2)
 	go ati.setupActor(an, conf)
+	go ati.finalizeActor(finalize, an, sub)
 
 	return AddressOf(an, service), nil
+}
+
+// notifyAdoption exports a notification that an actor has being adaopted.
+func (ati *ActorImpl) notifyAdoption(addr string, id string) {
+	ati.events.Publish(ActorAdopted{
+		ByID:   id,
+		ByAddr: addr,
+		ID:     ati.ID(),
+		Addr:   ati.Addr(),
+	})
+}
+
+// finalizeActor listens to provided channel for signal once received, will remove actor
+// and end subscription.
+func (ati *ActorImpl) finalizeActor(signal <-chan struct{}, an Actor, sub Subscription) {
+	defer ati.waiter.Done()
+	<-signal
+	ati.tree.RemoveActor(an)
+	sub.Stop()
 }
 
 // SetupActor will initialize and start provided actor, if an error
 // occurred which is not an ErrActorState then it will be handled to
 // this parent's supervisor, which will mitigation actions.
 func (ati *ActorImpl) setupActor(ac Actor, initial interface{}) {
+	defer ati.waiter.Done()
 	if err := ac.Start(initial).Wait(); err != nil {
 		if !errors.IsAny(err, ErrActorState) {
 			ati.supervisor.Handle(err, AccessOf(ac), ac, ati)
@@ -479,20 +504,12 @@ func (ati *ActorImpl) start(data interface{}, children bool) *futurechain.Future
 
 		return nil
 	}).When(func(_ context.Context) error {
-		ati.waiter.Add(1)
+		if ati.tickerDur > time.Second {
+			ati.deadlockTicker = time.NewTicker(ati.tickerDur)
+		}
 
-		// We need a means of validating that the read message
-		// goroutine has started, so we will use a signal channel
-		// which will block till it's running.
-		up := make(chan struct{}, 1)
-		go func() {
-			up <- struct{}{}
-			ati.readMessages()
-		}()
+		ati.manageRoutines()
 
-		// Release go-routine once we are sure, readMessage as
-		// started.
-		<-up
 		return nil
 	}).When(func(_ context.Context) error {
 		if ati.startState != nil {
@@ -564,6 +581,11 @@ func (ati *ActorImpl) stop(data interface{}, dir Directive, children bool) *futu
 
 		// schedule closure of actor operation.
 		ati.signal <- struct{}{}
+
+		// stop intermittent deadlock fix ticker if set.
+		if ati.deadlockTicker != nil {
+			ati.deadlockTicker.Stop()
+		}
 
 		// signal waiter to recheck for new message or close signal.
 		ati.mails.Signal()
@@ -660,12 +682,54 @@ func (ati *ActorImpl) Destroy(data interface{}) ErrWaiter {
 		}
 		return nil
 	}).Then(func(_ context.Context) error {
+		ati.tree.Reset()
+		return nil
+	}).Then(func(_ context.Context) error {
 		ati.events.Publish(ActorDestroyed{
 			Addr: ati.Addr(),
 			ID:   ati.id.String(),
 		})
 		return nil
 	})
+}
+
+// manageRoutines will setup go-routines workers for giving actor,
+// adding signal to block till giving routines have initialized and
+// are started.
+// We need a means of validating that the read message
+// goroutine has started, so we will use a signal channel
+// which will block till it's running.
+func (ati *ActorImpl) manageRoutines() {
+	ati.waiter.Add(2)
+
+	signal := make(chan struct{}, 2)
+
+	go func() {
+		signal <- struct{}{}
+		ati.readMessages()
+	}()
+
+	go func() {
+		signal <- struct{}{}
+		ati.manageDeadlock()
+	}()
+
+	<-signal
+	<-signal
+}
+
+// manageDeadlock runs indefinite loop per a giving ticking duration, where
+// it signals for a recheck on available messages on the mail. It exists due
+// to the nature of possible deadlock when all goroutines fall asleep.
+func (ati *ActorImpl) manageDeadlock() {
+	defer ati.waiter.Done()
+	if ati.deadlockTicker == nil {
+		return
+	}
+
+	for range ati.deadlockTicker.C {
+		ati.mails.Signal()
+	}
 }
 
 // readMessages runs the process for executing messages.
