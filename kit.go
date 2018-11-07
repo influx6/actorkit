@@ -1,6 +1,7 @@
 package actorkit
 
 import (
+	"sync"
 	"time"
 
 	"github.com/gokit/es"
@@ -109,6 +110,7 @@ type Actor interface {
 	Stoppable
 	Destroyable
 	Discovery
+	DiscoveryChain
 	Startable
 	Descendants
 	Restartable
@@ -271,6 +273,11 @@ type Discovery interface {
 	Discover(service string, ancestral bool) (Addr, error)
 }
 
+// DiscoveryServiceFunction defines a function type which when
+// giving a underline service will return a suitable actor for
+// said service.
+type DiscoveryServiceFunction func(service string) (Actor, error)
+
 // DiscoveryService defines an interface which will return
 // a giving Actor for a desired service.
 //
@@ -301,6 +308,97 @@ type DiscoveryChain interface {
 	AddDiscovery(service DiscoveryService) error
 }
 
+//*****************************************************************************
+//  OnceDiscoveryFor: Service discovery with same actor returning generator
+//******************************************************************************
+
+// OnceDiscoveryFor returns a new DiscoveryService which has an underline
+// store of known actors providing for giving services and will return
+// those found actors if giving service was requested for. It will not
+// attempt to retrieve another from function if already available.
+// The actor will continuously be available until either terminated
+// or destroyed.
+func OnceDiscoveryFor(fn DiscoveryServiceFunction) DiscoveryService {
+	return &onceDiscoveryService{Fn: fn}
+}
+
+type onceDiscoveryService struct {
+	Fn     DiscoveryServiceFunction
+	ml     sync.RWMutex
+	actors map[string]Actor
+}
+
+func (dn *onceDiscoveryService) Discover(service string) (Actor, error) {
+	if found := dn.getActor(service); found != nil {
+		return found, nil
+	}
+
+	generated, err := dn.Fn(service)
+	if err != nil {
+		return nil, err
+	}
+
+	dn.ml.Lock()
+	dn.actors[service] = generated
+	dn.ml.Unlock()
+
+	// listening till actor is destroyed, then remove from registery.
+	end := make(chan struct{}, 1)
+	sub := generated.Watch(func(ev interface{}) {
+		switch ev.(type) {
+		case ActorDestroyed:
+			select {
+			case end <- struct{}{}:
+				return
+			default:
+			}
+		}
+	})
+
+	// clean up subscription in go-routine once
+	// we are signaled to and remove actor from registry.
+	go func(m string) {
+		<-end
+		sub.Stop()
+		dn.rmActor(m)
+	}(service)
+
+	return generated, nil
+}
+
+func (dn *onceDiscoveryService) getActor(service string) Actor {
+	dn.ml.RLock()
+	defer dn.ml.RUnlock()
+	if found, ok := dn.actors[service]; ok {
+		return found
+	}
+	return nil
+}
+
+func (dn *onceDiscoveryService) rmActor(service string) {
+	dn.ml.Lock()
+	defer dn.ml.Unlock()
+	delete(dn.actors, service)
+}
+
+//**************************************************************
+//  DiscoveryFor: Service discovery with function generators
+//*************************************************************
+
+// DiscoveryFor returns a new DiscoveryService which calls giving function
+// with service name for returning an actor suitable for handling a giving service.
+func DiscoveryFor(fn DiscoveryServiceFunction) DiscoveryService {
+	return &fnDiscoveryService{Fn: fn}
+}
+
+type fnDiscoveryService struct {
+	Fn DiscoveryServiceFunction
+}
+
+func (dn fnDiscoveryService) Discover(service string) (Actor, error) {
+	return dn.Fn(service)
+}
+
 //***********************************
 //  Destroyable
 //***********************************
@@ -308,7 +406,7 @@ type DiscoveryChain interface {
 // Destroyable defines an interface that exposes a method
 // which destroys it's internal process.
 type Destroyable interface {
-	Destroy(interface{}) ErrWaiter
+	Destroy() ErrWaiter
 }
 
 //***********************************
@@ -319,14 +417,19 @@ type Destroyable interface {
 // which returns a ErrWaiter to indicate completion of
 // start process.
 type Startable interface {
-	Start(interface{}) ErrWaiter
+	Start() ErrWaiter
 }
 
-// StartState defines a set of methods to be called on
-// a start.
-type StartState interface {
-	PreStart(interface{}) error
-	PostStart(interface{}) error
+// PreStart exposes a method which receives addr of actor's parent
+// so that it can perform specific actions.
+type PreStart interface {
+	PreStart(parentAddr Addr) error
+}
+
+// PostStart exposes a method which receives it's addr  and addr of it's parent
+// so that it can perform specific post start operations.
+type PostStart interface {
+	PostStart(actorAddr Addr, parentAddr Addr) error
 }
 
 //***********************************
@@ -337,12 +440,24 @@ type StartState interface {
 // which returns a ErrWaiter to indicate completion of
 // restart.
 type Restartable interface {
-	Restart(interface{}) ErrWaiter
+	Restart() ErrWaiter
+	RestartSelf() ErrWaiter
 }
 
 //***********************************
 //  Stoppable
 //***********************************
+
+// PreStop receives actor's address and parent address for pre stop tear down actions/procedures.
+type PreStop interface {
+	PreStop(actorAddr Addr, parentAddr Addr) error
+}
+
+// PostStop receives actor's it's address and parent address
+// to perform post stop operation.
+type PostStop interface {
+	PostStop(parentAddr Addr) error
+}
 
 // Stoppable defines an interface
 type Stoppable interface {
@@ -351,19 +466,12 @@ type Stoppable interface {
 
 	// Stop will immediately stop the target process regardless of
 	// pending operation and clear all pending messages.
-	Kill(interface{}) ErrWaiter
+	Kill() ErrWaiter
 
 	// Stop will immediately stop the target regardless of
 	// pending operation and returns a ErrWaiter to await end.
 	// It keeps and maintains currently pending messages in mailbox.
-	Stop(interface{}) ErrWaiter
-}
-
-// StopState defines a set of methods to be called on
-// a stop.
-type StopState interface {
-	PreStop(interface{}) error
-	PostStop(interface{}) error
+	Stop() ErrWaiter
 }
 
 //***********************************
@@ -373,7 +481,7 @@ type StopState interface {
 // Spawner exposes a single method to spawn an underline actor returning
 // the address for spawned actor.
 type Spawner interface {
-	Spawn(service string, bh Behaviour, initial interface{}) (Addr, error)
+	Spawn(service string, bh Behaviour) (Addr, error)
 }
 
 //***********************************
@@ -403,6 +511,7 @@ type Addr interface {
 	Watchable
 	Descendants
 	Addressable
+	DiscoveryChain
 	Escalatable
 	AncestralAddr
 	AddressService
@@ -633,7 +742,6 @@ type FutureRejected struct {
 type ActorRestartRequested struct {
 	ID   string
 	Addr string
-	Data interface{}
 }
 
 // ActorStopRequested indicates giving message sent to actor to
@@ -641,7 +749,6 @@ type ActorRestartRequested struct {
 type ActorStopRequested struct {
 	ID   string
 	Addr string
-	Data interface{}
 }
 
 // ActorStarted is sent when an actor has begun it's operation or has
@@ -649,7 +756,6 @@ type ActorStopRequested struct {
 type ActorStarted struct {
 	ID   string
 	Addr string
-	Data interface{}
 }
 
 // ActorRestarted indicates giving message sent by actor after
@@ -657,7 +763,6 @@ type ActorStarted struct {
 type ActorRestarted struct {
 	ID   string
 	Addr string
-	Data interface{}
 }
 
 // ActorStopped is sent when an actor is in the process of shutdown or

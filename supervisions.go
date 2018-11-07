@@ -50,19 +50,19 @@ func (on *allForOne) Handle() {
 
 	switch on.Decider(on.err) {
 	case KillDirective:
-		waiter := on.actor.Kill(nil)
+		waiter := on.actor.Kill()
 		if on.invoker != nil {
 			on.invoker.InvokedKill(on.err, on.addr, on.actor)
 		}
 		waiter.Wait()
 	case StopDirective:
-		waiter := on.actor.Stop(nil)
+		waiter := on.actor.Stop()
 		if on.invoker != nil {
 			on.invoker.InvokedStop(on.err, on.addr, on.actor)
 		}
 		waiter.Wait()
 	case RestartDirective:
-		waiter := on.actor.Restart(nil)
+		waiter := on.actor.Restart()
 		if on.invoker != nil {
 			on.invoker.InvokedRestart(on.err, Stat{Max: on.max, Count: on.count}, on.addr, on.actor)
 		}
@@ -75,7 +75,7 @@ func (on *allForOne) Handle() {
 			return
 		}
 	case DestroyDirective:
-		waiter := on.actor.Destroy(nil)
+		waiter := on.actor.Destroy()
 		if on.invoker != nil {
 			on.invoker.InvokedDestroy(on.err, on.addr, on.actor)
 		}
@@ -131,19 +131,19 @@ func (on *oneForOne) Handle() {
 
 	switch on.Decider(on.err) {
 	case KillDirective:
-		waiter := on.actor.Kill(nil)
+		waiter := on.actor.Kill()
 		if on.invoker != nil {
 			on.invoker.InvokedKill(on.err, on.addr, on.actor)
 		}
 		waiter.Wait()
 	case StopDirective:
-		waiter := on.actor.Stop(nil)
+		waiter := on.actor.Stop()
 		if on.invoker != nil {
 			on.invoker.InvokedStop(on.err, on.addr, on.actor)
 		}
 		waiter.Wait()
 	case RestartDirective:
-		waiter := on.actor.Restart(nil)
+		waiter := on.actor.Restart()
 		if on.invoker != nil {
 			on.invoker.InvokedRestart(on.err, Stat{Max: on.max, Count: on.count}, on.addr, on.actor)
 		}
@@ -156,7 +156,7 @@ func (on *oneForOne) Handle() {
 			return
 		}
 	case DestroyDirective:
-		waiter := on.actor.Destroy(nil)
+		waiter := on.actor.Destroy()
 		if on.invoker != nil {
 			on.invoker.InvokedDestroy(on.err, on.addr, on.actor)
 		}
@@ -178,7 +178,7 @@ type RestartingSupervisor struct {
 // Handle implements a restarting supervision strategy where any escalated error will lead to
 // a restart of actor.
 func (sp *RestartingSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	waiter := target.Restart(nil)
+	waiter := target.Restart()
 	if sp.Invoker != nil {
 		sp.Invoker.InvokedRestart(err, Stat{Count: 1}, targetAddr, target)
 	}
@@ -226,7 +226,7 @@ type exponentialStrategy struct {
 func (en *exponentialStrategy) Handle() {
 	en.stat.Count++
 	if en.stat.Count >= en.stat.Max {
-		waiter := en.actor.Stop(nil)
+		waiter := en.actor.Stop()
 		if en.invoker != nil {
 			en.invoker.InvokedStop(en.err, en.addr, en.actor)
 		}
@@ -239,7 +239,7 @@ func (en *exponentialStrategy) Handle() {
 	dur := time.Duration(backoff + noise)
 
 	time.AfterFunc(dur, func() {
-		waiter := en.actor.Restart(nil)
+		waiter := en.actor.Restart()
 		if en.invoker != nil {
 			en.invoker.InvokedRestart(en.err, en.stat, en.addr, en.actor)
 		}

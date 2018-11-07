@@ -14,7 +14,7 @@ func TestDeadLetterAddr(t *testing.T) {
 
 	assert.True(t, strings.HasPrefix(addr.Addr(), "kit://localhost"), "should have prefix %q", addr.Addr())
 
-	_, err := addr.Spawn("wap", &basic{}, nil)
+	_, err := addr.Spawn("wap", &basic{})
 	assert.Error(t, err)
 
 	_, err = addr.AddressOf("wap", true)

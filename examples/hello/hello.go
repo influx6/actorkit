@@ -22,11 +22,11 @@ func (h *HelloOp) Action(me actorkit.Addr, e actorkit.Envelope) {
 }
 
 func main() {
-	addr, _, err := actorkit.System(&HelloOp{}, "kit", "localhos:0", nil)
+	addr, _, err := actorkit.System(&HelloOp{}, "kit", "localhost:0")
 	if err != nil {
 		panic(err)
 	}
 
 	addr.Send(HelloMessage{Name: "Wally"}, actorkit.Header{}, actorkit.DeadLetters())
-	actorkit.Destroy(addr, nil).Wait()
+	actorkit.Destroy(addr).Wait()
 }

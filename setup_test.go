@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/gokit/actorkit"
+	"github.com/gokit/errors"
 )
 
 //****************************************
@@ -11,6 +12,10 @@ import (
 //****************************************
 
 type AddrImpl struct{}
+
+func (am *AddrImpl) AddDiscovery(service actorkit.DiscoveryService) error {
+	return errors.New("not supported")
+}
 
 func (*AddrImpl) Forward(actorkit.Envelope) error {
 	return nil
@@ -32,7 +37,7 @@ func (*AddrImpl) Service() string {
 	return "addr"
 }
 
-func (*AddrImpl) Spawn(service string, bh actorkit.Behaviour, initial interface{}) (actorkit.Addr, error) {
+func (*AddrImpl) Spawn(service string, bh actorkit.Behaviour) (actorkit.Addr, error) {
 	return &AddrImpl{}, nil
 }
 

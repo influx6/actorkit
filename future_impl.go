@@ -91,6 +91,21 @@ func (f *FutureImpl) Escalate(m interface{}) {
 	f.broadcastError()
 }
 
+// AddDiscovery attempts to add giving discovery service to underline future.
+func (f *FutureImpl) AddDiscovery(service DiscoveryService) error {
+	return errors.New("not possible")
+}
+
+// AddressOf requests giving service from future's parent AddressOf method.
+func (f *FutureImpl) AddressOf(service string, ancestry bool) (Addr, error) {
+	return nil, errors.New("not possible")
+}
+
+// Spawn requests giving service and Receiver from future's parent Spawn method.
+func (f *FutureImpl) Spawn(service string, rr Behaviour) (Addr, error) {
+	return nil, errors.New("not possible")
+}
+
 // Future returns a new future instance from giving source.
 func (f *FutureImpl) Future() Future {
 	return NewFuture(f.parent)
@@ -138,16 +153,6 @@ func (f *FutureImpl) ID() string {
 //
 func (f *FutureImpl) Addr() string {
 	return f.parent.Addr() + "/:future/" + f.id.String()
-}
-
-// AddressOf requests giving service from future's parent AddressOf method.
-func (f *FutureImpl) AddressOf(service string, ancestry bool) (Addr, error) {
-	return f.parent.AddressOf(service, ancestry)
-}
-
-// Spawn requests giving service and Receiver from future's parent Spawn method.
-func (f *FutureImpl) Spawn(service string, rr Behaviour, initial interface{}) (Addr, error) {
-	return f.parent.Spawn(service, rr, initial)
 }
 
 // Wait blocks till the giving future is resolved and returns error if

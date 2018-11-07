@@ -11,9 +11,9 @@ var _ Addr = &AddrImpl{}
 // Destroy returns a ErrWaiter which provides a means of forceful shutdown
 // and removal of giving actor of address from the system basically making
 // the actor and it's children non existent.
-func Destroy(addr Addr, data interface{}) ErrWaiter {
-	if stopper, ok := addr.(Stoppable); ok {
-		return stopper.Kill(data)
+func Destroy(addr Addr) ErrWaiter {
+	if stopper, ok := addr.(Destroyable); ok {
+		return stopper.Destroy()
 	}
 	return NewWaiterImpl(errors.New("Addr implementer does not support killing"))
 }
@@ -21,26 +21,26 @@ func Destroy(addr Addr, data interface{}) ErrWaiter {
 // Kill returns a ErrWaiter which provides a means of shutdown and clearing
 // all pending messages of giving actor through it's address. It also kills
 // actors children.
-func Kill(addr Addr, data interface{}) ErrWaiter {
+func Kill(addr Addr) ErrWaiter {
 	if stopper, ok := addr.(Stoppable); ok {
-		return stopper.Kill(data)
+		return stopper.Kill()
 	}
 	return NewWaiterImpl(errors.New("Addr implementer does not support killing"))
 }
 
 // Restart restarts giving actor through it's address, the messages are maintained and kept
 // safe, the children of actor are also restarted.
-func Restart(addr Addr, data interface{}) ErrWaiter {
+func Restart(addr Addr) ErrWaiter {
 	if stopper, ok := addr.(Restartable); ok {
-		return stopper.Restart(data)
+		return stopper.Restart()
 	}
 	return NewWaiterImpl(errors.New("Addr implementer does not support restarting"))
 }
 
 // Poison stops the actor referenced by giving address, this also causes a restart of actor's children.
-func Poison(addr Addr, data interface{}) ErrWaiter {
+func Poison(addr Addr) ErrWaiter {
 	if stopper, ok := addr.(Stoppable); ok {
-		return stopper.Stop(data)
+		return stopper.Stop()
 	}
 	return NewWaiterImpl(errors.New("Addr implementer does not support stopping"))
 }
@@ -126,12 +126,21 @@ func (a *AddrImpl) Children() []Addr {
 
 // Spawn creates a new actor based on giving service name by requesting all
 // discovery services registered to giving underline address actor.
-func (a *AddrImpl) Spawn(service string, rec Behaviour, initial interface{}) (Addr, error) {
+func (a *AddrImpl) Spawn(service string, rec Behaviour) (Addr, error) {
 	if a.deadletter {
 		return nil, errors.New("not possible from a deadletter address")
 	}
 
-	return a.actor.Spawn(service, rec, initial)
+	return a.actor.Spawn(service, rec)
+}
+
+// AddDiscovery adds discovery service to giving underline actor if possible.
+// It returns an error if not possible or failed.
+func (a *AddrImpl) AddDiscovery(service DiscoveryService) error {
+	if a.deadletter {
+		return errors.New("not possible from a deadletter address")
+	}
+	return a.actor.AddDiscovery(service)
 }
 
 // AddressOf returns the address of giving actor matching giving service name.
@@ -175,37 +184,37 @@ func (a *AddrImpl) Stopped() bool {
 }
 
 // Kill sends a kill signal to the underline process to stop all operations and to close immediately.
-func (a *AddrImpl) Kill(data interface{}) ErrWaiter {
+func (a *AddrImpl) Kill() ErrWaiter {
 	if a.deadletter {
 		return NewWaiterImpl(nil)
 	}
 
-	return a.actor.Kill(data)
+	return a.actor.Kill()
 }
 
 // Stop returns a ErrWaiter for the stopping of the underline actor for giving address.
-func (a *AddrImpl) Stop(data interface{}) ErrWaiter {
+func (a *AddrImpl) Stop() ErrWaiter {
 	if a.deadletter {
 		return NewWaiterImpl(nil)
 	}
-	return a.actor.Stop(data)
+	return a.actor.Stop()
 }
 
 // Restart returns a ErrWaiter for the restart of the underline actor for giving address.
-func (a *AddrImpl) Restart(data interface{}) ErrWaiter {
+func (a *AddrImpl) Restart() ErrWaiter {
 	if a.deadletter {
 		return NewWaiterImpl(nil)
 	}
-	return a.actor.Restart(data)
+	return a.actor.Restart()
 }
 
 // Destroy returns a ErrWaiter for the termination and destruction of the underline
 // actor for giving address.
-func (a *AddrImpl) Destroy(data interface{}) ErrWaiter {
+func (a *AddrImpl) Destroy() ErrWaiter {
 	if a.deadletter {
 		return NewWaiterImpl(nil)
 	}
-	return a.actor.Destroy(data)
+	return a.actor.Destroy()
 }
 
 // Escalate implements the Escalator interface.

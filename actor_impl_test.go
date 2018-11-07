@@ -60,13 +60,13 @@ func TestActorImpl(t *testing.T) {
 
 	defer sub.Stop()
 
-	assert.NoError(t, am.Start("start").Wait())
+	assert.NoError(t, am.Start().Wait())
 	assert.False(t, am.Stopped())
 
-	assert.NoError(t, am.Restart("restart").Wait())
+	assert.NoError(t, am.Restart().Wait())
 	assert.False(t, am.Stopped())
 
-	assert.NoError(t, am.Stop("stop").Wait())
+	assert.NoError(t, am.Stop().Wait())
 	assert.True(t, am.Stopped())
 
 	for ind, elem := range events {
