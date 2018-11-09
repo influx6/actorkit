@@ -107,6 +107,7 @@ type Actor interface {
 	Receiver
 	Identity
 	Escalator
+	Running
 	Stoppable
 	Destroyable
 	Discovery
@@ -417,19 +418,20 @@ type Destroyable interface {
 // which returns a ErrWaiter to indicate completion of
 // start process.
 type Startable interface {
+	Starting() bool
 	Start() ErrWaiter
 }
 
-// PreStart exposes a method which receives addr of actor's parent
+// PreStart exposes a method which receives access address of actor
 // so that it can perform specific actions.
 type PreStart interface {
-	PreStart(parentAddr Addr) error
+	PreStart(Addr) error
 }
 
-// PostStart exposes a method which receives it's addr  and addr of it's parent
+// PostStart exposes a method which receives a access address
 // so that it can perform specific post start operations.
 type PostStart interface {
-	PostStart(actorAddr Addr, parentAddr Addr) error
+	PostStart(Addr) error
 }
 
 //***********************************
@@ -444,19 +446,41 @@ type Restartable interface {
 	RestartSelf() ErrWaiter
 }
 
+// PreRestart exposes a method which receives access address of actor
+// so that it can perform specific actions.
+type PreRestart interface {
+	PreRestart(Addr) error
+}
+
+// PostRestart exposes a method which receives a access address
+// so that it can perform specific post start operations.
+type PostRestart interface {
+	PostRestart(Addr) error
+}
+
+//***********************************
+//  Runnable
+//***********************************
+
+// Running exposes a method which returns true/false if a giving
+// implementer is running.
+type Running interface {
+	Running() bool
+}
+
 //***********************************
 //  Stoppable
 //***********************************
 
 // PreStop receives actor's address and parent address for pre stop tear down actions/procedures.
 type PreStop interface {
-	PreStop(actorAddr Addr, parentAddr Addr) error
+	PreStop(actorAddr Addr) error
 }
 
 // PostStop receives actor's it's address and parent address
 // to perform post stop operation.
 type PostStop interface {
-	PostStop(parentAddr Addr) error
+	PostStop(Addr) error
 }
 
 // Stoppable defines an interface
@@ -770,15 +794,6 @@ type ActorRestarted struct {
 type ActorStopped struct {
 	ID   string
 	Addr string
-}
-
-// ActorAdopted is sent when an actor is adopted from original parent
-// by another actor.
-type ActorAdopted struct {
-	ID     string
-	Addr   string
-	ByID   string
-	ByAddr string
 }
 
 // ActorDestroyed is sent when an actor is absolutely stopped and is removed

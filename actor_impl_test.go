@@ -13,6 +13,29 @@ type basic struct{}
 func (b basic) Action(addr actorkit.Addr, env actorkit.Envelope) {
 }
 
+func TestActorWithChildStates(t *testing.T) {
+	am := actorkit.NewActorImpl(
+		"kit",
+		"127.0.0.1:2000",
+		actorkit.UseBehaviour(&basic{}),
+	)
+
+	childAddr, err := am.Spawn("child", &basic{})
+	assert.NoError(t, err)
+
+	assert.NoError(t, am.Start().Wait())
+	assert.False(t, am.Stopped())
+
+	assert.NoError(t, am.Restart().Wait())
+	assert.False(t, am.Stopped())
+
+	assert.NoError(t, am.Stop().Wait())
+	assert.True(t, am.Stopped())
+
+	assert.True(t, childAddr.ID() != am.ID())
+	assert.Error(t, childAddr.Send("a", actorkit.Header{}, nil))
+}
+
 func TestActorImpl(t *testing.T) {
 	am := actorkit.NewActorImpl(
 		"kit",
@@ -20,36 +43,36 @@ func TestActorImpl(t *testing.T) {
 		actorkit.UseBehaviour(basic{}),
 	)
 
-	specs := []func(interface{}){
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorStartRequested{}, i)
+	specs := []func(int, interface{}){
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorStartRequested{}, i, "index %d", d)
 		},
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorStarted{}, i)
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorStarted{}, i, "index %d", d)
 		},
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorRestartRequested{}, i)
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorRestartRequested{}, i, "index %d", d)
 		},
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorStopRequested{}, i)
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorStopRequested{}, i, "index %d", d)
 		},
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorStopped{}, i)
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorStopped{}, i, "index %d", d)
 		},
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorStartRequested{}, i)
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorRestarted{}, i, "index %d", d)
 		},
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorStarted{}, i)
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorStopRequested{}, i, "index %d", d)
 		},
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorRestarted{}, i)
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorStopped{}, i, "index %d", d)
 		},
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorStopRequested{}, i)
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorStopRequested{}, i, "index %d", d)
 		},
-		func(i interface{}) {
-			assert.IsType(t, actorkit.ActorStopped{}, i)
+		func(d int, i interface{}) {
+			assert.IsType(t, actorkit.ActorStopped{}, i, "index %d", d)
 		},
 	}
 
@@ -71,6 +94,6 @@ func TestActorImpl(t *testing.T) {
 
 	for ind, elem := range events {
 		spec := specs[ind]
-		spec(elem)
+		spec(ind, elem)
 	}
 }

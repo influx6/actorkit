@@ -1,7 +1,7 @@
 package actorkit
 
 import (
-	"sync/atomic"
+	"sync"
 )
 
 const (
@@ -35,21 +35,48 @@ func (w *WaiterImpl) Wait() error {
 // SwitchImpl implements a thread-safe switching mechanism, which
 // swaps between a on and off state.
 type SwitchImpl struct {
-	state uint64
+	rm    sync.Mutex
+	cond  *sync.Cond
+	state bool
+}
+
+// NewSwitch returns a new instance of a SwitchImpl.
+func NewSwitch() *SwitchImpl {
+	var sw SwitchImpl
+	sw.cond = sync.NewCond(&sw.rm)
+	return &sw
 }
 
 // IsOn returns true/false if giving switch is on.
 // Must be called only.
 func (s *SwitchImpl) IsOn() bool {
-	return atomic.LoadUint64(&s.state) == on
+	var state bool
+	s.cond.L.Lock()
+	state = s.state
+	s.cond.L.Unlock()
+	return state
+}
+
+// Wait blocks till it receives signal that the switch has
+// changed state, this can be used to await switch change.
+func (s *SwitchImpl) Wait() {
+	s.cond.L.Lock()
+	s.cond.Wait()
+	s.cond.L.Unlock()
 }
 
 // Off will flips switch into off state.
 func (s *SwitchImpl) Off() {
-	atomic.CompareAndSwapUint64(&s.state, on, off)
+	s.cond.L.Lock()
+	s.state = false
+	s.cond.L.Unlock()
+	s.cond.Broadcast()
 }
 
 // On will flips switch into on state.
 func (s *SwitchImpl) On() {
-	atomic.CompareAndSwapUint64(&s.state, off, on)
+	s.cond.L.Lock()
+	s.state = true
+	s.cond.L.Unlock()
+	s.cond.Broadcast()
 }

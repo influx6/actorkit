@@ -41,7 +41,7 @@ type node struct {
 // new envelop messages. BoxQueue uses lock to guarantee safe concurrent use.
 type BoxQueue struct {
 	bm       sync.Mutex
-	cm       *sync.Cond
+	pushCond *sync.Cond
 	head     *node
 	tail     *node
 	capped   int
@@ -61,7 +61,7 @@ func BoundedBoxQueue(capped int, method Strategy, invoker MailInvoker) *BoxQueue
 		strategy: method,
 		invoker:  invoker,
 	}
-	bq.cm = sync.NewCond(&bq.bm)
+	bq.pushCond = sync.NewCond(&bq.bm)
 	return bq
 }
 
@@ -72,43 +72,43 @@ func UnboundedBoxQueue(invoker MailInvoker) *BoxQueue {
 		capped:  -1,
 		invoker: invoker,
 	}
-	bq.cm = sync.NewCond(&bq.bm)
+	bq.pushCond = sync.NewCond(&bq.bm)
 	return bq
 }
 
 // Signal sends a signal to all listening go-routines to
 // attempt checks for new message.
 func (bq *BoxQueue) Signal() {
-	bq.cm.Broadcast()
+	bq.pushCond.Broadcast()
 }
 
 // Clear resets and deletes all elements pending within queue
 func (bq *BoxQueue) Clear() {
-	bq.cm.L.Lock()
+	bq.pushCond.L.Lock()
 
 	if bq.isEmpty() {
-		bq.cm.L.Unlock()
+		bq.pushCond.L.Unlock()
 		return
 	}
 
 	bq.tail = nil
 	bq.head = nil
-	bq.cm.L.Unlock()
+	bq.pushCond.L.Unlock()
 
-	bq.cm.Broadcast()
+	bq.pushCond.Broadcast()
 }
 
 // Wait will block current goroutine till there is a message pushed into
 // the queue, allowing you to effectively rely on it as a schedule and processing
 // signal for when messages are in queue.
 func (bq *BoxQueue) Wait() {
-	bq.cm.L.Lock()
+	bq.pushCond.L.Lock()
 	if !bq.isEmpty() {
-		bq.cm.L.Unlock()
+		bq.pushCond.L.Unlock()
 		return
 	}
-	bq.cm.Wait()
-	bq.cm.L.Unlock()
+	bq.pushCond.Wait()
+	bq.pushCond.L.Unlock()
 }
 
 // Push adds the item to the back of the queue.
@@ -146,21 +146,21 @@ func (bq *BoxQueue) Push(addr Addr, env Envelope) error {
 		bq.invoker.InvokedReceived(addr, env)
 	}
 
-	bq.cm.L.Lock()
+	bq.pushCond.L.Lock()
 	if bq.head == nil && bq.tail == nil {
 		bq.head, bq.tail = n, n
-		bq.cm.L.Unlock()
+		bq.pushCond.L.Unlock()
 
-		bq.cm.Broadcast()
+		bq.pushCond.Broadcast()
 		return nil
 	}
 
 	bq.tail.next = n
 	n.prev = bq.tail
 	bq.tail = n
-	bq.cm.L.Unlock()
+	bq.pushCond.L.Unlock()
 
-	bq.cm.Broadcast()
+	bq.pushCond.Broadcast()
 	return nil
 }
 
@@ -186,29 +186,29 @@ func (bq *BoxQueue) Unpop(addr Addr, env Envelope) {
 		bq.invoker.InvokedReceived(addr, env)
 	}
 
-	bq.cm.L.Lock()
+	bq.pushCond.L.Lock()
 	head := bq.head
 	if head != nil {
 		n.next = head
 		bq.head = n
-		bq.cm.L.Unlock()
+		bq.pushCond.L.Unlock()
 
-		bq.cm.Broadcast()
+		bq.pushCond.Broadcast()
 		return
 	}
 
 	bq.head = n
 	bq.tail = n
-	bq.cm.L.Unlock()
+	bq.pushCond.L.Unlock()
 
-	bq.cm.Broadcast()
+	bq.pushCond.Broadcast()
 }
 
 // Pop removes the item from the front of the queue.
 //
 // Pop can be safely called from multiple goroutines.
 func (bq *BoxQueue) Pop() (Addr, Envelope, error) {
-	bq.cm.L.Lock()
+	bq.pushCond.L.Lock()
 	head := bq.head
 	if head != nil {
 		atomic.AddInt64(&bq.total, -1)
@@ -229,13 +229,13 @@ func (bq *BoxQueue) Pop() (Addr, Envelope, error) {
 		head.prev = nil
 		head.addr = nil
 		head.value = nil
-		bq.cm.L.Unlock()
+		bq.pushCond.L.Unlock()
 
 		nodePool.Put(head)
 
 		return addr, *v, nil
 	}
-	bq.cm.L.Unlock()
+	bq.pushCond.L.Unlock()
 
 	if bq.invoker != nil {
 		bq.invoker.InvokedEmpty()
@@ -246,7 +246,7 @@ func (bq *BoxQueue) Pop() (Addr, Envelope, error) {
 
 // unshift discards the tail of queue, allowing new space.
 func (bq *BoxQueue) unshift() {
-	bq.cm.L.Lock()
+	bq.pushCond.L.Lock()
 	tail := bq.tail
 	if tail != nil {
 		atomic.AddInt64(&bq.total, -1)
@@ -260,7 +260,7 @@ func (bq *BoxQueue) unshift() {
 		tail.prev = nil
 		tail.value = nil
 	}
-	bq.cm.L.Unlock()
+	bq.pushCond.L.Unlock()
 	return
 }
 
@@ -277,9 +277,9 @@ func (bq *BoxQueue) Total() int {
 // IsEmpty returns true/false if the queue is empty.
 func (bq *BoxQueue) IsEmpty() bool {
 	var empty bool
-	bq.cm.L.Lock()
+	bq.pushCond.L.Lock()
 	empty = bq.isEmpty()
-	bq.cm.L.Unlock()
+	bq.pushCond.L.Unlock()
 	return empty
 }
 

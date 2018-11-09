@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math/rand"
 
+	"github.com/gokit/actorkit/platform"
+
 	"github.com/gokit/actorkit"
 )
 
@@ -18,8 +20,9 @@ func main() {
 		panic(err)
 	}
 
-	for i := 0; i < 1000; i++ {
-		switch rand.Intn(5) {
+	for i := 0; i < 50; i++ {
+		tm := rand.Intn(20)
+		switch tm {
 		case 0:
 			books.Send(BookCreated{}, actorkit.Header{}, nil)
 		case 1:
@@ -33,7 +36,8 @@ func main() {
 		}
 	}
 
-	actorkit.Destroy(books).Wait()
+	//actorkit.Poison(books).Wait()
+	platform.AwaitAddrInterrupt(books)
 }
 
 type BookCreated struct{}
@@ -42,12 +46,17 @@ type BookEdited struct{}
 type BookSigned struct{}
 type BookUpvoted struct{}
 
-// BookEventStore is a actor behaviour which focues on storing or handling
-// only events related to the state of a book, that is it's creation, update
-// and editing. It does not care about signing or voting of giving books.
+// BookEventStore is a actor handles processing of book related events
+// It internal has two actors for book events and book ratings which it
+// filters messages to based on criteria.
 type BookStore struct {
 	Books   actorkit.Addr
 	Ratings actorkit.Addr
+}
+
+func (bm *BookStore) PostStart(parentAddr actorkit.Addr) error {
+	fmt.Println("Bookstore is ready")
+	return nil
 }
 
 // PreStart will be called when actor is starting up.
@@ -58,7 +67,7 @@ func (bm *BookStore) PreStart(parentAddr actorkit.Addr) error {
 		return err
 	}
 
-	bm.Ratings, err = parentAddr.Spawn("books_ratings", &BookStarStore{})
+	bm.Ratings, err = parentAddr.Spawn("books_ratings", &BookRatingStore{})
 	if err != nil {
 		return err
 	}
@@ -86,6 +95,11 @@ func (bm *BookStore) Action(addr actorkit.Addr, message actorkit.Envelope) {
 // and editing. It does not care about signing or voting of giving books.
 type BookEventStore struct{}
 
+func (bm *BookEventStore) PreStart(addr actorkit.Addr) error {
+	fmt.Println("Books Events Ready!")
+	return nil
+}
+
 // Action implements the actorkit.Behaviour interface and contains the logic
 // related to handling different incoming book events.
 func (bm *BookEventStore) Action(addr actorkit.Addr, message actorkit.Envelope) {
@@ -99,13 +113,18 @@ func (bm *BookEventStore) Action(addr actorkit.Addr, message actorkit.Envelope) 
 	}
 }
 
-// BookStarStore is a actor behaviour which focuses on storing or handling
+// BookRatingStore is a actor behaviour which focuses on storing or handling
 // only events related to the signing and popularity voting of books.
-type BookStarStore struct{}
+type BookRatingStore struct{}
+
+func (bm *BookRatingStore) PreStart(addr actorkit.Addr) error {
+	fmt.Println("Books Ratings Ready!")
+	return nil
+}
 
 // Action implements the actorkit.Behaviour interface and contains the logic
 // related to handling different incoming book events for upvotes and signing.
-func (bm *BookStarStore) Action(addr actorkit.Addr, message actorkit.Envelope) {
+func (bm *BookRatingStore) Action(addr actorkit.Addr, message actorkit.Envelope) {
 	switch event := message.Data.(type) {
 	case BookUpvoted:
 		fmt.Printf("Upvoting book popularity: %#v \n", event)
