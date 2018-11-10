@@ -21,66 +21,63 @@ type AllForOneSupervisor struct {
 // Handle implements the Supervisor interface and provides the algorithm logic for the
 // all-for-one monitoring strategy, where a failed actor causes the same effect to be applied
 // to all siblings and parent.
-func (sp *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	var on allForOne
-	on.max = sp.Max
-	on.err = err
-	on.actor = parent
-	on.addr = targetAddr
-	on.Decider = sp.Direction
-	on.invoker = sp.Invoker
-	go on.Handle()
-}
+func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
+	stats := parent.ActorStat()
+	switch on.Direction(err) {
+	case PanicDirective:
+		stats.Incr(PanicState)
+		waiter := parent.Kill()
+		if on.Invoker != nil {
+			on.Invoker.InvokedKill(err, targetAddr, target)
+		}
+		waiter.Wait()
 
-type allForOne struct {
-	max     int
-	count   int
-	addr    Addr
-	actor   Actor
-	err     interface{}
-	Decider Direction
-	invoker SupervisionInvoker
-}
-
-func (on *allForOne) Handle() {
-	on.count++
-	if on.count >= on.max {
-		return
-	}
-
-	switch on.Decider(on.err) {
+		if pe, ok := err.(ActorPanic); ok {
+			panic(string(pe.Stack))
+		}
 	case KillDirective:
-		waiter := on.actor.Kill()
-		if on.invoker != nil {
-			on.invoker.InvokedKill(on.err, on.addr, on.actor)
+		stats.Incr(KillState)
+		waiter := parent.Kill()
+		if on.Invoker != nil {
+			on.Invoker.InvokedKill(err, targetAddr, target)
 		}
 		waiter.Wait()
 	case StopDirective:
-		waiter := on.actor.Stop()
-		if on.invoker != nil {
-			on.invoker.InvokedStop(on.err, on.addr, on.actor)
+		stats.Incr(StopState)
+		waiter := parent.Stop()
+		if on.Invoker != nil {
+			on.Invoker.InvokedStop(err, targetAddr, target)
 		}
 		waiter.Wait()
 	case RestartDirective:
-		waiter := on.actor.Restart()
-		if on.invoker != nil {
-			on.invoker.InvokedRestart(on.err, Stat{Max: on.max, Count: on.count}, on.addr, on.actor)
+		stats.Incr(RestartState)
+
+		if stats.Get(RestartState) >= on.Max {
+			return
+		}
+
+		waiter := parent.Restart()
+		if on.Invoker != nil {
+			on.Invoker.InvokedRestart(err, Stat{Max: on.Max, Count: stats.Get(RestartState)}, targetAddr, target)
 		}
 
 		if err := waiter.Wait(); err != nil {
 			if errors.IsAny(err, ErrActorState) {
 				return
 			}
-			on.Handle()
+
+			on.Handle(err, targetAddr, target, parent)
 			return
 		}
 	case DestroyDirective:
-		waiter := on.actor.Destroy()
-		if on.invoker != nil {
-			on.invoker.InvokedDestroy(on.err, on.addr, on.actor)
+		stats.Incr(DestroyState)
+		waiter := parent.Destroy()
+		if on.Invoker != nil {
+			on.Invoker.InvokedDestroy(err, targetAddr, target)
 		}
 		waiter.Wait()
 	case IgnoreDirective:
+		stats.Incr(ErrorState)
 		return
 	}
 }
@@ -102,66 +99,67 @@ type OneForOneSupervisor struct {
 // Handle implements the Supervisor interface and provides the algorithm logic for the
 // one-for-one monitoring strategy, where a failed actor is dealt with singularly without affecting
 // it's siblings.
-func (sp *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	var on oneForOne
-	on.max = sp.Max
-	on.err = err
-	on.actor = target
-	on.addr = targetAddr
-	on.Decider = sp.Direction
-	on.invoker = sp.Invoker
-	go on.Handle()
-}
+func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
+	stats := target.ActorStat()
+	switch on.Direction(err) {
+	case PanicDirective:
+		stats.Incr(PanicState)
+		waiter := target.Kill()
+		if on.Invoker != nil {
+			on.Invoker.InvokedKill(err, targetAddr, target)
+		}
+		waiter.Wait()
 
-type oneForOne struct {
-	max     int
-	count   int
-	addr    Addr
-	actor   Actor
-	err     interface{}
-	Decider Direction
-	invoker SupervisionInvoker
-}
-
-func (on *oneForOne) Handle() {
-	on.count++
-	if on.count >= on.max {
-		return
-	}
-
-	switch on.Decider(on.err) {
+		if pe, ok := err.(ActorPanic); ok {
+			panic(string(pe.Stack))
+		}
 	case KillDirective:
-		waiter := on.actor.Kill()
-		if on.invoker != nil {
-			on.invoker.InvokedKill(on.err, on.addr, on.actor)
+		stats.Incr(KillState)
+		waiter := target.Kill()
+		if on.Invoker != nil {
+			on.Invoker.InvokedKill(err, targetAddr, target)
 		}
 		waiter.Wait()
 	case StopDirective:
-		waiter := on.actor.Stop()
-		if on.invoker != nil {
-			on.invoker.InvokedStop(on.err, on.addr, on.actor)
+		stats.Incr(StopState)
+		waiter := target.Stop()
+		if on.Invoker != nil {
+			on.Invoker.InvokedStop(err, targetAddr, target)
 		}
 		waiter.Wait()
 	case RestartDirective:
-		waiter := on.actor.Restart()
-		if on.invoker != nil {
-			on.invoker.InvokedRestart(on.err, Stat{Max: on.max, Count: on.count}, on.addr, on.actor)
+		stats.Incr(RestartState)
+
+		// if we have surpassed maximum allowed restarts, kill actor.
+		if stats.Get(RestartState) >= on.Max {
+			target.Kill().Wait()
+			return
+		}
+
+		waiter := target.Restart()
+		if on.Invoker != nil {
+			on.Invoker.InvokedRestart(err, Stat{Max: on.Max, Count: stats.Get(RestartState)}, targetAddr, target)
 		}
 
 		if err := waiter.Wait(); err != nil {
 			if errors.IsAny(err, ErrActorState) {
 				return
 			}
-			on.Handle()
+
+			on.Handle(err, targetAddr, target, parent)
 			return
 		}
+
+		stats.Reset(RestartState)
 	case DestroyDirective:
-		waiter := on.actor.Destroy()
-		if on.invoker != nil {
-			on.invoker.InvokedDestroy(on.err, on.addr, on.actor)
+		stats.Incr(DestroyState)
+		waiter := target.Destroy()
+		if on.Invoker != nil {
+			on.Invoker.InvokedDestroy(err, targetAddr, target)
 		}
 		waiter.Wait()
 	case IgnoreDirective:
+		stats.Incr(ErrorState)
 		return
 	}
 }
@@ -178,10 +176,14 @@ type RestartingSupervisor struct {
 // Handle implements a restarting supervision strategy where any escalated error will lead to
 // a restart of actor.
 func (sp *RestartingSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
+	stats := target.ActorStat()
+
 	waiter := target.Restart()
 	if sp.Invoker != nil {
 		sp.Invoker.InvokedRestart(err, Stat{Count: 1}, targetAddr, target)
 	}
+
+	stats.Incr(RestartState)
 
 	if err := waiter.Wait(); err != nil {
 		if errors.IsAny(err, ErrActorState) {

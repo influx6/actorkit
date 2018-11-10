@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/gokit/actorkit/platform"
-
 	"github.com/gokit/actorkit"
 )
 
@@ -24,20 +22,29 @@ func main() {
 		tm := rand.Intn(20)
 		switch tm {
 		case 0:
-			books.Send(BookCreated{}, actorkit.Header{}, nil)
+			if err := books.Send(BookCreated{}, actorkit.Header{}, nil); err != nil {
+				panic(err)
+			}
 		case 1:
-			books.Send(BookUpvoted{}, actorkit.Header{}, nil)
+			if err := books.Send(BookUpdated{}, actorkit.Header{}, nil); err != nil {
+				panic(err)
+			}
 		case 2:
-			books.Send(BookUpvoted{}, actorkit.Header{}, nil)
+			if err := books.Send(BookUpvoted{}, actorkit.Header{}, nil); err != nil {
+				panic(err)
+			}
 		case 3:
-			books.Send(BookSigned{}, actorkit.Header{}, nil)
+			if err := books.Send(BookSigned{}, actorkit.Header{}, nil); err != nil {
+				panic(err)
+			}
 		case 4:
-			books.Send(BookEdited{}, actorkit.Header{}, nil)
+			if err := books.Send(BookEdited{}, actorkit.Header{}, nil); err != nil {
+				panic(err)
+			}
 		}
 	}
 
-	//actorkit.Poison(books).Wait()
-	platform.AwaitAddrInterrupt(books)
+	actorkit.Poison(system).Wait()
 }
 
 type BookCreated struct{}
@@ -54,22 +61,29 @@ type BookStore struct {
 	Ratings actorkit.Addr
 }
 
-func (bm *BookStore) PostStart(parentAddr actorkit.Addr) error {
+func (bm *BookStore) PostStart(addr actorkit.Addr) error {
 	fmt.Println("Bookstore is ready")
 	return nil
 }
 
 // PreStart will be called when actor is starting up.
-func (bm *BookStore) PreStart(parentAddr actorkit.Addr) error {
-	var err error
-	bm.Books, err = parentAddr.Spawn("books_events", &BookEventStore{})
-	if err != nil {
-		return err
+func (bm *BookStore) PreStart(actor actorkit.Addr) error {
+	if bm.Books == nil {
+		books, err := actor.Spawn("books_events", &BookEventStore{})
+		if err != nil {
+			return err
+		}
+
+		bm.Books = books
 	}
 
-	bm.Ratings, err = parentAddr.Spawn("books_ratings", &BookRatingStore{})
-	if err != nil {
-		return err
+	if bm.Ratings == nil {
+		ratings, err := actor.Spawn("books_ratings", &BookRatingStore{})
+		if err != nil {
+			return err
+		}
+
+		bm.Ratings = ratings
 	}
 
 	return nil

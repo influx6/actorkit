@@ -12,8 +12,12 @@ github.com/gokit/errors v0.0.0-20181026120426-7a8e9e77d6a3 h1:TD1Lg0mqXKbjneWHZm
 github.com/gokit/errors v0.0.0-20181026120426-7a8e9e77d6a3/go.mod h1:ipykB/QrFXRTDj7gnqpIPJGoH8TN0FRQqAuKUUOZg9E=
 github.com/gokit/errors v0.0.0-20181028180812-faa548fa487e h1:Fe31UPAhrBzCyqTGm9UMQ94ayrZ9zv07m+ovFT47le4=
 github.com/gokit/errors v0.0.0-20181028180812-faa548fa487e/go.mod h1:ipykB/QrFXRTDj7gnqpIPJGoH8TN0FRQqAuKUUOZg9E=
+github.com/gokit/errors v0.0.0-20181110102931-ad3a02379de2 h1:vcRzfl1wBuAgQZmJzEdZPmGGdsTjnBhlq3+jPUbK7rk=
+github.com/gokit/errors v0.0.0-20181110102931-ad3a02379de2/go.mod h1:EeKi4sLTXeZQF2QKAgJ1wipxoQixyEVLPJaama/Q4tw=
 github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7 h1:9JJfPoUUpjeImyRSPb9BD3jL3ASS0a/9uo9EFXdRbCM=
 github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7/go.mod h1:u590NupW7qC90r1MhdNhQoHKY0WYGdHDo/4YszwlS1o=
+github.com/gokit/es v0.0.0-20181110103359-c61e83ce789f h1:0CR2pHS2XfYiTj73CZds93JRrR+MBaWl5NmdH2VpYqc=
+github.com/gokit/es v0.0.0-20181110103359-c61e83ce789f/go.mod h1:u590NupW7qC90r1MhdNhQoHKY0WYGdHDo/4YszwlS1o=
 github.com/gokit/futurechain v0.0.0-20181027053849-6f35d2aed70b h1:+pY/JwoxrcoS3uVuGClbA2LumPHVT94aM8UgOh+e8SE=
 github.com/gokit/futurechain v0.0.0-20181027053849-6f35d2aed70b/go.mod h1:gGl5VWei4qAvUe2lOfTlixAs51xMV0+OmKE3H4k0ntc=
 github.com/gokit/futurechain v0.0.0-20181027094057-cfba8de25ab9 h1:gabe6DCLs6lYbmmyGhdHQChyZ+Tw9zvDKO3QWh9tNAM=

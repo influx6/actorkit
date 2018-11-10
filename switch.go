@@ -61,6 +61,11 @@ func (s *SwitchImpl) IsOn() bool {
 // changed state, this can be used to await switch change.
 func (s *SwitchImpl) Wait() {
 	s.cond.L.Lock()
+	if !s.state {
+		s.cond.L.Unlock()
+		return
+	}
+
 	s.cond.Wait()
 	s.cond.L.Unlock()
 }

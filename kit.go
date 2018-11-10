@@ -1,7 +1,7 @@
 package actorkit
 
 import (
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gokit/es"
@@ -100,22 +100,29 @@ func CreateEnvelope(sender Addr, header Header, data interface{}) Envelope {
 // can be be the same actor offering different services based on the behaviour
 // it provides.
 type Actor interface {
-	Waiter
-	Spawner
-	Ancestry
-	Watchable
-	Receiver
-	Identity
-	Escalator
 	Running
+	Startable
 	Stoppable
+	Restartable
 	Destroyable
+
+	Identity
+	Addressable
+
+	Ancestry
+	Descendants
+
+	Spawner
 	Discovery
 	DiscoveryChain
-	Startable
-	Descendants
-	Restartable
-	Addressable
+
+	Receiver
+	Escalator
+
+	Waiter
+	Watchable
+	GetActorStat
+
 	MailboxOwner
 }
 
@@ -274,11 +281,6 @@ type Discovery interface {
 	Discover(service string, ancestral bool) (Addr, error)
 }
 
-// DiscoveryServiceFunction defines a function type which when
-// giving a underline service will return a suitable actor for
-// said service.
-type DiscoveryServiceFunction func(service string) (Actor, error)
-
 // DiscoveryService defines an interface which will return
 // a giving Actor for a desired service.
 //
@@ -309,82 +311,14 @@ type DiscoveryChain interface {
 	AddDiscovery(service DiscoveryService) error
 }
 
-//*****************************************************************************
-//  OnceDiscoveryFor: Service discovery with same actor returning generator
-//******************************************************************************
-
-// OnceDiscoveryFor returns a new DiscoveryService which has an underline
-// store of known actors providing for giving services and will return
-// those found actors if giving service was requested for. It will not
-// attempt to retrieve another from function if already available.
-// The actor will continuously be available until either terminated
-// or destroyed.
-func OnceDiscoveryFor(fn DiscoveryServiceFunction) DiscoveryService {
-	return &onceDiscoveryService{Fn: fn}
-}
-
-type onceDiscoveryService struct {
-	Fn     DiscoveryServiceFunction
-	ml     sync.RWMutex
-	actors map[string]Actor
-}
-
-func (dn *onceDiscoveryService) Discover(service string) (Actor, error) {
-	if found := dn.getActor(service); found != nil {
-		return found, nil
-	}
-
-	generated, err := dn.Fn(service)
-	if err != nil {
-		return nil, err
-	}
-
-	dn.ml.Lock()
-	dn.actors[service] = generated
-	dn.ml.Unlock()
-
-	// listening till actor is destroyed, then remove from registery.
-	end := make(chan struct{}, 1)
-	sub := generated.Watch(func(ev interface{}) {
-		switch ev.(type) {
-		case ActorDestroyed:
-			select {
-			case end <- struct{}{}:
-				return
-			default:
-			}
-		}
-	})
-
-	// clean up subscription in go-routine once
-	// we are signaled to and remove actor from registry.
-	go func(m string) {
-		<-end
-		sub.Stop()
-		dn.rmActor(m)
-	}(service)
-
-	return generated, nil
-}
-
-func (dn *onceDiscoveryService) getActor(service string) Actor {
-	dn.ml.RLock()
-	defer dn.ml.RUnlock()
-	if found, ok := dn.actors[service]; ok {
-		return found
-	}
-	return nil
-}
-
-func (dn *onceDiscoveryService) rmActor(service string) {
-	dn.ml.Lock()
-	defer dn.ml.Unlock()
-	delete(dn.actors, service)
-}
-
 //**************************************************************
 //  DiscoveryFor: Service discovery with function generators
 //*************************************************************
+
+// DiscoveryServiceFunction defines a function type which when
+// giving a underline service will return a suitable actor for
+// said service.
+type DiscoveryServiceFunction func(service string) (Actor, error)
 
 // DiscoveryFor returns a new DiscoveryService which calls giving function
 // with service name for returning an actor suitable for handling a giving service.
@@ -563,6 +497,93 @@ type Futures interface {
 // service name.
 type Service interface {
 	Service() string
+}
+
+//***********************************
+//  ActorState
+//***********************************
+
+type ActorState int
+
+// set of possible stat state.
+const (
+	PanicState ActorState = iota + 1
+	ErrorState
+	KillState
+	DestroyState
+	StopState
+	RestartState
+	DeliveryState
+)
+
+// GetActorStat exposes a method which returns a giving
+// ActorState entity for it's implementer.
+type GetActorStat interface {
+	ActorStat() ActorStat
+}
+
+// ActorState defines an interface which keeps internal
+// counters about the states of a actor over time. This can
+// be incremented, decremented and rerieved.
+type ActorStat interface {
+	// Incr increments counter for giving state.
+	Incr(ActorState)
+
+	// Decr decrements counter for giving state.
+	Decr(ActorState)
+
+	// Reset resets giving counter for giving state back to 0.
+	Reset(ActorState)
+
+	// Get retrieves latest count for giving state.
+	Get(ActorState) int
+}
+
+// ActorStatImpl implements ActorState interface.
+type ActorStatImpl struct {
+	states map[ActorState]int64
+}
+
+// NewActorStatImpl returns a new instance of ActorStatImpl.
+func NewActorStatImpl() *ActorStatImpl {
+	return &ActorStatImpl{
+		states: map[ActorState]int64{},
+	}
+}
+
+// Reset resets giving counter for giving state back to 0.
+func (as *ActorStatImpl) Reset(s ActorState) {
+	if m, ok := as.states[s]; ok {
+		atomic.StoreInt64(&m, 0)
+	}
+}
+
+// Incr increments counter for giving state.
+func (as *ActorStatImpl) Incr(s ActorState) {
+	if m, ok := as.states[s]; ok {
+		atomic.StoreInt64(&m, 0)
+	} else {
+		as.states[s] = 1
+	}
+}
+
+// Decr decrements counter for giving state.
+func (as *ActorStatImpl) Decr(s ActorState) {
+	if m, ok := as.states[s]; ok {
+		if m > 0 {
+			atomic.AddInt64(&m, -1)
+		}
+	} else {
+		as.states[s] = 1
+	}
+}
+
+// Get retrieves latest count for giving state.
+func (as *ActorStatImpl) Get(s ActorState) int {
+	if m, ok := as.states[s]; ok {
+		return int(atomic.LoadInt64(&m))
+	}
+	return 0
 }
 
 //***********************************
@@ -811,4 +832,5 @@ type ActorPanic struct {
 	CausedAddr    Addr
 	CausedMessage Envelope
 	Panic         interface{}
+	Stack         []byte
 }
