@@ -206,51 +206,37 @@ type ExponentialBackOffSupervisor struct {
 
 // Handle implements the exponential restart of giving target actor within giving maximum allowed runs.
 func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	var expo exponentialStrategy
-	expo.err = err
-	expo.actor = target
-	expo.addr = targetAddr
-	expo.invoker = sp.Invoker
-	expo.stat.Max = sp.Max
-	expo.stat.Backoff = sp.Backoff
+	stats := target.ActorStat()
 
-	go expo.Handle()
-}
+	if stats.Get(RestartState) >= sp.Max {
+		stats.Incr(StopState)
 
-type exponentialStrategy struct {
-	addr    Addr
-	actor   Actor
-	stat    Stat
-	err     interface{}
-	invoker SupervisionInvoker
-}
-
-func (en *exponentialStrategy) Handle() {
-	en.stat.Count++
-	if en.stat.Count >= en.stat.Max {
-		waiter := en.actor.Stop()
-		if en.invoker != nil {
-			en.invoker.InvokedStop(en.err, en.addr, en.actor)
+		waiter := target.Stop()
+		if sp.Invoker != nil {
+			sp.Invoker.InvokedStop(err, targetAddr, target)
 		}
 		waiter.Wait()
 		return
 	}
 
-	backoff := en.stat.Count * int(en.stat.Backoff.Nanoseconds())
+	backoff := stats.Get(RestartState) * int(sp.Backoff.Nanoseconds())
 	noise := rand.Intn(500)
 	dur := time.Duration(backoff + noise)
 
 	time.AfterFunc(dur, func() {
-		waiter := en.actor.Restart()
-		if en.invoker != nil {
-			en.invoker.InvokedRestart(en.err, en.stat, en.addr, en.actor)
+		stats.Incr(RestartState)
+
+		waiter := target.Restart()
+		if sp.Invoker != nil {
+			sp.Invoker.InvokedRestart(err, Stat{Max: sp.Max, Count: stats.Get(RestartState), Backoff: sp.Backoff}, targetAddr, target)
 		}
 
 		if err := waiter.Wait(); err != nil {
 			if errors.IsAny(err, ErrActorState) {
 				return
 			}
-			en.Handle()
+
+			sp.Handle(err, targetAddr, target, parent)
 		}
 	})
 }

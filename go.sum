@@ -14,6 +14,10 @@ github.com/gokit/errors v0.0.0-20181028180812-faa548fa487e h1:Fe31UPAhrBzCyqTGm9
 github.com/gokit/errors v0.0.0-20181028180812-faa548fa487e/go.mod h1:ipykB/QrFXRTDj7gnqpIPJGoH8TN0FRQqAuKUUOZg9E=
 github.com/gokit/errors v0.0.0-20181110102931-ad3a02379de2 h1:vcRzfl1wBuAgQZmJzEdZPmGGdsTjnBhlq3+jPUbK7rk=
 github.com/gokit/errors v0.0.0-20181110102931-ad3a02379de2/go.mod h1:EeKi4sLTXeZQF2QKAgJ1wipxoQixyEVLPJaama/Q4tw=
+github.com/gokit/errors v0.0.0-20181110182801-475190d40f3e h1:11FWZXBpFA+ZnXh+19I8BTj+Lh8FSXqNpolNkieTs10=
+github.com/gokit/errors v0.0.0-20181110182801-475190d40f3e/go.mod h1:EeKi4sLTXeZQF2QKAgJ1wipxoQixyEVLPJaama/Q4tw=
+github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe h1:ialcZn3JZvJOHViYYiZ/aoL1ZT57GBTjZ6YZyqVWZvI=
+github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe/go.mod h1:EeKi4sLTXeZQF2QKAgJ1wipxoQixyEVLPJaama/Q4tw=
 github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7 h1:9JJfPoUUpjeImyRSPb9BD3jL3ASS0a/9uo9EFXdRbCM=
 github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7/go.mod h1:u590NupW7qC90r1MhdNhQoHKY0WYGdHDo/4YszwlS1o=
 github.com/gokit/es v0.0.0-20181110103359-c61e83ce789f h1:0CR2pHS2XfYiTj73CZds93JRrR+MBaWl5NmdH2VpYqc=

@@ -1,7 +1,7 @@
 module github.com/gokit/actorkit
 
 require (
-	github.com/gokit/errors v0.0.0-20181110102931-ad3a02379de2
+	github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe
 	github.com/gokit/es v0.0.0-20181110103359-c61e83ce789f
 	github.com/gokit/futurechain v0.0.0-20181028092304-940f8b7a813d
 	github.com/gokit/xid v1.2.2

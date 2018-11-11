@@ -522,9 +522,9 @@ type GetActorStat interface {
 	ActorStat() ActorStat
 }
 
-// ActorState defines an interface which keeps internal
+// ActorStat defines an interface which keeps internal
 // counters about the states of a actor over time. This can
-// be incremented, decremented and rerieved.
+// be incremented, decremented and retrieved.
 type ActorStat interface {
 	// Incr increments counter for giving state.
 	Incr(ActorState)
