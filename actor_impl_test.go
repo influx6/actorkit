@@ -14,20 +14,16 @@ func (b basic) Action(addr actorkit.Addr, env actorkit.Envelope) {
 }
 
 func TestActorWithChildTreeStates(t *testing.T) {
-	am := actorkit.NewActorImpl(
-		"kit",
-		"127.0.0.1:2000",
-		actorkit.UseBehaviour(&basic{}),
-	)
+	am := actorkit.NewActorImpl(actorkit.UseBehaviour(&basic{}))
+
+	assert.NoError(t, am.Start().Wait())
+	assert.False(t, am.Stopped())
 
 	childAddr, err := am.Spawn("child", &basic{})
 	assert.NoError(t, err)
 
 	grandChild, err := childAddr.Spawn("grand-child", &basic{})
 	assert.NoError(t, err)
-
-	assert.NoError(t, am.Start().Wait())
-	assert.False(t, am.Stopped())
 
 	assert.NoError(t, am.Restart().Wait())
 	assert.False(t, am.Stopped())
@@ -44,16 +40,14 @@ func TestActorWithChildTreeStates(t *testing.T) {
 
 func TestActorWithChildStates(t *testing.T) {
 	am := actorkit.NewActorImpl(
-		"kit",
-		"127.0.0.1:2000",
 		actorkit.UseBehaviour(&basic{}),
 	)
 
-	childAddr, err := am.Spawn("child", &basic{})
-	assert.NoError(t, err)
-
 	assert.NoError(t, am.Start().Wait())
 	assert.False(t, am.Stopped())
+
+	childAddr, err := am.Spawn("child", &basic{})
+	assert.NoError(t, err)
 
 	assert.NoError(t, am.Restart().Wait())
 	assert.False(t, am.Stopped())
@@ -67,8 +61,6 @@ func TestActorWithChildStates(t *testing.T) {
 
 func TestActorImpl(t *testing.T) {
 	am := actorkit.NewActorImpl(
-		"kit",
-		"127.0.0.1:2000",
 		actorkit.UseBehaviour(basic{}),
 	)
 

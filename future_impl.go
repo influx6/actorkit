@@ -106,6 +106,12 @@ func (f *FutureImpl) Spawn(service string, rr Behaviour) (Addr, error) {
 	return nil, errors.New("not possible")
 }
 
+// Actor for a future does not exists, it is in a sense actor less,
+// hence nil is returned.
+func (f *FutureImpl) Actor() Actor {
+	return nil
+}
+
 // Future returns a new future instance from giving source.
 func (f *FutureImpl) Future() Future {
 	return NewFuture(f.parent)
@@ -253,6 +259,7 @@ func (f *FutureImpl) broadcast() {
 	for _, addr := range f.pipes {
 		addr.Forward(*res)
 	}
+	f.pipes = nil
 }
 
 func (f *FutureImpl) timedResolved() {

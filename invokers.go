@@ -17,9 +17,10 @@ type EventSupervisingInvoker struct {
 }
 
 // InvokedStop emits event containing stopped details.
-func (es *EventSupervisingInvoker) InvokedStop(cause interface{}, addr Addr, target Actor) {
+func (es *EventSupervisingInvoker) InvokedStop(cause interface{}, stat map[string]int, addr Addr, target Actor) {
 	es.Event.Publish(SupervisorEvent{
 		Addr:      addr,
+		Stat:      stat,
 		Cause:     cause,
 		Time:      time.Now(),
 		Actor:     target.Addr(),
@@ -28,9 +29,10 @@ func (es *EventSupervisingInvoker) InvokedStop(cause interface{}, addr Addr, tar
 }
 
 // InvokedKill emits event containing killed details.
-func (es *EventSupervisingInvoker) InvokedKill(cause interface{}, addr Addr, target Actor) {
+func (es *EventSupervisingInvoker) InvokedKill(cause interface{}, stat map[string]int, addr Addr, target Actor) {
 	es.Event.Publish(SupervisorEvent{
 		Addr:      addr,
+		Stat:      stat,
 		Cause:     cause,
 		Time:      time.Now(),
 		Actor:     target.Addr(),
@@ -39,9 +41,10 @@ func (es *EventSupervisingInvoker) InvokedKill(cause interface{}, addr Addr, tar
 }
 
 // InvokedDestroy emits event containing destroyed details.
-func (es *EventSupervisingInvoker) InvokedDestroy(cause interface{}, addr Addr, target Actor) {
+func (es *EventSupervisingInvoker) InvokedDestroy(cause interface{}, stat map[string]int, addr Addr, target Actor) {
 	es.Event.Publish(SupervisorEvent{
 		Addr:      addr,
+		Stat:      stat,
 		Cause:     cause,
 		Time:      time.Now(),
 		Actor:     target.Addr(),
@@ -50,7 +53,7 @@ func (es *EventSupervisingInvoker) InvokedDestroy(cause interface{}, addr Addr, 
 }
 
 // InvokedRestart emits event containing restart details.
-func (es *EventSupervisingInvoker) InvokedRestart(cause interface{}, stat Stat, addr Addr, target Actor) {
+func (es *EventSupervisingInvoker) InvokedRestart(cause interface{}, stat map[string]int, addr Addr, target Actor) {
 	es.Event.Publish(SupervisorEvent{
 		Addr:      addr,
 		Stat:      stat,
@@ -67,10 +70,10 @@ func (es *EventSupervisingInvoker) InvokedRestart(cause interface{}, stat Stat, 
 
 // SupervisorEvent defines an event type which is published by the EventSupervisingInvoker.
 type SupervisorEvent struct {
-	Stat      Stat
+	Stat      map[string]int
 	Addr      Addr
 	Actor     string
 	Time      time.Time
-	Cause     interface{}
 	Directive Directive
+	Cause     interface{}
 }

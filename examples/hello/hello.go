@@ -22,7 +22,7 @@ func (h *HelloOp) Action(me actorkit.Addr, e actorkit.Envelope) {
 }
 
 func main() {
-	addr, _, err := actorkit.System(&HelloOp{}, "kit", "localhost:0")
+	addr, _, err := actorkit.System("kit", "localhost:0", actorkit.UseBehaviour(&HelloOp{}))
 	if err != nil {
 		panic(err)
 	}

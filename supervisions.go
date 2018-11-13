@@ -11,26 +11,36 @@ import (
 // AllForOneSupervisor
 //*****************************************************************
 
+// PanicAction defines a function type which embodies the action to
+// be done with paniced value.
+type PanicAction func(interface{}, Addr, Actor)
+
 // AllForOneSupervisor implements a one-to-one supervising strategy for giving actors.
 type AllForOneSupervisor struct {
-	Max       int
-	Direction Direction
-	Invoker   SupervisionInvoker
+	Max         int
+	Direction   Direction
+	PanicAction PanicAction
+	Invoker     SupervisionInvoker
 }
 
 // Handle implements the Supervisor interface and provides the algorithm logic for the
 // all-for-one monitoring strategy, where a failed actor causes the same effect to be applied
 // to all siblings and parent.
 func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	stats := parent.ActorStat()
+	stats := parent.Stats()
 	switch on.Direction(err) {
 	case PanicDirective:
 		stats.Incr(PanicState)
 		waiter := parent.Kill()
 		if on.Invoker != nil {
-			on.Invoker.InvokedKill(err, targetAddr, target)
+			on.Invoker.InvokedKill(err, stats.Collate(), targetAddr, target)
 		}
 		waiter.Wait()
+
+		if on.PanicAction != nil {
+			on.PanicAction(err, targetAddr, target)
+			return
+		}
 
 		if pe, ok := err.(ActorPanic); ok {
 			panic(string(pe.Stack))
@@ -39,26 +49,26 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 		stats.Incr(KillState)
 		waiter := parent.Kill()
 		if on.Invoker != nil {
-			on.Invoker.InvokedKill(err, targetAddr, target)
+			on.Invoker.InvokedKill(err, stats.Collate(), targetAddr, target)
 		}
 		waiter.Wait()
 	case StopDirective:
 		stats.Incr(StopState)
 		waiter := parent.Stop()
 		if on.Invoker != nil {
-			on.Invoker.InvokedStop(err, targetAddr, target)
+			on.Invoker.InvokedStop(err, stats.Collate(), targetAddr, target)
 		}
 		waiter.Wait()
 	case RestartDirective:
 		stats.Incr(RestartState)
 
-		if stats.Get(RestartState) >= on.Max {
+		if on.Max > 0 && stats.Get(RestartFailureState) >= on.Max {
 			return
 		}
 
 		waiter := parent.Restart()
 		if on.Invoker != nil {
-			on.Invoker.InvokedRestart(err, Stat{Max: on.Max, Count: stats.Get(RestartState)}, targetAddr, target)
+			on.Invoker.InvokedRestart(err, stats.Collate(), targetAddr, target)
 		}
 
 		if err := waiter.Wait(); err != nil {
@@ -66,16 +76,21 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 				return
 			}
 
+			stats.Incr(RestartFailureState)
 			on.Handle(err, targetAddr, target, parent)
 			return
 		}
+		stats.Reset(RestartFailureState)
 	case DestroyDirective:
 		stats.Incr(DestroyState)
 		waiter := parent.Destroy()
 		if on.Invoker != nil {
-			on.Invoker.InvokedDestroy(err, targetAddr, target)
+			on.Invoker.InvokedDestroy(err, stats.Collate(), targetAddr, target)
 		}
 		waiter.Wait()
+	case EscalateDirective:
+		stats.Incr(EscalatedState)
+		parent.Escalate(err, targetAddr)
 	case IgnoreDirective:
 		stats.Incr(ErrorState)
 		return
@@ -91,24 +106,30 @@ type Direction func(interface{}) Directive
 
 // OneForOneSupervisor implements a one-to-one supervising strategy for giving actors.
 type OneForOneSupervisor struct {
-	Max       int
-	Direction Direction
-	Invoker   SupervisionInvoker
+	Max         int
+	Direction   Direction
+	PanicAction PanicAction
+	Invoker     SupervisionInvoker
 }
 
 // Handle implements the Supervisor interface and provides the algorithm logic for the
 // one-for-one monitoring strategy, where a failed actor is dealt with singularly without affecting
 // it's siblings.
 func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	stats := target.ActorStat()
+	stats := target.Stats()
 	switch on.Direction(err) {
 	case PanicDirective:
 		stats.Incr(PanicState)
 		waiter := target.Kill()
 		if on.Invoker != nil {
-			on.Invoker.InvokedKill(err, targetAddr, target)
+			on.Invoker.InvokedKill(err, stats.Collate(), targetAddr, target)
 		}
 		waiter.Wait()
+
+		if on.PanicAction != nil {
+			on.PanicAction(err, targetAddr, target)
+			return
+		}
 
 		if pe, ok := err.(ActorPanic); ok {
 			panic(string(pe.Stack))
@@ -117,28 +138,28 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 		stats.Incr(KillState)
 		waiter := target.Kill()
 		if on.Invoker != nil {
-			on.Invoker.InvokedKill(err, targetAddr, target)
+			on.Invoker.InvokedKill(err, stats.Collate(), targetAddr, target)
 		}
 		waiter.Wait()
 	case StopDirective:
 		stats.Incr(StopState)
 		waiter := target.Stop()
 		if on.Invoker != nil {
-			on.Invoker.InvokedStop(err, targetAddr, target)
+			on.Invoker.InvokedStop(err, stats.Collate(), targetAddr, target)
 		}
 		waiter.Wait()
 	case RestartDirective:
 		stats.Incr(RestartState)
 
 		// if we have surpassed maximum allowed restarts, kill actor.
-		if stats.Get(RestartState) >= on.Max {
+		if on.Max > 0 && stats.Get(RestartFailureState) >= on.Max {
 			target.Kill().Wait()
 			return
 		}
 
 		waiter := target.Restart()
 		if on.Invoker != nil {
-			on.Invoker.InvokedRestart(err, Stat{Max: on.Max, Count: stats.Get(RestartState)}, targetAddr, target)
+			on.Invoker.InvokedRestart(err, stats.Collate(), targetAddr, target)
 		}
 
 		if err := waiter.Wait(); err != nil {
@@ -146,18 +167,22 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 				return
 			}
 
+			stats.Incr(RestartFailureState)
 			on.Handle(err, targetAddr, target, parent)
 			return
 		}
 
-		stats.Reset(RestartState)
+		stats.Reset(RestartFailureState)
 	case DestroyDirective:
 		stats.Incr(DestroyState)
 		waiter := target.Destroy()
 		if on.Invoker != nil {
-			on.Invoker.InvokedDestroy(err, targetAddr, target)
+			on.Invoker.InvokedDestroy(err, stats.Collate(), targetAddr, target)
 		}
 		waiter.Wait()
+	case EscalateDirective:
+		stats.Incr(EscalatedState)
+		parent.Escalate(err, targetAddr)
 	case IgnoreDirective:
 		stats.Incr(ErrorState)
 		return
@@ -176,11 +201,11 @@ type RestartingSupervisor struct {
 // Handle implements a restarting supervision strategy where any escalated error will lead to
 // a restart of actor.
 func (sp *RestartingSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	stats := target.ActorStat()
+	stats := target.Stats()
 
 	waiter := target.Restart()
 	if sp.Invoker != nil {
-		sp.Invoker.InvokedRestart(err, Stat{Count: 1}, targetAddr, target)
+		sp.Invoker.InvokedRestart(err, stats.Collate(), targetAddr, target)
 	}
 
 	stats.Incr(RestartState)
@@ -189,8 +214,11 @@ func (sp *RestartingSupervisor) Handle(err interface{}, targetAddr Addr, target 
 		if errors.IsAny(err, ErrActorState) {
 			return
 		}
+
+		stats.Incr(RestartFailureState)
 		target.Escalate(err, targetAddr)
 	}
+	stats.Reset(RestartFailureState)
 }
 
 //*****************************************************************
@@ -206,14 +234,14 @@ type ExponentialBackOffSupervisor struct {
 
 // Handle implements the exponential restart of giving target actor within giving maximum allowed runs.
 func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	stats := target.ActorStat()
+	stats := target.Stats()
 
 	if stats.Get(RestartState) >= sp.Max {
 		stats.Incr(StopState)
 
 		waiter := target.Stop()
 		if sp.Invoker != nil {
-			sp.Invoker.InvokedStop(err, targetAddr, target)
+			sp.Invoker.InvokedStop(err, stats.Collate(), targetAddr, target)
 		}
 		waiter.Wait()
 		return
@@ -228,7 +256,7 @@ func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr,
 
 		waiter := target.Restart()
 		if sp.Invoker != nil {
-			sp.Invoker.InvokedRestart(err, Stat{Max: sp.Max, Count: stats.Get(RestartState), Backoff: sp.Backoff}, targetAddr, target)
+			sp.Invoker.InvokedRestart(err, stats.Collate(), targetAddr, target)
 		}
 
 		if err := waiter.Wait(); err != nil {
@@ -236,7 +264,10 @@ func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr,
 				return
 			}
 
+			stats.Incr(RestartFailureState)
 			sp.Handle(err, targetAddr, target, parent)
 		}
+
+		stats.Reset(RestartFailureState)
 	})
 }

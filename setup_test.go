@@ -33,6 +33,10 @@ func (am *AddrImpl) TimedFuture(d time.Duration) actorkit.Future {
 	return actorkit.TimedFuture(am, d)
 }
 
+func (*AddrImpl) Actor() actorkit.Actor {
+	return nil
+}
+
 func (*AddrImpl) Service() string {
 	return "addr"
 }

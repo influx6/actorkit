@@ -6,6 +6,281 @@ import (
 	"github.com/gokit/errors"
 )
 
+const (
+	defaultSize = 16
+)
+
+//*********************************************
+// AddrSet
+//*********************************************
+
+// ServiceSet implements a grouping of giving addresses using
+// sets based on their service offered which is represented by the
+// Addr.Addr(). It allows indexing, checking availability of giving
+// address within set.
+//
+// This is not safe for concurrent access.
+type ServiceSet struct {
+	set   map[string]int
+	addrs []Addr
+}
+
+// ForEach iterates through all available address against provided
+// function. It expects the function to return true if it wishes to
+// continue iteration or to stop by returning false.
+func (ad *ServiceSet) ForEach(fx func(Addr, int) bool) {
+	for ind, elem := range ad.addrs {
+		if !fx(elem, ind) {
+			break
+		}
+	}
+}
+
+// Has returns true/false if giving underline address (string version) already exists in
+// set.
+func (ad *ServiceSet) Has(addr string) bool {
+	if ad.set != nil {
+		if _, ok := ad.set[addr]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAddr returns true/false if giving underline address already exists in
+// set.
+func (ad *ServiceSet) HasAddr(addr Addr) bool {
+	if ad.set != nil {
+		if _, ok := ad.set[addr.Addr()]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Index returns giving index of address (string version) if within
+// set else returns -1.
+func (ad *ServiceSet) Index(addr string) int {
+	if ad.set != nil {
+		if index, ok := ad.set[addr]; ok {
+			return index
+		}
+	}
+	return -1
+}
+
+// IndexOf returns the giving index of address if in set else returns -1.
+func (ad *ServiceSet) IndexOf(addr Addr) int {
+	if ad.set != nil {
+		if index, ok := ad.set[addr.Addr()]; ok {
+			return index
+		}
+	}
+	return -1
+}
+
+// Remove removes giving address (string version from underline set).
+func (ad *ServiceSet) Remove(service string) bool {
+	if ad.set != nil {
+		if index, ok := ad.set[service]; ok {
+			addr := ad.addrs[index]
+			if swap := len(ad.addrs) - 1; swap > 0 {
+				ad.addrs[index] = ad.addrs[swap]
+				ad.addrs = ad.addrs[:swap]
+				delete(ad.set, addr.Addr())
+				return true
+			}
+
+			ad.addrs = ad.addrs[:0]
+			delete(ad.set, addr.Addr())
+			return true
+		}
+	}
+
+	return false
+}
+
+// RemoveAddr removes giving address from set.
+func (ad *ServiceSet) RemoveAddr(addr Addr) bool {
+	if ad.set != nil {
+		if index, ok := ad.set[addr.Addr()]; ok {
+			if swap := len(ad.addrs) - 1; swap > 0 {
+				ad.addrs[index] = ad.addrs[swap]
+				ad.addrs = ad.addrs[:swap]
+				delete(ad.set, addr.Addr())
+				return true
+			}
+
+			ad.addrs = ad.addrs[:0]
+			delete(ad.set, addr.Addr())
+			return true
+		}
+	}
+
+	return false
+}
+
+// Add adds giving address into address set.
+func (ad *ServiceSet) Add(addr Addr) bool {
+	if ad.set == nil {
+		ad.set = map[string]int{}
+		ad.addrs = make([]Addr, 0, defaultSize)
+	}
+
+	if _, ok := ad.set[addr.Addr()]; !ok {
+		ind := len(ad.addrs)
+		ad.addrs = append(ad.addrs, addr)
+		ad.set[addr.Addr()] = ind
+		return true
+	}
+
+	return false
+}
+
+// Set exposes the provided underline list of Addr, this slice is only
+// valid for use until the next call to Add or Remove. Hence you
+// must be adequately careful here.
+func (ad *ServiceSet) Set() []Addr {
+	return ad.addrs[:len(ad.addrs)]
+}
+
+//*********************************************
+// IDSet
+//*********************************************
+
+// IDSet implements a grouping of giving actor addresses using
+// sets based on the Addr.ID(). It allows indexing, checking availability of giving
+// address within set.
+//
+// This is not safe for concurrent access.
+type IDSet struct {
+	set   map[string]int
+	addrs []Addr
+}
+
+// ForEach iterates through all available address against provided
+// function. It expects the function to return true if it wishes to
+// continue iteration or to stop by returning false.
+func (ad *IDSet) ForEach(fx func(Addr, int) bool) {
+	for ind, elem := range ad.addrs {
+		if !fx(elem, ind) {
+			break
+		}
+	}
+}
+
+// Has returns true/false if giving underline address (string version) already exists in
+// set.
+func (ad *IDSet) Has(id string) bool {
+	if ad.set != nil {
+		if _, ok := ad.set[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAddr returns true/false if giving underline address already exists in
+// set.
+func (ad *IDSet) HasAddr(addr Addr) bool {
+	if ad.set != nil {
+		if _, ok := ad.set[addr.ID()]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Index returns giving index of address (string version) if within
+// set else returns -1.
+func (ad *IDSet) Index(id string) int {
+	if ad.set != nil {
+		if index, ok := ad.set[id]; ok {
+			return index
+		}
+	}
+	return -1
+}
+
+// IndexOf returns the giving index of address if in set else returns -1.
+func (ad *IDSet) IndexOf(addr Addr) int {
+	if ad.set != nil {
+		if index, ok := ad.set[addr.ID()]; ok {
+			return index
+		}
+	}
+	return -1
+}
+
+// Remove removes giving address (string version from underline set).
+func (ad *IDSet) Remove(id string) bool {
+	if ad.set != nil {
+		if index, ok := ad.set[id]; ok {
+			addr := ad.addrs[index]
+			if swap := len(ad.addrs) - 1; swap > 0 {
+				ad.addrs[index] = ad.addrs[swap]
+				ad.addrs = ad.addrs[:swap]
+				delete(ad.set, addr.ID())
+				return true
+			}
+
+			ad.addrs = ad.addrs[:0]
+			delete(ad.set, addr.ID())
+			return true
+		}
+	}
+
+	return false
+}
+
+// RemoveAddr removes giving address from set.
+func (ad *IDSet) RemoveAddr(addr Addr) bool {
+	if ad.set != nil {
+		if index, ok := ad.set[addr.ID()]; ok {
+			if swap := len(ad.addrs) - 1; swap > 0 {
+				ad.addrs[index] = ad.addrs[swap]
+				ad.addrs = ad.addrs[:swap]
+				delete(ad.set, addr.ID())
+				return true
+			}
+
+			ad.addrs = ad.addrs[:0]
+			delete(ad.set, addr.ID())
+			return true
+		}
+	}
+
+	return false
+}
+
+// Set exposes the provided underline list of Addr, this slice is only
+// valid for use until the next call to Add or Remove. Hence you
+// must be adequately careful here.
+func (ad *IDSet) Set() []Addr {
+	return ad.addrs[:len(ad.addrs)]
+}
+
+// Add adds giving address into address set.
+func (ad *IDSet) Add(addr Addr) bool {
+	if ad.set == nil {
+		ad.set = map[string]int{}
+		ad.addrs = make([]Addr, 0, defaultSize)
+	}
+
+	if _, ok := ad.set[addr.ID()]; !ok {
+		ind := len(ad.addrs)
+		ad.addrs = append(ad.addrs, addr)
+		ad.set[addr.ID()] = ind
+		return true
+	}
+
+	return false
+}
+
+//*********************************************
+// AddrImpl
+//*********************************************
+
 var _ Addr = &AddrImpl{}
 
 // Destroy returns a ErrWaiter which provides a means of forceful shutdown
@@ -91,6 +366,11 @@ func (a *AddrImpl) Parent() Addr {
 		return AddressOf(parent, "access")
 	}
 	return a
+}
+
+// Actor returns associated actor of Address.
+func (a *AddrImpl) Actor() Actor {
+	return a.actor
 }
 
 // Future returns a new future instance from giving source.

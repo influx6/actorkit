@@ -9,6 +9,10 @@ import (
 	"github.com/gokit/xid"
 )
 
+const (
+	stackSize = 1 << 16
+)
+
 var (
 	deadLetterID = xid.New()
 	deadLetters  = es.New()
@@ -78,6 +82,20 @@ func CreateEnvelope(sender Addr, header Header, data interface{}) Envelope {
 }
 
 //***********************************
+//  ProcRegistry
+//***********************************
+
+// ProcRegistry implementers implement a giving registry which allows
+// collating giving actors within a searching entity for access and retrieval.
+// Registries should be able to update themselves based on actor's state.
+type ProcRegistry interface {
+	Register(Actor) error
+	UnRegister(Actor) error
+	GetID(string) (Actor, error)
+	GetAddr(string) (Actor, error)
+}
+
+//***********************************
 //  Actor
 //***********************************
 
@@ -121,7 +139,7 @@ type Actor interface {
 
 	Waiter
 	Watchable
-	GetActorStat
+	Stats
 
 	MailboxOwner
 }
@@ -342,6 +360,17 @@ func (dn fnDiscoveryService) Discover(service string) (Actor, error) {
 // which destroys it's internal process.
 type Destroyable interface {
 	Destroy() ErrWaiter
+	DestroyChildren() ErrWaiter
+}
+
+// PreDestroy exposes a method to be called before destruction of actor.
+type PreDestroy interface {
+	PreDestroy(Addr) error
+}
+
+// PostDestroy exposes a method to be called after destruction of actor.
+type PostDestroy interface {
+	PostDestroy(Addr) error
 }
 
 //***********************************
@@ -378,6 +407,7 @@ type PostStart interface {
 type Restartable interface {
 	Restart() ErrWaiter
 	RestartSelf() ErrWaiter
+	RestartChildren() ErrWaiter
 }
 
 // PreRestart exposes a method which receives access address of actor
@@ -426,10 +456,16 @@ type Stoppable interface {
 	// pending operation and clear all pending messages.
 	Kill() ErrWaiter
 
+	// KillChildren will run kill command to children of implementer.
+	KillChildren() ErrWaiter
+
 	// Stop will immediately stop the target regardless of
 	// pending operation and returns a ErrWaiter to await end.
 	// It keeps and maintains currently pending messages in mailbox.
 	Stop() ErrWaiter
+
+	// StopChildren will run stop command to children of implementer.
+	StopChildren() ErrWaiter
 }
 
 //***********************************
@@ -471,8 +507,19 @@ type Addr interface {
 	Addressable
 	DiscoveryChain
 	Escalatable
+	AddressActor
 	AncestralAddr
 	AddressService
+}
+
+//***********************************
+//  AddressActor
+//***********************************
+
+// AddressActor defines an interface which exposes a method to retrieve
+// the actor of an Address.
+type AddressActor interface {
+	Actor() Actor
 }
 
 //***********************************
@@ -503,7 +550,34 @@ type Service interface {
 //  ActorState
 //***********************************
 
+// ActorState defines a giving int type representing a giving state
+// action of a actor. It is used as stats keys.
 type ActorState int
+
+// String returns string representation of state.
+func (a ActorState) String() string {
+	switch a {
+	case PanicState:
+		return "Panic"
+	case ErrorState:
+		return "Error"
+	case KillState:
+		return "Killed"
+	case DestroyState:
+		return "Destroyed"
+	case StopState:
+		return "Stopped"
+	case RestartState:
+		return "Restarted"
+	case DeliveryFailureState:
+		return "DeliveryFailure"
+	case EscalatedState:
+		return "Escalated"
+	case RestartFailureState:
+		return "RestartFailure"
+	}
+	return "Unknown"
+}
 
 // set of possible stat state.
 const (
@@ -513,19 +587,21 @@ const (
 	DestroyState
 	StopState
 	RestartState
-	DeliveryState
+	EscalatedState
+	RestartFailureState
+	DeliveryFailureState
 )
 
-// GetActorStat exposes a method which returns a giving
+// Stats exposes a method which returns a giving
 // ActorState entity for it's implementer.
-type GetActorStat interface {
-	ActorStat() ActorStat
+type Stats interface {
+	Stats() Stat
 }
 
-// ActorStat defines an interface which keeps internal
+// Stat defines an interface which keeps internal
 // counters about the states of a actor over time. This can
 // be incremented, decremented and retrieved.
-type ActorStat interface {
+type Stat interface {
 	// Incr increments counter for giving state.
 	Incr(ActorState)
 
@@ -537,7 +613,12 @@ type ActorStat interface {
 
 	// Get retrieves latest count for giving state.
 	Get(ActorState) int
+
+	// Collate returns a map of count of all states.
+	Collate() map[string]int
 }
+
+var _ Stat = &ActorStatImpl{}
 
 // ActorStatImpl implements ActorState interface.
 type ActorStatImpl struct {
@@ -586,9 +667,33 @@ func (as *ActorStatImpl) Get(s ActorState) int {
 	return 0
 }
 
+// Collate returns a map of all counts with associated name.
+func (as *ActorStatImpl) Collate() map[string]int {
+	collated := make(map[string]int, len(as.states))
+	for state, count := range as.states {
+		collated[state.String()] = int(atomic.LoadInt64(&count))
+	}
+	return collated
+}
+
 //***********************************
-//  Supervisor
+//  Supervisor and Directives
 //***********************************
+
+// Directive defines a int type which represents a giving action to be taken
+// for an actor.
+type Directive int
+
+// directive sets...
+const (
+	IgnoreDirective Directive = iota
+	PanicDirective
+	DestroyDirective
+	KillDirective
+	StopDirective
+	RestartDirective
+	EscalateDirective
+)
 
 // Supervisor defines a single method which takes
 // an occurred error with addr and actor which are related
@@ -679,21 +784,13 @@ type Resolvables interface {
 //  Invokers
 //***********************************
 
-// Stat defines a struct containing
-// statistics on the stats of a giving actor restart.
-type Stat struct {
-	Max     int           `json:"max"`
-	Count   int           `json:"count"`
-	Backoff time.Duration `json:"backoff"`
-}
-
 // SupervisionInvoker defines a invocation watcher, which reports
 // giving action taken for a giving error.
 type SupervisionInvoker interface {
-	InvokedStop(cause interface{}, addr Addr, target Actor)
-	InvokedKill(cause interface{}, addr Addr, target Actor)
-	InvokedDestroy(cause interface{}, addr Addr, target Actor)
-	InvokedRestart(cause interface{}, stat Stat, addr Addr, target Actor)
+	InvokedStop(cause interface{}, stat map[string]int, addr Addr, target Actor)
+	InvokedKill(cause interface{}, stat map[string]int, addr Addr, target Actor)
+	InvokedDestroy(cause interface{}, stat map[string]int, addr Addr, target Actor)
+	InvokedRestart(cause interface{}, stat map[string]int, addr Addr, target Actor)
 }
 
 // MailInvoker defines an interface that exposes methods
