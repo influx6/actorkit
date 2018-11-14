@@ -119,6 +119,7 @@ type ProcRegistry interface {
 // it provides.
 type Actor interface {
 	Running
+	Killable
 	Startable
 	Stoppable
 	Restartable
@@ -452,13 +453,6 @@ type Stoppable interface {
 	// Stopped returns true/false if giving value had stopped.
 	Stopped() bool
 
-	// Stop will immediately stop the target process regardless of
-	// pending operation and clear all pending messages.
-	Kill() ErrWaiter
-
-	// KillChildren will run kill command to children of implementer.
-	KillChildren() ErrWaiter
-
 	// Stop will immediately stop the target regardless of
 	// pending operation and returns a ErrWaiter to await end.
 	// It keeps and maintains currently pending messages in mailbox.
@@ -466,6 +460,20 @@ type Stoppable interface {
 
 	// StopChildren will run stop command to children of implementer.
 	StopChildren() ErrWaiter
+}
+
+//***********************************
+// Killable
+//***********************************
+
+// Killable defines and exposes a set of method for killing it's implementer.
+type Killable interface {
+	// Stop will immediately stop the target process regardless of
+	// pending operation and clear all pending messages.
+	Kill() ErrWaiter
+
+	// KillChildren will run kill command to children of implementer.
+	KillChildren() ErrWaiter
 }
 
 //***********************************
@@ -766,7 +774,11 @@ type Sender interface {
 
 	// Send will deliver a message to the underline actor
 	// with Addr set as sender .
-	Send(interface{}, Header, Addr) error
+	Send(interface{}, Addr) error
+
+	// SendWithHeader will deliver a message to the underline actor
+	// with Addr set as sender with a Header.
+	SendWithHeader(interface{}, Header, Addr) error
 }
 
 //***********************************
@@ -852,12 +864,21 @@ type Future interface {
 //  Actor System Message
 //***********************************
 
-// TerminatedActor is sent when an Mask processor has already
+// SystemMessage defines a type to identify giving message
+// data as a system message.
+type SystemMessage interface {
+	SystemMessage()
+}
+
+// TerminatedActor is sent when an processor has already
 // being shutdown/stopped.
 type TerminatedActor struct {
 	ID   string
 	Addr string
 }
+
+// SystemMessage identifies giving type as a system message.
+func (TerminatedActor) SystemMessage() {}
 
 // ActorStartRequested defines message sent to indicate starting request or in process
 // starting request to an actor.
@@ -867,17 +888,26 @@ type ActorStartRequested struct {
 	Data interface{}
 }
 
+// SystemMessage identifies giving type as a system message.
+func (ActorStartRequested) SystemMessage() {}
+
 // FutureResolved indicates the resolution of a giving future.
 type FutureResolved struct {
 	ID   string
 	Data interface{}
 }
 
+// SystemMessage identifies giving type as a system message.
+func (FutureResolved) SystemMessage() {}
+
 // FutureRejected indicates the rejection of a giving future.
 type FutureRejected struct {
 	ID    string
 	Error error
 }
+
+// SystemMessage identifies giving type as a system message.
+func (FutureRejected) SystemMessage() {}
 
 // ActorRestartRequested indicates giving message sent to actor to
 // initiate stopping.
@@ -886,12 +916,18 @@ type ActorRestartRequested struct {
 	Addr string
 }
 
+// SystemMessage identifies giving type as a system message.
+func (ActorRestartRequested) SystemMessage() {}
+
 // ActorStopRequested indicates giving message sent to actor to
 // initiate stopping.
 type ActorStopRequested struct {
 	ID   string
 	Addr string
 }
+
+// SystemMessage identifies giving type as a system message.
+func (ActorStopRequested) SystemMessage() {}
 
 // ActorStarted is sent when an actor has begun it's operation or has
 // completely started.
@@ -900,12 +936,18 @@ type ActorStarted struct {
 	Addr string
 }
 
+// SystemMessage identifies giving type as a system message.
+func (ActorStarted) SystemMessage() {}
+
 // ActorRestarted indicates giving message sent by actor after
 // restart.
 type ActorRestarted struct {
 	ID   string
 	Addr string
 }
+
+// SystemMessage identifies giving type as a system message.
+func (ActorRestarted) SystemMessage() {}
 
 // ActorStopped is sent when an actor is in the process of shutdown or
 // has completely shutdown.
@@ -914,6 +956,9 @@ type ActorStopped struct {
 	Addr string
 }
 
+// SystemMessage identifies giving type as a system message.
+func (ActorStopped) SystemMessage() {}
+
 // ActorDestroyed is sent when an actor is absolutely stopped and is removed
 // totally from network. It's operation will be not allowed to run as it
 // as become un-existent.
@@ -921,6 +966,9 @@ type ActorDestroyed struct {
 	ID   string
 	Addr string
 }
+
+// SystemMessage identifies giving type as a system message.
+func (ActorDestroyed) SystemMessage() {}
 
 // ActorPanic is sent when an actor panics internally.
 type ActorPanic struct {
@@ -931,3 +979,50 @@ type ActorPanic struct {
 	Panic         interface{}
 	Stack         []byte
 }
+
+// SystemMessage identifies giving type as a system message.
+func (ActorPanic) SystemMessage() {}
+
+// ActorFailedStart indicates giving message sent by actor after
+// failed to start due to error.
+type ActorFailedStart struct {
+	Err  error
+	ID   string
+	Addr string
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorFailedStart) SystemMessage() {}
+
+// ActorFailedRestart indicates giving message sent by actor after
+// failed to restart due to error.
+type ActorFailedRestart struct {
+	Err  error
+	ID   string
+	Addr string
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorFailedRestart) SystemMessage() {}
+
+// ActorRoutineError is sent when a actor internal routine encountered an error
+// either during stop, kill, destruction commands.
+type ActorRoutineError struct {
+	ID   string
+	Addr string
+	Err  error
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorRoutineError) SystemMessage() {}
+
+// ActorRoutinePanic is sent when a actor internal routine panics.
+type ActorRoutinePanic struct {
+	ID    string
+	Addr  string
+	Panic interface{}
+	Stack []byte
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorRoutinePanic) SystemMessage() {}

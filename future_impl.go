@@ -66,10 +66,21 @@ func (f *FutureImpl) Forward(reply Envelope) error {
 	return nil
 }
 
-// Send delivers giving data to Future as the resolution of
+// Send delivers giving data to resolve the future.
+func (f *FutureImpl) Send(data interface{}, addr Addr) error {
+	if f.resolved() {
+		return errors.Wrap(ErrFutureResolved, "Future %q already resolved", f.Addr())
+	}
+
+	f.Resolve(CreateEnvelope(addr, Header{}, data))
+	f.broadcast()
+	return nil
+}
+
+// SendWithHeader delivers giving data to Future as the resolution of
 // said Future. The data provided will be used as the resolved
 // value of giving future, if it's not already resolved.
-func (f *FutureImpl) Send(data interface{}, h Header, addr Addr) error {
+func (f *FutureImpl) SendWithHeader(data interface{}, h Header, addr Addr) error {
 	if f.resolved() {
 		return errors.Wrap(ErrFutureResolved, "Future %q already resolved", f.Addr())
 	}
@@ -242,11 +253,16 @@ func (f *FutureImpl) broadcastError() {
 	res = f.err
 	f.ac.Unlock()
 
+	msg := CreateEnvelope(f, Header{}, FutureRejected{
+		Error: res,
+		ID:    f.ID(),
+	})
+
 	for _, addr := range f.pipes {
-		if rr, ok := addr.(Resolvables); ok {
-			rr.Reject(res)
-		}
+		addr.Forward(msg)
 	}
+
+	f.pipes = nil
 }
 
 func (f *FutureImpl) broadcast() {

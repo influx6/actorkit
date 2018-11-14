@@ -7,7 +7,7 @@ const (
 func uint64ToID(u uint64) string {
 	var buf [13]byte
 	i := 13
-	// base is power of 2: use shifts and masks instead of / and %
+	// base is power of 2: use shifts and addresss instead of / and %
 	for u >= 64 {
 		i--
 		buf[i] = digits[uintptr(u)&0x3f]

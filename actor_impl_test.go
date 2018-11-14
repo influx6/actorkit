@@ -32,10 +32,10 @@ func TestActorWithChildTreeStates(t *testing.T) {
 	assert.True(t, am.Stopped())
 
 	assert.True(t, childAddr.ID() != am.ID())
-	assert.Error(t, childAddr.Send("a", actorkit.Header{}, nil))
+	assert.Error(t, childAddr.Send("a", nil))
 
 	assert.True(t, grandChild.ID() != childAddr.ID())
-	assert.Error(t, grandChild.Send("a", actorkit.Header{}, nil))
+	assert.Error(t, grandChild.Send("a", nil))
 }
 
 func TestActorWithChildStates(t *testing.T) {
@@ -56,7 +56,7 @@ func TestActorWithChildStates(t *testing.T) {
 	assert.True(t, am.Stopped())
 
 	assert.True(t, childAddr.ID() != am.ID())
-	assert.Error(t, childAddr.Send("a", actorkit.Header{}, nil))
+	assert.Error(t, childAddr.Send("a", nil))
 }
 
 func TestActorImpl(t *testing.T) {

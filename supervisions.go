@@ -1,6 +1,7 @@
 package actorkit
 
 import (
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -120,11 +121,15 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 	switch on.Direction(err) {
 	case PanicDirective:
 		stats.Incr(PanicState)
+
 		waiter := target.Kill()
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, stats.Collate(), targetAddr, target)
 		}
-		waiter.Wait()
+
+		if err := waiter.Wait(); err != nil {
+			fmt.Printf("Failed to kill actor %q: %+q\n", target.Addr(), err)
+		}
 
 		if on.PanicAction != nil {
 			on.PanicAction(err, targetAddr, target)
@@ -132,6 +137,10 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 		}
 
 		if pe, ok := err.(ActorPanic); ok {
+			panic(string(pe.Stack))
+		}
+
+		if pe, ok := err.(ActorRoutinePanic); ok {
 			panic(string(pe.Stack))
 		}
 	case KillDirective:
@@ -157,12 +166,15 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			return
 		}
 
+		fmt.Printf("Restarting: %q\n", target.ID())
+
 		waiter := target.Restart()
 		if on.Invoker != nil {
 			on.Invoker.InvokedRestart(err, stats.Collate(), targetAddr, target)
 		}
 
 		if err := waiter.Wait(); err != nil {
+			fmt.Printf("Waiter: %#v\n", err)
 			if errors.IsAny(err, ErrActorState) {
 				return
 			}
@@ -171,6 +183,8 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			on.Handle(err, targetAddr, target, parent)
 			return
 		}
+
+		fmt.Printf("Restarted\n")
 
 		stats.Reset(RestartFailureState)
 	case DestroyDirective:

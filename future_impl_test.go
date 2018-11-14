@@ -13,7 +13,7 @@ import (
 func TestFutureResolved(t *testing.T) {
 	addr := new(AddrImpl)
 	newFuture := actorkit.NewFuture(addr)
-	assert.NoError(t, newFuture.Send("ready", nil, eb))
+	assert.NoError(t, newFuture.Send("ready", eb))
 	assert.NoError(t, newFuture.Err())
 	assert.Equal(t, newFuture.Result().Data, "ready")
 }
@@ -50,5 +50,5 @@ func TestFutureTimeout(t *testing.T) {
 	newFuture := actorkit.TimedFuture(addr, 1*time.Second)
 	<-time.After(2 * time.Second)
 	assert.Equal(t, newFuture.Err(), actorkit.ErrFutureTimeout)
-	assert.Error(t, newFuture.Send("ready", nil, eb))
+	assert.Error(t, newFuture.Send("ready", eb))
 }

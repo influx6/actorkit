@@ -21,7 +21,11 @@ func (*AddrImpl) Forward(actorkit.Envelope) error {
 	return nil
 }
 
-func (*AddrImpl) Send(interface{}, actorkit.Header, actorkit.Addr) error {
+func (*AddrImpl) SendWithHeader(interface{}, actorkit.Header, actorkit.Addr) error {
+	return nil
+}
+
+func (*AddrImpl) Send(interface{}, actorkit.Addr) error {
 	return nil
 }
 
