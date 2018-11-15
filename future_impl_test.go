@@ -29,13 +29,13 @@ func TestFuturePipe(t *testing.T) {
 	failure := errors.New("bad error")
 	newFuture.Escalate(failure)
 
-	assert.Equal(t, newFuture.Wait(), failure)
-	assert.Equal(t, newFuture2.Wait(), failure)
-	assert.Equal(t, newFuture3.Wait(), failure)
+	assert.Equal(t, failure, newFuture.Wait())
+	assert.Equal(t, failure, newFuture2.Wait())
+	assert.Equal(t, failure, newFuture3.Wait())
 
-	assert.Equal(t, newFuture.Err(), failure)
-	assert.Equal(t, newFuture2.Err(), failure)
-	assert.Equal(t, newFuture3.Err(), failure)
+	assert.Equal(t, failure, newFuture.Err())
+	assert.Equal(t, failure, newFuture2.Err())
+	assert.Equal(t, failure, newFuture3.Err())
 }
 
 func TestFutureEscalate(t *testing.T) {

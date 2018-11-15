@@ -1,11 +1,10 @@
 package actorkit
 
 import (
-	"context"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"github.com/gokit/futurechain"
 
 	"github.com/gokit/errors"
 	"github.com/gokit/es"
@@ -17,15 +16,12 @@ const (
 	defaultDeadLockTicker = time.Second * 5
 )
 
-// errors ...
 var (
-	ErrActorState        = errors.New("Actor is within an error state")
-	ErrMustBeRunning     = errors.New("Actor must be running")
-	ErrAlreadyStopped    = errors.Wrap(ErrActorState, "Actor already stopped")
-	ErrAlreadyStarted    = errors.Wrap(ErrActorState, "Actor already started")
-	ErrAlreadyStopping   = errors.Wrap(ErrActorState, "Actor already stopping")
-	ErrAlreadyStarting   = errors.Wrap(ErrActorState, "Actor already starting")
-	ErrAlreadyRestarting = errors.Wrap(ErrActorState, "Actor already restarting")
+	// ErrActorBusyState is returned when an actor is processing a state request when another is made.
+	ErrActorBusyState = errors.New("Actor is busy with state (STOP|STOPCHILDREN|DESTROY|DESTROY)")
+
+	// ErrActorMustBeRunning is returned when an operation is to be done and the giving actor is not started.
+	ErrActorMustBeRunning = errors.New("Actor must be running")
 )
 
 //********************************************************
@@ -65,8 +61,7 @@ func From(ops ...ActorOption) Actor {
 func System(protocol string, namespace string, ops ...ActorOption) (Addr, Actor, error) {
 	ops = append(ops, UseBehaviour(&DeadLetterBehaviour{}), Protocol(protocol), Namespace(namespace))
 	actor := NewActorImpl(ops...)
-	err := actor.Start().Wait()
-	return AccessOf(actor), actor, err
+	return AccessOf(actor), actor, actor.Start()
 }
 
 //********************************************************
@@ -227,23 +222,37 @@ type ActorImpl struct {
 	mailInvoker    MailInvoker
 	messageInvoker MessageInvoker
 
-	destroyChan chan Actor
-	startChan   chan actorSub
-	actions     chan func()
-	closer      chan struct{}
-	signal      chan struct{}
-	subs        map[Actor]Subscription
+	death               time.Time
+	created             time.Time
+	failedDeliveryCount int64
+	failedRestartCount  int64
+	restartedCount      int64
+	deliveryCount       int64
+	processedCount      int64
+	stoppedCount        int64
+	killedCount         int64
 
-	processable *SwitchImpl
-	running     *SwitchImpl
+	addActor            chan Actor
+	rmActor             chan Actor
+	signal              chan struct{}
+	supervisorChan      chan interface{}
+	killChan            chan chan error
+	stopChan            chan chan error
+	destroyChan         chan chan error
+	killChildrenChan    chan chan error
+	restartChildrenChan chan chan error
+	stopChildrenChan    chan chan error
+	destroyChildrenChan chan chan error
+
+	started     *SwitchImpl
 	starting    *SwitchImpl
-	stopping    *SwitchImpl
-	restarting  *SwitchImpl
+	processable *SwitchImpl
 
 	supervisor Supervisor
-	stats      *ActorStatImpl
-	messages   sync.WaitGroup
-	routines   sync.WaitGroup
+
+	proc     sync.WaitGroup
+	messages sync.WaitGroup
+	routines sync.WaitGroup
 
 	receiver    Behaviour
 	preStop     PreStop
@@ -255,6 +264,7 @@ type ActorImpl struct {
 	preDestroy  PreDestroy
 	postDestroy PostDestroy
 
+	subs  map[Actor]Subscription
 	chl   sync.RWMutex
 	chain []DiscoveryService
 }
@@ -263,26 +273,32 @@ type ActorImpl struct {
 func NewActorImpl(ops ...ActorOption) *ActorImpl {
 	ac := &ActorImpl{}
 
+	// apply the options.
 	for _, op := range ops {
 		op(ac)
 	}
 
+	// set the namespace to localhost if not set.
 	if ac.namespace == "" {
 		ac.namespace = "localhost"
 	}
 
+	// set the protocol to kit if not set.
 	if ac.protocol == "" {
 		ac.protocol = "kit"
 	}
 
+	// use default deadlock timer.
 	if ac.deadLockDur <= 0 {
 		ac.deadLockDur = defaultDeadLockTicker
 	}
 
+	// add event provider.
 	if ac.events == nil {
 		ac.events = es.New()
 	}
 
+	// add unbouned mailbox.
 	if ac.mails == nil {
 		ac.mails = UnboundedBoxQueue(ac.mailInvoker)
 	}
@@ -305,30 +321,34 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 		}
 	}
 
-	ac.subs = map[Actor]Subscription{}
-	ac.actions = make(chan func(), 0)
-	ac.closer = make(chan struct{}, 1)
+	ac.addActor = make(chan Actor, 0)
+	ac.rmActor = make(chan Actor, 0)
 	ac.signal = make(chan struct{}, 1)
-	ac.destroyChan = make(chan Actor, 0)
-	ac.startChan = make(chan actorSub, 0)
+	ac.stopChan = make(chan chan error, 1)
+	ac.killChan = make(chan chan error, 1)
+	ac.destroyChan = make(chan chan error, 1)
+	ac.supervisorChan = make(chan interface{}, 0)
+	ac.stopChildrenChan = make(chan chan error, 1)
+	ac.killChildrenChan = make(chan chan error, 1)
+	ac.restartChildrenChan = make(chan chan error, 1)
+	ac.destroyChildrenChan = make(chan chan error, 1)
 
 	ac.id = xid.New()
+	ac.started = NewSwitch()
 	ac.starting = NewSwitch()
-	ac.processable = NewSwitch()
-	ac.running = NewSwitch()
-	ac.stopping = NewSwitch()
-	ac.restarting = NewSwitch()
-	ac.stats = NewActorStatImpl()
-	ac.tree = NewActorTree(10)
 	ac.accessAddr = AccessOf(ac)
+	ac.processable = NewSwitch()
+	ac.tree = NewActorTree(10)
+	ac.subs = map[Actor]Subscription{}
 
 	ac.processable.On()
+
 	return ac
 }
 
 // Wait implements the Waiter interface.
 func (ati *ActorImpl) Wait() {
-	ati.routines.Wait()
+	ati.proc.Wait()
 }
 
 // ID returns associated string version of id.
@@ -356,14 +376,13 @@ func (ati *ActorImpl) Watch(fn func(interface{})) Subscription {
 	return ati.events.Subscribe(fn)
 }
 
+// Publish publishes an event into the actor event notification system.
+func (ati *ActorImpl) Publish(message interface{}) {
+	ati.events.Publish(message)
+}
+
 // Receive adds giving Envelope into actor's mailbox.
 func (ati *ActorImpl) Receive(a Addr, e Envelope) error {
-	// if we are not able to process and not restarting then
-	// return error.
-	if !ati.processable.IsOn() && !ati.restarting.IsOn() {
-		return errors.New("actor is unable to handle message")
-	}
-
 	// if we cant process, then return error.
 	if !ati.processable.IsOn() {
 		return errors.New("actor is stopped and hence can't handle message")
@@ -384,8 +403,8 @@ func (ati *ActorImpl) Receive(a Addr, e Envelope) error {
 //
 // The method will return an error if Actor is not already running.
 func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
-	if !ati.running.IsOn() && !ati.starting.IsOn() {
-		return nil, errors.WrapOnly(ErrMustBeRunning)
+	if !ati.started.IsOn() && !ati.starting.IsOn() {
+		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
 	ati.chl.RLock()
@@ -412,8 +431,8 @@ func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
 //
 // The method will return an error if Actor is not already running.
 func (ati *ActorImpl) Spawn(service string, rec Behaviour) (Addr, error) {
-	if !ati.running.IsOn() && !ati.starting.IsOn() {
-		return nil, errors.WrapOnly(ErrMustBeRunning)
+	if !ati.started.IsOn() && !ati.starting.IsOn() {
+		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
 	am := NewActorImpl(Namespace(ati.namespace), Protocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
@@ -423,66 +442,20 @@ func (ati *ActorImpl) Spawn(service string, rec Behaviour) (Addr, error) {
 	return AddressOf(am, service), nil
 }
 
-// manageChild handles addition of new actor into actor tree.
-func (ati *ActorImpl) manageChild(an Actor) error {
-	sub := an.Watch(func(event interface{}) {
-		switch event.(type) {
-		case ActorDestroyed:
-			ati.destroyChan <- an
-		}
-	})
-
-	// send actor for registration
-	ati.startChan <- actorSub{Actor: an, Sub: sub}
-
-	// setup initiation management for actor
-	return ati.setupActor(an)
-}
-
-// SetupActor will initialize and start provided actor, if an error
-// occurred which is not an ErrActorState then it will be handled to
-// this parent's supervisor, which will mitigation actions.
-func (ati *ActorImpl) setupActor(ac Actor) error {
-	// if actor is already running, just return.
-	if ac.Running() {
-		return nil
-	}
-
-	// if actor is already starting, just return.
-	if ac.Starting() {
-		return nil
-	}
-
-	// if we are currently stopping, then
-	// we don't need to start up.
-	if ati.stopping.IsOn() {
-		return nil
-	}
-
-	// if we are restating, then skip
-	if ati.restarting.IsOn() {
-		return nil
-	}
-
-	// if we are not starting or running then skip.
-	if !ati.starting.IsOn() && !ati.running.IsOn() {
-		return nil
-	}
-
-	if err := ac.Start().Wait(); err != nil {
-		if !errors.IsAny(err, ErrActorState) {
-			ati.supervisor.Handle(err, AccessOf(ac), ac, ati)
-		}
-		return err
-	}
-
-	return nil
-}
-
 // Stats returns giving actor stat associated with
 // actor.
 func (ati *ActorImpl) Stats() Stat {
-	return ati.stats
+	return Stat{
+		Death:          ati.death,
+		Creation:       ati.created,
+		Killed:         atomic.LoadInt64(&ati.killedCount),
+		Stopped:        atomic.LoadInt64(&ati.stoppedCount),
+		Delivered:      atomic.LoadInt64(&ati.deliveryCount),
+		Processed:      atomic.LoadInt64(&ati.processedCount),
+		Restarted:      atomic.LoadInt64(&ati.restartedCount),
+		FailedRestarts: atomic.LoadInt64(&ati.failedRestartCount),
+		FailedDelivery: atomic.LoadInt64(&ati.failedDeliveryCount),
+	}
 }
 
 // Addr returns a url-like representation of giving service by following two giving
@@ -514,7 +487,7 @@ func (ati *ActorImpl) Addr() string {
 // to escalate to parent's supervisor or restart/stop or handle
 // giving actor as dictated by it's algorithm.
 func (ati *ActorImpl) Escalate(err interface{}, addr Addr) {
-	ati.supervisor.Handle(err, addr, ati, ati.parent)
+	go ati.supervisor.Handle(err, addr, ati, ati.parent)
 }
 
 // Ancestor returns the root parent of giving Actor ancestral tree.
@@ -545,454 +518,406 @@ func (ati *ActorImpl) Children() []Addr {
 	return addrs
 }
 
-// Starting returns true/false if giving actor is in the starting process.
-func (ati *ActorImpl) Starting() bool {
-	return ati.starting.IsOn()
-}
-
 // Running returns true/false if giving actor is running.
 func (ati *ActorImpl) Running() bool {
-	return ati.running.IsOn()
-}
-
-// Stopped returns true/false if given actor is stopped.
-func (ati *ActorImpl) Stopped() bool {
-	return !ati.running.IsOn()
+	return ati.started.IsOn()
 }
 
 // Start starts off or resumes giving actor operations for processing
 // received messages.
-func (ati *ActorImpl) Start() ErrWaiter {
-	return ati.start(true, false)
-}
-
-func (ati *ActorImpl) start(children bool, restart bool) *futurechain.FutureChain {
-	chain := futurechain.NewFutureChain(context.Background(), func(_ context.Context) error {
-		if ati.stopping.IsOn() {
-			return errors.Wrap(ErrAlreadyStopping, "Actor %q already stopping", ati.id.String())
-		}
-
-		if ati.restarting.IsOn() {
-			return errors.Wrap(ErrAlreadyRestarting, "Actor %q is restarting", ati.id.String())
-		}
-
-		if ati.running.IsOn() {
-			return errors.Wrap(ErrAlreadyStarted, "Actor %q is running", ati.id.String())
-		}
-
-		if ati.starting.IsOn() {
-			return errors.Wrap(ErrAlreadyStarting, "Actor %q is already starting", ati.id.String())
-		}
-
+func (ati *ActorImpl) Start() error {
+	if ati.started.IsOn() {
 		return nil
-	}).When(func(_ context.Context) error {
-		ati.running.Off()
-		ati.stopping.Off()
-		ati.restarting.Off()
-
-		ati.starting.On()
-		ati.processable.On()
-
-		if len(ati.closer) != 0 {
-			<-ati.closer
-		}
-
-		if len(ati.signal) != 0 {
-			<-ati.signal
-		}
-
-		// start off processing go routines.
-		ati.startupLifeCycle()
-
-		if restart {
-			if ati.preRestart != nil {
-				if err := ati.preRestart.PreRestart(ati.accessAddr); err != nil {
-					ati.starting.Off()
-					return err
-				}
-			}
-		} else {
-			ati.events.Publish(ActorStartRequested{
-				ID:   ati.id.String(),
-				Addr: ati.Addr(),
-			})
-
-			if ati.preStart != nil {
-				if err := ati.preStart.PreStart(ati.accessAddr); err != nil {
-					ati.starting.Off()
-					return err
-				}
-			}
-		}
-
-		return nil
-	}).When(func(_ context.Context) error {
-		ati.startupMessageReader()
-		return nil
-	})
-
-	// signal children of actor to start as well.
-	if children {
-		chain.WhenFuture(ati.startChildren(restart))
 	}
 
-	chain = chain.When(func(_ context.Context) error {
-		if restart {
-			if ati.postRestart != nil {
-				if err := ati.postRestart.PostRestart(ati.accessAddr); err != nil {
-					ati.starting.Off()
-					ati.signal <- struct{}{}
-					ati.mails.Signal()
-					return err
-				}
-			}
-		} else {
-			if ati.postStart != nil {
-				if err := ati.postStart.PostStart(ati.accessAddr); err != nil {
-					ati.starting.Off()
-					ati.signal <- struct{}{}
-					ati.mails.Signal()
-					return err
-				}
-			}
-
-			ati.events.Publish(ActorStarted{
-				ID:   ati.id.String(),
-				Addr: ati.Addr(),
-			})
-		}
-
-		ati.starting.Off()
-		ati.running.On()
-
-		return nil
-	})
-
-	return chain
-}
-
-// startChildren attempts to start/restart children of actor only.
-func (ati *ActorImpl) startChildren(restart bool) *futurechain.FutureChain {
-	chain := futurechain.NoWorkChain(context.Background())
-
-	waiter := make(chan struct{}, 0)
-
-	ati.actions <- func() {
-		ati.tree.Each(func(actor Actor) bool {
-			chain.Go(func(_ context.Context) error {
-				var waiter ErrWaiter
-				if restart {
-					waiter = actor.Restart()
-				} else {
-					waiter = actor.Start()
-				}
-
-				if err := waiter.Wait(); err != nil {
-					if !errors.IsAny(err, ErrActorState) {
-						ati.supervisor.Handle(err, AccessOf(actor), actor, ati)
-					}
-					return err
-				}
-
-				return nil
-			})
-			return true
-		})
-		waiter <- struct{}{}
-	}
-
-	<-waiter
-
-	return chain
-}
-
-// RestartSelf restarts the actors message processing operations. It
-// will immediately resume operations from pending messages within
-// mailbox. It will not restart children of actor but only actor's
-// internal, this is useful for restarts that affect parent but not children.
-func (ati *ActorImpl) RestartSelf() ErrWaiter {
-	return ati.restart(false)
+	return ati.runSystem(false)
 }
 
 // RestartChildren restarts all children of giving actor without applying same
 // operation to parent.
-func (ati *ActorImpl) RestartChildren() ErrWaiter {
-	return ati.startChildren(true)
+func (ati *ActorImpl) RestartChildren() error {
+	res := make(chan error, 1)
+	select {
+	case ati.restartChildrenChan <- res:
+		return <-res
+	default:
+		res <- errors.WrapOnly(ErrActorBusyState)
+	}
+	return <-res
 }
 
 // Restart restarts the actors message processing operations. It
 // will immediately resume operations from pending messages within
 // mailbox. This will also restarts actors children.
-func (ati *ActorImpl) Restart() ErrWaiter {
-	return ati.restart(true)
-}
-
-func (ati *ActorImpl) restart(children bool) *futurechain.FutureChain {
-	if !ati.running.IsOn() {
-		return ati.start(children, true)
+func (ati *ActorImpl) Restart() error {
+	if !ati.started.IsOn() {
+		return ati.Start()
 	}
 
-	chain := futurechain.NewFutureChain(context.Background(), func(_ context.Context) error {
-		if ati.restarting.IsOn() {
-			return errors.Wrap(ErrAlreadyRestarting, "Actor %q already restarting", ati.id.String())
-		}
-		return nil
-	}).When(func(_ context.Context) error {
-		ati.events.Publish(ActorRestartRequested{
-			ID:   ati.id.String(),
-			Addr: ati.Addr(),
-		})
-
-		ati.restarting.On()
-
-		return ati.stop(StopDirective, children, false).Wait()
-	}).Then(func(_ context.Context) error {
-		ati.processable.On()
-		ati.restarting.Off()
-		return ati.start(children, true).Wait()
-	}).Then(func(_ context.Context) error {
-		ati.events.Publish(ActorRestarted{
-			Addr: ati.Addr(),
-			ID:   ati.id.String(),
-		})
-
-		return nil
-	})
-
-	return chain
-}
-
-// Kill immediately stops the actor and clears all pending messages.
-func (ati *ActorImpl) Kill() ErrWaiter {
-	return ati.kill()
-}
-
-// KillChildren immediately kills giving children of actor.
-func (ati *ActorImpl) KillChildren() ErrWaiter {
-	return ati.stopChildren(KillDirective)
-}
-
-func (ati *ActorImpl) kill() *futurechain.FutureChain {
-	return ati.stop(KillDirective, true, false).Then(func(_ context.Context) error {
-		for !ati.mails.IsEmpty() {
-			if nextAddr, next, err := ati.mails.Pop(); err == nil {
-				ati.messages.Done()
-				deadLetters.Publish(DeadMail{To: nextAddr, Message: next})
-			}
-		}
-		return nil
-	})
-}
-
-// Destroy stops giving actor and emits a destruction event which
-// will remove giving actor from it's ancestry trees.
-func (ati *ActorImpl) Destroy() ErrWaiter {
-	return ati.stop(DestroyDirective, true, false).Then(func(_ context.Context) error {
-		var err error
-		if ati.preDestroy != nil {
-			err = ati.preDestroy.PreDestroy(ati.accessAddr)
-		}
-
-		for !ati.mails.IsEmpty() {
-			if nextAddr, next, err := ati.mails.Pop(); err == nil {
-				ati.messages.Done()
-				deadLetters.Publish(DeadMail{To: nextAddr, Message: next})
-			}
-		}
-
+	if err := ati.Stop(); err != nil {
 		return err
-	}).Then(func(_ context.Context) error {
-		ati.tree.Reset()
-		return nil
-	}).Then(func(_ context.Context) error {
-		ati.events.Publish(ActorDestroyed{
-			Addr: ati.Addr(),
-			ID:   ati.id.String(),
-		})
-
-		if ati.postDestroy != nil {
-			return ati.postDestroy.PostDestroy(ati.accessAddr)
-		}
-
-		return nil
-	})
-}
-
-// DestroyChildren immediately destroys giving children of actor.
-func (ati *ActorImpl) DestroyChildren() ErrWaiter {
-	return ati.stopChildren(DestroyDirective)
+	}
+	if err := ati.runSystem(true); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Stop stops the operations of the actor on processing received messages.
 // All pending messages will be kept, so the actor can continue once started.
 // To both stop and clear all messages, use ActorImpl.Kill().
-func (ati *ActorImpl) Stop() ErrWaiter {
-	return ati.stop(StopDirective, true, true)
+func (ati *ActorImpl) Stop() error {
+	if !ati.started.IsOn() {
+		return nil
+	}
+
+	res := make(chan error, 1)
+	select {
+	case ati.stopChan <- res:
+		return <-res
+	default:
+		res <- errors.WrapOnly(ErrActorBusyState)
+	}
+
+	err := <-res
+
+	ati.proc.Wait()
+
+	return err
 }
 
 // StopChildren immediately stops all children of actor.
-func (ati *ActorImpl) StopChildren() ErrWaiter {
-	return ati.stopChildren(StopDirective)
-}
-
-// stopChildren attempts to stop/kill/destroy depending on Directive children of
-// actor without applying same directive to parent.
-func (ati *ActorImpl) stopChildren(dir Directive) *futurechain.FutureChain {
-	chain := futurechain.NoWorkChain(context.Background())
-
-	waiter := make(chan struct{}, 0)
-
-	ati.actions <- func() {
-		ati.tree.Each(func(actor Actor) bool {
-			chain.Go(func(_ context.Context) error {
-				switch dir {
-				case DestroyDirective:
-
-					// signal to parent to remove actor from tree
-					// and stop subscription.
-					ati.destroyChan <- actor
-
-					return actor.Destroy().Wait()
-				case KillDirective:
-					return actor.Kill().Wait()
-				default:
-					return actor.Stop().Wait()
-				}
-			})
-			return true
-		})
-
-		waiter <- struct{}{}
+func (ati *ActorImpl) StopChildren() error {
+	if !ati.started.IsOn() {
+		return nil
 	}
 
-	<-waiter
-	return chain
+	res := make(chan error, 1)
+	select {
+	case ati.stopChildrenChan <- res:
+		return <-res
+	default:
+		res <- errors.WrapOnly(ErrActorBusyState)
+	}
+	return <-res
 }
 
-func (ati *ActorImpl) stop(dir Directive, children bool, graceful bool) *futurechain.FutureChain {
-	chain := futurechain.NewFutureChain(context.Background(), func(_ context.Context) error {
-		if !ati.running.IsOn() {
-			return errors.Wrap(ErrAlreadyStopped, "Actor %q already stopped", ati.id.String())
-		}
-
-		if ati.stopping.IsOn() {
-			return errors.Wrap(ErrAlreadyStopping, "Actor %q already stopping", ati.id.String())
-		}
-
+// Kill immediately stops the actor and clears all pending messages.
+func (ati *ActorImpl) Kill() error {
+	if !ati.started.IsOn() {
 		return nil
-	}).When(func(_ context.Context) error {
-		ati.events.Publish(ActorStopRequested{
-			ID:   ati.id.String(),
-			Addr: ati.Addr(),
-		})
-
-		// signal we are attempting to stop.
-		ati.stopping.On()
-
-		if ati.preStop != nil {
-			return ati.preStop.PreStop(ati.accessAddr)
-		}
-
-		return nil
-	}).Then(func(_ context.Context) error {
-
-		// If we are required to be graceful, then
-		// wait till all messages have being
-		// processed then stop.
-		if graceful {
-			ati.messages.Wait()
-		}
-
-		return nil
-	}).Then(func(_ context.Context) error {
-		// schedule closure of actor operation.
-		ati.signal <- struct{}{}
-
-		// signal waiter to recheck for new message or close signal.
-		ati.mails.Signal()
-
-		return nil
-	})
-
-	if children {
-		chain.ChainFuture(ati.stopChildren(dir))
 	}
 
-	chain = chain.Then(func(_ context.Context) error {
-		ati.closer <- struct{}{}
-
-		ati.routines.Wait()
-
-		ati.running.Off()
-		ati.processable.Off()
-
-		if ati.postStop != nil {
-			return ati.postStop.PostStop(ati.accessAddr)
-		}
-
-		return nil
-	})
-
-	chain.Then(func(_ context.Context) error {
-		ati.stopping.Off()
-
-		ati.events.Publish(ActorStopped{
-			ID:   ati.id.String(),
-			Addr: ati.Addr(),
-		})
-
-		return nil
-	})
-
-	return chain
+	res := make(chan error, 1)
+	select {
+	case ati.killChan <- res:
+		return <-res
+	default:
+		res <- errors.WrapOnly(ErrActorBusyState)
+	}
+	return <-res
 }
 
-func (ati *ActorImpl) startupLifeCycle() {
+// KillChildren immediately kills giving children of actor.
+func (ati *ActorImpl) KillChildren() error {
+	if !ati.started.IsOn() {
+		return nil
+	}
+
+	res := make(chan error, 1)
+	select {
+	case ati.killChildrenChan <- res:
+		return <-res
+	default:
+		res <- errors.WrapOnly(ErrActorBusyState)
+	}
+	return <-res
+}
+
+// Destroy stops giving actor and emits a destruction event which
+// will remove giving actor from it's ancestry trees.
+func (ati *ActorImpl) Destroy() error {
+	if !ati.started.IsOn() {
+		return nil
+	}
+
+	res := make(chan error, 1)
+	select {
+	case ati.destroyChan <- res:
+		return <-res
+	default:
+		res <- errors.WrapOnly(ErrActorBusyState)
+	}
+	return <-res
+}
+
+// DestroyChildren immediately destroys giving children of actor.
+func (ati *ActorImpl) DestroyChildren() error {
+	if !ati.started.IsOn() {
+		return nil
+	}
+
+	res := make(chan error, 1)
+	select {
+	case ati.destroyChildrenChan <- res:
+		return <-res
+	default:
+		res <- errors.WrapOnly(ErrActorBusyState)
+	}
+	return <-res
+}
+
+//****************************************************************
+// internal functions
+//****************************************************************
+
+func (ati *ActorImpl) runSystem(restart bool) error {
+	ati.starting.On()
+	defer ati.starting.Off()
+
+	ati.proc.Add(1)
 	ati.routines.Add(1)
 
+	if restart {
+		atomic.AddInt64(&ati.restartedCount, 1)
+
+		ati.events.Publish(ActorRestartRequested{
+			ID:   ati.id.String(),
+			Addr: ati.Addr(),
+		})
+
+		if ati.preRestart != nil {
+			if err := ati.preRestart.PreRestart(ati.accessAddr); err != nil {
+				atomic.AddInt64(&ati.failedRestartCount, 1)
+				return err
+			}
+		}
+	} else {
+		ati.events.Publish(ActorStartRequested{
+			ID:   ati.id.String(),
+			Addr: ati.Addr(),
+		})
+
+		if ati.preStart != nil {
+			if err := ati.preStart.PreStart(ati.accessAddr); err != nil {
+				return err
+			}
+		}
+	}
+
+	ati.initRoutines()
+	ati.processable.On()
+
+	if restart {
+		if ati.postRestart != nil {
+			if err := ati.postRestart.PostRestart(ati.accessAddr); err != nil {
+				ati.Stop()
+				return err
+			}
+		}
+
+		ati.events.Publish(ActorRestarted{
+			Addr: ati.Addr(),
+			ID:   ati.id.String(),
+		})
+	} else {
+		if ati.postStart != nil {
+			if err := ati.postStart.PostStart(ati.accessAddr); err != nil {
+				ati.Stop()
+				return err
+			}
+		}
+
+		ati.events.Publish(ActorStarted{
+			ID:   ati.id.String(),
+			Addr: ati.Addr(),
+		})
+	}
+
+	ati.started.On()
+
+	return nil
+}
+
+func (ati *ActorImpl) initRoutines() {
 	var w sync.WaitGroup
-	w.Add(1)
+	w.Add(2)
+
 	go func() {
 		w.Done()
 		ati.manageLifeCycle()
 	}()
-	w.Wait()
-}
 
-func (ati *ActorImpl) startupMessageReader() {
-	ati.routines.Add(1)
-
-	var w sync.WaitGroup
-	w.Add(1)
 	go func() {
 		w.Done()
 		ati.readMessages()
 	}()
+
 	w.Wait()
+}
+
+func (ati *ActorImpl) exhaustMessages() {
+	for !ati.mails.IsEmpty() {
+		if nextAddr, next, err := ati.mails.Pop(); err == nil {
+			ati.messages.Done()
+			deadLetters.Publish(DeadMail{To: nextAddr, Message: next})
+		}
+	}
+}
+
+func (ati *ActorImpl) preDestroySystem() {
+	ati.events.Publish(ActorDestroyRequested{
+		Addr: ati.Addr(),
+		ID:   ati.id.String(),
+	})
+
+	if ati.preDestroy != nil {
+		ati.preDestroy.PreDestroy(ati.accessAddr)
+	}
+}
+
+func (ati *ActorImpl) postDestroySystem() {
+	if ati.postDestroy != nil {
+		ati.postDestroy.PostDestroy(ati.accessAddr)
+	}
+
+	ati.events.Publish(ActorDestroyed{
+		Addr: ati.Addr(),
+		ID:   ati.id.String(),
+	})
+}
+
+func (ati *ActorImpl) preStopSystem() {
+	ati.events.Publish(ActorStopRequested{
+		ID:   ati.id.String(),
+		Addr: ati.Addr(),
+	})
+
+	if ati.preStop != nil {
+		ati.preStop.PreStop(ati.accessAddr)
+	}
+}
+
+func (ati *ActorImpl) postStopSystem() {
+	if ati.postStop != nil {
+		ati.postStop.PostStop(ati.accessAddr)
+	}
+
+	ati.events.Publish(ActorStopped{
+		ID:   ati.id.String(),
+		Addr: ati.Addr(),
+	})
+
+	ati.started.Off()
+}
+
+func (ati *ActorImpl) awaitMessageExhaustion() {
+	ati.processable.Off()
+	ati.messages.Wait()
+}
+
+func (ati *ActorImpl) stopMessageReception() {
+	ati.processable.Off()
+	ati.signal <- struct{}{}
+	ati.mails.Signal()
+	ati.routines.Wait()
+}
+
+func (ati *ActorImpl) startChildrenSystems() {
+	ati.tree.Each(func(actor Actor) bool {
+		if err := actor.Start(); err != nil {
+			ati.Escalate(err, AccessOf(actor))
+			return true
+		}
+
+		ati.registerChild(actor)
+		return true
+	})
+}
+
+func (ati *ActorImpl) stopChildrenSystems() {
+	ati.tree.Each(func(actor Actor) bool {
+		actor.Stop()
+		return true
+	})
+}
+
+func (ati *ActorImpl) killChildrenSystems() {
+	ati.tree.Each(func(actor Actor) bool {
+		actor.Kill()
+		return true
+	})
+}
+
+func (ati *ActorImpl) destroyChildrenSystems() {
+	ati.tree.Each(func(actor Actor) bool {
+		ati.unregisterChild(actor)
+		actor.Destroy()
+		return true
+	})
+}
+
+func (ati *ActorImpl) exhaustSignals() {
+	ati.exhaustSignalChan(ati.stopChan)
+	ati.exhaustSignalChan(ati.killChan)
+	ati.exhaustSignalChan(ati.destroyChan)
+	ati.exhaustSignalChan(ati.stopChildrenChan)
+	ati.exhaustSignalChan(ati.killChildrenChan)
+	ati.exhaustSignalChan(ati.destroyChildrenChan)
+}
+
+func (ati *ActorImpl) exhaustSignalChan(signal chan chan error) {
+	if len(signal) == 0 {
+		return
+	}
+	res := <-signal
+	res <- nil
+}
+
+func (ati *ActorImpl) registerChild(ac Actor) {
+	if ati.tree.HasActor(ac.ID()) {
+		return
+	}
+
+	sub := ac.Watch(func(event interface{}) {
+		switch event.(type) {
+		case ActorDestroyed:
+			ati.rmActor <- ac
+		}
+	})
+
+	// add new actor into tree.
+	ati.tree.AddActor(ac)
+
+	// add actor subscription into map.
+	ati.subs[ac] = sub
+}
+
+func (ati *ActorImpl) unregisterChild(ac Actor) {
+	// Remove actor from tree and subscription
+	ati.tree.RemoveActor(ac)
+
+	if sub, ok := ati.subs[ac]; ok {
+		sub.Stop()
+		delete(ati.subs, ac)
+	}
+}
+
+// manageChild handles addition of new actor into actor tree.
+func (ati *ActorImpl) manageChild(an Actor) error {
+	if err := an.Start(); err != nil {
+		return err
+	}
+
+	// send actor for registration
+	ati.addActor <- an
+	return nil
 }
 
 func (ati *ActorImpl) manageLifeCycle() {
 	defer func() {
-		ati.routines.Done()
-
-		//if err := recover(); err != nil {
-		//	trace := make([]byte, stackSize)
-		//	coll := runtime.Stack(trace, false)
-		//	trace = trace[:coll]
-		//
-		//	event := ActorRoutinePanic{
-		//		Stack: trace,
-		//		Panic: err,
-		//		Addr:  ati.Addr(),
-		//		ID:    ati.id.String(),
-		//	}
-		//
-		//	ati.events.Publish(event)
-		//
-		//	if !ati.stopping.IsOn() {
-		//		go ati.Escalate(event, ati.accessAddr)
-		//	}
-		//}
+		ati.proc.Done()
+		ati.exhaustSignals()
 	}()
 
 	deadlockTicker := time.NewTicker(ati.deadLockDur)
@@ -1002,26 +927,48 @@ func (ati *ActorImpl) manageLifeCycle() {
 		case <-deadlockTicker.C:
 			// do nothing but also allow us avoid
 			// possible all goroutine sleep bug.
-		case <-ati.closer:
-			// end this giving life cycle routine.
+		case actor := <-ati.addActor:
+			ati.registerChild(actor)
+		case actor := <-ati.rmActor:
+			ati.unregisterChild(actor)
+		case incoming := <-ati.supervisorChan:
+			ati.Escalate(incoming, ati.accessAddr)
+		case res := <-ati.stopChan:
+			atomic.AddInt64(&ati.stoppedCount, 1)
+			ati.preStopSystem()
+			ati.awaitMessageExhaustion()
+			ati.stopMessageReception()
+			ati.stopChildrenSystems()
+			ati.postStopSystem()
+			res <- nil
 			return
-		case action := <-ati.actions:
-			action()
-		case sub := <-ati.startChan:
-			// add new actor into tree.
-			ati.tree.AddActor(sub.Actor)
-
-			// add actor subscription into map.
-			ati.subs[sub.Actor] = sub.Sub
-		case actor := <-ati.destroyChan:
-
-			// Remove actor from tree and subscription
-			ati.tree.RemoveActor(actor)
-
-			if sub, ok := ati.subs[actor]; ok {
-				sub.Stop()
-				delete(ati.subs, actor)
-			}
+		case res := <-ati.stopChildrenChan:
+			ati.stopChildrenSystems()
+			res <- nil
+		case res := <-ati.killChan:
+			atomic.AddInt64(&ati.killedCount, 1)
+			ati.preStopSystem()
+			ati.stopMessageReception()
+			ati.killChildrenSystems()
+			ati.postStopSystem()
+			res <- nil
+			return
+		case res := <-ati.killChildrenChan:
+			ati.killChildrenSystems()
+			res <- nil
+		case res := <-ati.destroyChan:
+			ati.death = time.Now()
+			ati.preStopSystem()
+			ati.preStopSystem()
+			ati.stopMessageReception()
+			ati.destroyChildrenSystems()
+			ati.postStopSystem()
+			ati.postDestroySystem()
+			res <- nil
+			return
+		case res := <-ati.destroyChildrenChan:
+			ati.destroyChildrenSystems()
+			res <- nil
 		}
 	}
 }
@@ -1031,28 +978,28 @@ func (ati *ActorImpl) readMessages() {
 	defer func() {
 		ati.routines.Done()
 
-		//if err := recover(); err != nil {
-		//	ati.routines.Done()
-		//
-		//	trace := make([]byte, stackSize)
-		//	coll := runtime.Stack(trace, false)
-		//	trace = trace[:coll]
-		//
-		//	event := ActorRoutinePanic{
-		//		Stack: trace,
-		//		Panic: err,
-		//		Addr:  ati.Addr(),
-		//		ID:    ati.id.String(),
-		//	}
-		//
-		//	ati.events.Publish(event)
-		//
-		//	if !ati.stopping.IsOn() {
-		//		go ati.Escalate(event, ati.accessAddr)
-		//	}
-		//
-		//	return
-		//}
+		if err := recover(); err != nil {
+			ati.routines.Done()
+
+			trace := make([]byte, stackSize)
+			coll := runtime.Stack(trace, false)
+			trace = trace[:coll]
+
+			event := ActorRoutinePanic{
+				Stack: trace,
+				Panic: err,
+				Addr:  ati.Addr(),
+				ID:    ati.id.String(),
+			}
+
+			ati.events.Publish(event)
+
+			select {
+			case ati.supervisorChan <- event:
+			default:
+				return
+			}
+		}
 	}()
 
 	for {
@@ -1131,7 +1078,7 @@ func (at *ActorTree) Length() int {
 // it concurrency safe and uses locks underneath. The handler is
 // expected to return true/false, this indicates if we want to
 // continue iterating in the case of true or to stop iterating in
-// the case of false.
+// the case of false.			res <- nil
 func (at *ActorTree) Each(fn func(Actor) bool) {
 	// If handler returns true, then continue else stop.
 	for _, child := range at.children {
@@ -1139,6 +1086,14 @@ func (at *ActorTree) Each(fn func(Actor) bool) {
 			return
 		}
 	}
+}
+
+// HasActor returns true/false if giving actor exists.
+func (at *ActorTree) HasActor(id string) bool {
+	if _, ok := at.registry[id]; ok {
+		return true
+	}
+	return false
 }
 
 // GetActor returns giving actor from tree using requested id.

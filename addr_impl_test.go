@@ -25,7 +25,7 @@ func TestDeadLetterAddr(t *testing.T) {
 		signal <- struct{}{}
 	}).Stop()
 
-	addr.Send("Welcome", nil, addr)
+	addr.Send("Welcome", addr)
 	assert.Len(t, signal, 1)
 	<-signal
 }

@@ -9,6 +9,9 @@ package actorkit
 type RoundRobinRouter struct {
 }
 
+// Action implements the Behaviour interface.
+func (rr *RoundRobinRouter) Action(addr Addr, msg Envelope) {}
+
 //***********************************************************
 // BroadcastRouter
 //***********************************************************
@@ -17,6 +20,9 @@ type RoundRobinRouter struct {
 // manager to giving router.
 type BroadcastRouter struct {
 }
+
+// Action implements the Behaviour interface.
+func (br *BroadcastRouter) Action(addr Addr, msg Envelope) {}
 
 //***********************************************************
 // RandomRouter
@@ -27,6 +33,9 @@ type BroadcastRouter struct {
 type RandomRouter struct {
 }
 
+// Action implements the Behaviour interface.
+func (br *RandomRouter) Action(addr Addr, msg Envelope) {}
+
 //***********************************************************
 // HashedRouter
 //***********************************************************
@@ -35,3 +44,6 @@ type RandomRouter struct {
 // based on hash value from message to possible address.
 type HashedRouter struct {
 }
+
+// Action implements the Behaviour interface.
+func (br *HashedRouter) Action(addr Addr, msg Envelope) {}

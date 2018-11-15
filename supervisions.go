@@ -1,11 +1,8 @@
 package actorkit
 
 import (
-	"fmt"
 	"math/rand"
 	"time"
-
-	"github.com/gokit/errors"
 )
 
 //*****************************************************************
@@ -22,21 +19,21 @@ type AllForOneSupervisor struct {
 	Direction   Direction
 	PanicAction PanicAction
 	Invoker     SupervisionInvoker
+
+	failedRestarts int
 }
 
 // Handle implements the Supervisor interface and provides the algorithm logic for the
 // all-for-one monitoring strategy, where a failed actor causes the same effect to be applied
 // to all siblings and parent.
 func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	stats := parent.Stats()
 	switch on.Direction(err) {
 	case PanicDirective:
-		stats.Incr(PanicState)
-		waiter := parent.Kill()
+		parent.Kill()
+
 		if on.Invoker != nil {
-			on.Invoker.InvokedKill(err, stats.Collate(), targetAddr, target)
+			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
 		}
-		waiter.Wait()
 
 		if on.PanicAction != nil {
 			on.PanicAction(err, targetAddr, target)
@@ -47,53 +44,41 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			panic(string(pe.Stack))
 		}
 	case KillDirective:
-		stats.Incr(KillState)
-		waiter := parent.Kill()
+		parent.Kill()
 		if on.Invoker != nil {
-			on.Invoker.InvokedKill(err, stats.Collate(), targetAddr, target)
+			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
 		}
-		waiter.Wait()
 	case StopDirective:
-		stats.Incr(StopState)
-		waiter := parent.Stop()
+		parent.Stop()
 		if on.Invoker != nil {
-			on.Invoker.InvokedStop(err, stats.Collate(), targetAddr, target)
+			on.Invoker.InvokedStop(err, target.Stats(), targetAddr, target)
 		}
-		waiter.Wait()
 	case RestartDirective:
-		stats.Incr(RestartState)
-
-		if on.Max > 0 && stats.Get(RestartFailureState) >= on.Max {
+		if on.Max > 0 && on.failedRestarts >= on.Max {
 			return
 		}
 
-		waiter := parent.Restart()
+		restartErr := parent.Restart()
 		if on.Invoker != nil {
-			on.Invoker.InvokedRestart(err, stats.Collate(), targetAddr, target)
+			on.Invoker.InvokedRestart(err, target.Stats(), targetAddr, target)
 		}
 
-		if err := waiter.Wait(); err != nil {
-			if errors.IsAny(err, ErrActorState) {
-				return
-			}
-
-			stats.Incr(RestartFailureState)
+		if restartErr != nil {
+			on.failedRestarts++
 			on.Handle(err, targetAddr, target, parent)
 			return
 		}
-		stats.Reset(RestartFailureState)
+
+		on.failedRestarts = 0
 	case DestroyDirective:
-		stats.Incr(DestroyState)
-		waiter := parent.Destroy()
+		parent.Destroy()
+
 		if on.Invoker != nil {
-			on.Invoker.InvokedDestroy(err, stats.Collate(), targetAddr, target)
+			on.Invoker.InvokedDestroy(err, target.Stats(), targetAddr, target)
 		}
-		waiter.Wait()
 	case EscalateDirective:
-		stats.Incr(EscalatedState)
 		parent.Escalate(err, targetAddr)
 	case IgnoreDirective:
-		stats.Incr(ErrorState)
 		return
 	}
 }
@@ -111,24 +96,20 @@ type OneForOneSupervisor struct {
 	Direction   Direction
 	PanicAction PanicAction
 	Invoker     SupervisionInvoker
+
+	failedRestarts int
 }
 
 // Handle implements the Supervisor interface and provides the algorithm logic for the
 // one-for-one monitoring strategy, where a failed actor is dealt with singularly without affecting
 // it's siblings.
 func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	stats := target.Stats()
 	switch on.Direction(err) {
 	case PanicDirective:
-		stats.Incr(PanicState)
+		target.Kill()
 
-		waiter := target.Kill()
 		if on.Invoker != nil {
-			on.Invoker.InvokedKill(err, stats.Collate(), targetAddr, target)
-		}
-
-		if err := waiter.Wait(); err != nil {
-			fmt.Printf("Failed to kill actor %q: %+q\n", target.Addr(), err)
+			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
 		}
 
 		if on.PanicAction != nil {
@@ -139,66 +120,42 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 		if pe, ok := err.(ActorPanic); ok {
 			panic(string(pe.Stack))
 		}
-
-		if pe, ok := err.(ActorRoutinePanic); ok {
-			panic(string(pe.Stack))
-		}
 	case KillDirective:
-		stats.Incr(KillState)
-		waiter := target.Kill()
+		target.Kill()
 		if on.Invoker != nil {
-			on.Invoker.InvokedKill(err, stats.Collate(), targetAddr, target)
+			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
 		}
-		waiter.Wait()
 	case StopDirective:
-		stats.Incr(StopState)
-		waiter := target.Stop()
+		target.Stop()
 		if on.Invoker != nil {
-			on.Invoker.InvokedStop(err, stats.Collate(), targetAddr, target)
+			on.Invoker.InvokedStop(err, target.Stats(), targetAddr, target)
 		}
-		waiter.Wait()
 	case RestartDirective:
-		stats.Incr(RestartState)
-
-		// if we have surpassed maximum allowed restarts, kill actor.
-		if on.Max > 0 && stats.Get(RestartFailureState) >= on.Max {
-			target.Kill().Wait()
+		if on.Max > 0 && on.failedRestarts >= on.Max {
 			return
 		}
 
-		fmt.Printf("Restarting: %q\n", target.ID())
-
-		waiter := target.Restart()
+		restartErr := target.Restart()
 		if on.Invoker != nil {
-			on.Invoker.InvokedRestart(err, stats.Collate(), targetAddr, target)
+			on.Invoker.InvokedRestart(err, target.Stats(), targetAddr, target)
 		}
 
-		if err := waiter.Wait(); err != nil {
-			fmt.Printf("Waiter: %#v\n", err)
-			if errors.IsAny(err, ErrActorState) {
-				return
-			}
-
-			stats.Incr(RestartFailureState)
+		if restartErr != nil {
+			on.failedRestarts++
 			on.Handle(err, targetAddr, target, parent)
 			return
 		}
 
-		fmt.Printf("Restarted\n")
-
-		stats.Reset(RestartFailureState)
+		on.failedRestarts = 0
 	case DestroyDirective:
-		stats.Incr(DestroyState)
-		waiter := target.Destroy()
+		target.Destroy()
+
 		if on.Invoker != nil {
-			on.Invoker.InvokedDestroy(err, stats.Collate(), targetAddr, target)
+			on.Invoker.InvokedDestroy(err, target.Stats(), targetAddr, target)
 		}
-		waiter.Wait()
 	case EscalateDirective:
-		stats.Incr(EscalatedState)
 		parent.Escalate(err, targetAddr)
 	case IgnoreDirective:
-		stats.Incr(ErrorState)
 		return
 	}
 }
@@ -215,24 +172,16 @@ type RestartingSupervisor struct {
 // Handle implements a restarting supervision strategy where any escalated error will lead to
 // a restart of actor.
 func (sp *RestartingSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	stats := target.Stats()
-
-	waiter := target.Restart()
+	restartErr := target.Restart()
 	if sp.Invoker != nil {
-		sp.Invoker.InvokedRestart(err, stats.Collate(), targetAddr, target)
+		sp.Invoker.InvokedRestart(err, target.Stats(), targetAddr, target)
 	}
 
-	stats.Incr(RestartState)
-
-	if err := waiter.Wait(); err != nil {
-		if errors.IsAny(err, ErrActorState) {
-			return
-		}
-
-		stats.Incr(RestartFailureState)
-		target.Escalate(err, targetAddr)
+	if restartErr == nil {
+		return
 	}
-	stats.Reset(RestartFailureState)
+
+	sp.Handle(err, targetAddr, target, parent)
 }
 
 //*****************************************************************
@@ -244,44 +193,37 @@ type ExponentialBackOffSupervisor struct {
 	Max     int
 	Backoff time.Duration
 	Invoker SupervisionInvoker
+
+	failedRestart int
 }
 
 // Handle implements the exponential restart of giving target actor within giving maximum allowed runs.
 func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	stats := target.Stats()
-
-	if stats.Get(RestartState) >= sp.Max {
-		stats.Incr(StopState)
-
-		waiter := target.Stop()
+	if sp.failedRestart >= sp.Max {
+		target.Stop()
 		if sp.Invoker != nil {
-			sp.Invoker.InvokedStop(err, stats.Collate(), targetAddr, target)
+			sp.Invoker.InvokedStop(err, target.Stats(), targetAddr, target)
 		}
-		waiter.Wait()
+
 		return
 	}
 
-	backoff := stats.Get(RestartState) * int(sp.Backoff.Nanoseconds())
-	noise := rand.Intn(500)
+	backoff := target.Stats().Restarted * sp.Backoff.Nanoseconds()
+	noise := rand.Int63n(500)
 	dur := time.Duration(backoff + noise)
 
 	time.AfterFunc(dur, func() {
-		stats.Incr(RestartState)
-
-		waiter := target.Restart()
+		restartErr := target.Restart()
 		if sp.Invoker != nil {
-			sp.Invoker.InvokedRestart(err, stats.Collate(), targetAddr, target)
+			sp.Invoker.InvokedRestart(err, target.Stats(), targetAddr, target)
 		}
 
-		if err := waiter.Wait(); err != nil {
-			if errors.IsAny(err, ErrActorState) {
-				return
-			}
-
-			stats.Incr(RestartFailureState)
+		if restartErr != nil {
+			sp.failedRestart++
 			sp.Handle(err, targetAddr, target, parent)
+			return
 		}
 
-		stats.Reset(RestartFailureState)
+		sp.failedRestart = 0
 	})
 }

@@ -289,41 +289,41 @@ var (
 
 var _ Addr = &AddrImpl{}
 
-// Destroy returns a ErrWaiter which provides a means of forceful shutdown
+// Destroy returns a error which provides a means of forceful shutdown
 // and removal of giving actor of address from the system basically making
 // the actor and it's children non existent.
-func Destroy(addr Addr) ErrWaiter {
+func Destroy(addr Addr) error {
 	if actor := addr.Actor(); actor != nil {
 		return actor.Destroy()
 	}
-	return NewWaiterImpl(errors.WrapOnly(ErrHasNoActor))
+	return errors.WrapOnly(ErrHasNoActor)
 }
 
-// Kill returns a ErrWaiter which provides a means of shutdown and clearing
+// Kill returns a error which provides a means of shutdown and clearing
 // all pending messages of giving actor through it's address. It also kills
 // actors children.
-func Kill(addr Addr) ErrWaiter {
+func Kill(addr Addr) error {
 	if actor := addr.Actor(); actor != nil {
 		return actor.Kill()
 	}
-	return NewWaiterImpl(errors.WrapOnly(ErrHasNoActor))
+	return errors.WrapOnly(ErrHasNoActor)
 }
 
 // Restart restarts giving actor through it's address, the messages are maintained and kept
 // safe, the children of actor are also restarted.
-func Restart(addr Addr) ErrWaiter {
+func Restart(addr Addr) error {
 	if actor := addr.Actor(); actor != nil {
 		return actor.Restart()
 	}
-	return NewWaiterImpl(errors.WrapOnly(ErrHasNoActor))
+	return errors.WrapOnly(ErrHasNoActor)
 }
 
 // Poison stops the actor referenced by giving address, this also causes a restart of actor's children.
-func Poison(addr Addr) ErrWaiter {
+func Poison(addr Addr) error {
 	if actor := addr.Actor(); actor != nil {
 		return actor.Stop()
 	}
-	return NewWaiterImpl(errors.WrapOnly(ErrHasNoActor))
+	return errors.WrapOnly(ErrHasNoActor)
 }
 
 // AddrImpl implements the Addr interface providing an addressable reference
@@ -474,43 +474,43 @@ func (a *AddrImpl) SendWithHeader(data interface{}, h Header, sender Addr) error
 }
 
 // Stopped returns true/false if giving process of Addr as being stopped.
-func (a *AddrImpl) Stopped() bool {
+func (a *AddrImpl) Running() bool {
 	if a.deadletter {
-		return false
+		return true
 	}
-	return a.actor.Stopped()
+	return a.actor.Running()
 }
 
 // Kill sends a kill signal to the underline process to stop all operations and to close immediately.
-func (a *AddrImpl) Kill() ErrWaiter {
+func (a *AddrImpl) Kill() error {
 	if a.deadletter {
-		return NewWaiterImpl(nil)
+		return nil
 	}
 
 	return a.actor.Kill()
 }
 
-// Stop returns a ErrWaiter for the stopping of the underline actor for giving address.
-func (a *AddrImpl) Stop() ErrWaiter {
+// Stop returns a error for the stopping of the underline actor for giving address.
+func (a *AddrImpl) Stop() error {
 	if a.deadletter {
-		return NewWaiterImpl(nil)
+		return nil
 	}
 	return a.actor.Stop()
 }
 
-// Restart returns a ErrWaiter for the restart of the underline actor for giving address.
-func (a *AddrImpl) Restart() ErrWaiter {
+// Restart returns a error for the restart of the underline actor for giving address.
+func (a *AddrImpl) Restart() error {
 	if a.deadletter {
-		return NewWaiterImpl(nil)
+		return nil
 	}
 	return a.actor.Restart()
 }
 
-// Destroy returns a ErrWaiter for the termination and destruction of the underline
+// Destroy returns a error for the termination and destruction of the underline
 // actor for giving address.
-func (a *AddrImpl) Destroy() ErrWaiter {
+func (a *AddrImpl) Destroy() error {
 	if a.deadletter {
-		return NewWaiterImpl(nil)
+		return nil
 	}
 	return a.actor.Destroy()
 }

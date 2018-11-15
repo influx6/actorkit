@@ -61,6 +61,12 @@ func (f *FutureImpl) Forward(reply Envelope) error {
 		return errors.Wrap(ErrFutureResolved, "Future %q already resolved", f.Addr())
 	}
 
+	if fm, ok := reply.Data.(FutureRejected); ok {
+		f.Reject(fm)
+		f.broadcastError()
+		return nil
+	}
+
 	f.Resolve(reply)
 	f.broadcast()
 	return nil
@@ -180,6 +186,11 @@ func (f *FutureImpl) Wait() error {
 	f.cw.Lock()
 	err = f.err
 	f.cw.Unlock()
+
+	if fm, ok := err.(FutureRejected); ok {
+		return fm.Unwrap()
+	}
+
 	return err
 }
 
@@ -200,9 +211,16 @@ func (f *FutureImpl) Pipe(addrs ...Addr) {
 // Err returns the error for the failure of
 // giving error.
 func (f *FutureImpl) Err() error {
+	var merr error
 	f.cw.Lock()
-	defer f.cw.Unlock()
-	return f.err
+	merr = f.err
+	f.cw.Unlock()
+
+	if fm, ok := merr.(FutureRejected); ok {
+		return fm.Unwrap()
+	}
+
+	return merr
 }
 
 // Result returns the envelope which is used to resolve the future.
@@ -237,7 +255,11 @@ func (f *FutureImpl) Reject(err error) {
 	f.cw.Unlock()
 	f.w.Done()
 
-	f.events.Publish(FutureRejected{Error: err, ID: f.id.String()})
+	if fm, ok := err.(FutureRejected); ok {
+		f.events.Publish(FutureRejected{Err: fm.Unwrap(), ID: f.id.String()})
+	} else {
+		f.events.Publish(FutureRejected{Err: err, ID: f.id.String()})
+	}
 }
 
 func (f *FutureImpl) resolved() bool {
@@ -253,10 +275,16 @@ func (f *FutureImpl) broadcastError() {
 	res = f.err
 	f.ac.Unlock()
 
-	msg := CreateEnvelope(f, Header{}, FutureRejected{
-		Error: res,
-		ID:    f.ID(),
-	})
+	var msg Envelope
+
+	if ferr, ok := res.(FutureRejected); ok {
+		msg = CreateEnvelope(f, Header{}, ferr)
+	} else {
+		msg = CreateEnvelope(f, Header{}, FutureRejected{
+			Err: res,
+			ID:  f.ID(),
+		})
+	}
 
 	for _, addr := range f.pipes {
 		addr.Forward(msg)

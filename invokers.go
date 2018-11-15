@@ -6,6 +6,20 @@ import (
 	"github.com/gokit/es"
 )
 
+//***********************************
+//  Supervisor Events
+//***********************************
+
+// SupervisorEvent defines an event type which is published by the EventSupervisingInvoker.
+type SupervisorEvent struct {
+	Stat      Stat
+	Addr      Addr
+	Actor     string
+	Time      time.Time
+	Directive Directive
+	Cause     interface{}
+}
+
 //****************************************
 // EventSupervisingInvoker
 //****************************************
@@ -17,7 +31,7 @@ type EventSupervisingInvoker struct {
 }
 
 // InvokedStop emits event containing stopped details.
-func (es *EventSupervisingInvoker) InvokedStop(cause interface{}, stat map[string]int, addr Addr, target Actor) {
+func (es *EventSupervisingInvoker) InvokedStop(cause interface{}, stat Stat, addr Addr, target Actor) {
 	es.Event.Publish(SupervisorEvent{
 		Addr:      addr,
 		Stat:      stat,
@@ -29,7 +43,7 @@ func (es *EventSupervisingInvoker) InvokedStop(cause interface{}, stat map[strin
 }
 
 // InvokedKill emits event containing killed details.
-func (es *EventSupervisingInvoker) InvokedKill(cause interface{}, stat map[string]int, addr Addr, target Actor) {
+func (es *EventSupervisingInvoker) InvokedKill(cause interface{}, stat Stat, addr Addr, target Actor) {
 	es.Event.Publish(SupervisorEvent{
 		Addr:      addr,
 		Stat:      stat,
@@ -41,7 +55,7 @@ func (es *EventSupervisingInvoker) InvokedKill(cause interface{}, stat map[strin
 }
 
 // InvokedDestroy emits event containing destroyed details.
-func (es *EventSupervisingInvoker) InvokedDestroy(cause interface{}, stat map[string]int, addr Addr, target Actor) {
+func (es *EventSupervisingInvoker) InvokedDestroy(cause interface{}, stat Stat, addr Addr, target Actor) {
 	es.Event.Publish(SupervisorEvent{
 		Addr:      addr,
 		Stat:      stat,
@@ -53,7 +67,7 @@ func (es *EventSupervisingInvoker) InvokedDestroy(cause interface{}, stat map[st
 }
 
 // InvokedRestart emits event containing restart details.
-func (es *EventSupervisingInvoker) InvokedRestart(cause interface{}, stat map[string]int, addr Addr, target Actor) {
+func (es *EventSupervisingInvoker) InvokedRestart(cause interface{}, stat Stat, addr Addr, target Actor) {
 	es.Event.Publish(SupervisorEvent{
 		Addr:      addr,
 		Stat:      stat,
@@ -62,18 +76,4 @@ func (es *EventSupervisingInvoker) InvokedRestart(cause interface{}, stat map[st
 		Actor:     target.Addr(),
 		Directive: RestartDirective,
 	})
-}
-
-//***********************************
-//  Supervisor Events
-//***********************************
-
-// SupervisorEvent defines an event type which is published by the EventSupervisingInvoker.
-type SupervisorEvent struct {
-	Stat      map[string]int
-	Addr      Addr
-	Actor     string
-	Time      time.Time
-	Directive Directive
-	Cause     interface{}
 }

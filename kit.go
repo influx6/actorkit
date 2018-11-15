@@ -1,7 +1,6 @@
 package actorkit
 
 import (
-	"sync/atomic"
 	"time"
 
 	"github.com/gokit/es"
@@ -118,7 +117,6 @@ type ProcRegistry interface {
 // can be be the same actor offering different services based on the behaviour
 // it provides.
 type Actor interface {
-	Running
 	Killable
 	Startable
 	Stoppable
@@ -135,6 +133,7 @@ type Actor interface {
 	Discovery
 	DiscoveryChain
 
+	Running
 	Receiver
 	Escalator
 
@@ -288,6 +287,16 @@ type Watchable interface {
 }
 
 //***********************************
+// Spawner
+//***********************************
+
+// Spawner exposes a single method to spawn an underline actor returning
+// the address for spawned actor.
+type Spawner interface {
+	Spawn(service string, bh Behaviour) (Addr, error)
+}
+
+//***********************************
 //  Discovery
 //***********************************
 
@@ -354,24 +363,91 @@ func (dn fnDiscoveryService) Discover(service string) (Actor, error) {
 }
 
 //***********************************
+//  Running
+//***********************************
+
+// Running defines an interface which exposes a method for
+// getting the running state of it's implementer.
+type Running interface {
+	Running() bool
+}
+
+//***********************************
+//  Stats
+//***********************************
+
+// Stat holds count and time details for a giving target or holder
+// of stat.
+type Stat struct {
+	Death          time.Time
+	Creation       time.Time
+	Killed         int64
+	Stopped        int64
+	Delivered      int64
+	Processed      int64
+	Restarted      int64
+	FailedRestarts int64
+	FailedDelivery int64
+}
+
+// Stats exposes a method which returns a giving
+// ActorState entity for it's implementer.
+type Stats interface {
+	Stats() Stat
+}
+
+//***********************************
 //  Destroyable
 //***********************************
 
-// Destroyable defines an interface that exposes a method
-// which destroys it's internal process.
+// Destroyable defines an interface that exposes methods
+// for the total shutdown and removal of an actor from
+// all processes.
 type Destroyable interface {
-	Destroy() ErrWaiter
-	DestroyChildren() ErrWaiter
+	Destroy() error
+	DestroyChildren() error
 }
 
-// PreDestroy exposes a method to be called before destruction of actor.
+// PostDestroy defines a function to be called after the destruction
+// of an actor. It is called after stopping routine.
 type PreDestroy interface {
-	PreDestroy(Addr) error
+	PreDestroy(Addr)
 }
 
-// PostDestroy exposes a method to be called after destruction of actor.
+// PostDestroy defines a function to be called after the destruction
+// of an actor. It is called after stopping routine.
 type PostDestroy interface {
-	PostDestroy(Addr) error
+	PostDestroy(Addr)
+}
+
+//***********************************
+//  Stoppable and Killable
+//***********************************
+
+// PreStop defines a function to be called before the stopping
+// of an actor. It is called before initiating the stop routine.
+type PreStop interface {
+	PreStop(Addr)
+}
+
+// PostStop defines a function to be called after the stopping
+// of an actor. It is called after stopping routine.
+type PostStop interface {
+	PostStop(Addr)
+}
+
+// Stoppable defines an interface that provides sets of method to gracefully
+// stop the operation of a actor.
+type Stoppable interface {
+	Stop() error
+	StopChildren() error
+}
+
+// Killable  defines an interface that provides set of method to
+// abruptly stop and end the operation of an actor ungracefully.
+type Killable interface {
+	Kill() error
+	KillChildren() error
 }
 
 //***********************************
@@ -382,18 +458,21 @@ type PostDestroy interface {
 // which returns a ErrWaiter to indicate completion of
 // start process.
 type Startable interface {
-	Starting() bool
-	Start() ErrWaiter
+	Start() error
 }
 
-// PreStart exposes a method which receives access address of actor
-// so that it can perform specific actions.
+// PreStart exposes a method which gets called before the start
+// of an actor.
+//
+// If any error is returned, it will cause the actor to stop and shutdown.
 type PreStart interface {
 	PreStart(Addr) error
 }
 
-// PostStart exposes a method which receives a access address
-// so that it can perform specific post start operations.
+// PostStart exposes a method which gets called after the start
+// of an actor.
+//
+// If any error is returned, it will cause the actor to stop and shutdown.
 type PostStart interface {
 	PostStart(Addr) error
 }
@@ -406,84 +485,24 @@ type PostStart interface {
 // which returns a ErrWaiter to indicate completion of
 // restart.
 type Restartable interface {
-	Restart() ErrWaiter
-	RestartSelf() ErrWaiter
-	RestartChildren() ErrWaiter
+	Restart() error
+	RestartChildren() error
 }
 
-// PreRestart exposes a method which receives access address of actor
-// so that it can perform specific actions.
+// PreRestart exposes a method which gets called before the restart
+// of an actor.
+//
+// If any error is returned, it will cause the actor to stop and shutdown.
 type PreRestart interface {
 	PreRestart(Addr) error
 }
 
-// PostRestart exposes a method which receives a access address
-// so that it can perform specific post start operations.
+// PostRestart exposes a method which gets called after the restart
+// of an actor.
+//
+// If any error is returned, it will cause the actor to stop and shutdown.
 type PostRestart interface {
 	PostRestart(Addr) error
-}
-
-//***********************************
-//  Runnable
-//***********************************
-
-// Running exposes a method which returns true/false if a giving
-// implementer is running.
-type Running interface {
-	Running() bool
-}
-
-//***********************************
-//  Stoppable
-//***********************************
-
-// PreStop receives actor's address and parent address for pre stop tear down actions/procedures.
-type PreStop interface {
-	PreStop(actorAddr Addr) error
-}
-
-// PostStop receives actor's it's address and parent address
-// to perform post stop operation.
-type PostStop interface {
-	PostStop(Addr) error
-}
-
-// Stoppable defines an interface
-type Stoppable interface {
-	// Stopped returns true/false if giving value had stopped.
-	Stopped() bool
-
-	// Stop will immediately stop the target regardless of
-	// pending operation and returns a ErrWaiter to await end.
-	// It keeps and maintains currently pending messages in mailbox.
-	Stop() ErrWaiter
-
-	// StopChildren will run stop command to children of implementer.
-	StopChildren() ErrWaiter
-}
-
-//***********************************
-// Killable
-//***********************************
-
-// Killable defines and exposes a set of method for killing it's implementer.
-type Killable interface {
-	// Stop will immediately stop the target process regardless of
-	// pending operation and clear all pending messages.
-	Kill() ErrWaiter
-
-	// KillChildren will run kill command to children of implementer.
-	KillChildren() ErrWaiter
-}
-
-//***********************************
-// Spawner
-//***********************************
-
-// Spawner exposes a single method to spawn an underline actor returning
-// the address for spawned actor.
-type Spawner interface {
-	Spawn(service string, bh Behaviour) (Addr, error)
 }
 
 //***********************************
@@ -552,136 +571,6 @@ type Futures interface {
 // service name.
 type Service interface {
 	Service() string
-}
-
-//***********************************
-//  ActorState
-//***********************************
-
-// ActorState defines a giving int type representing a giving state
-// action of a actor. It is used as stats keys.
-type ActorState int
-
-// String returns string representation of state.
-func (a ActorState) String() string {
-	switch a {
-	case PanicState:
-		return "Panic"
-	case ErrorState:
-		return "Error"
-	case KillState:
-		return "Killed"
-	case DestroyState:
-		return "Destroyed"
-	case StopState:
-		return "Stopped"
-	case RestartState:
-		return "Restarted"
-	case DeliveryFailureState:
-		return "DeliveryFailure"
-	case EscalatedState:
-		return "Escalated"
-	case RestartFailureState:
-		return "RestartFailure"
-	}
-	return "Unknown"
-}
-
-// set of possible stat state.
-const (
-	PanicState ActorState = iota + 1
-	ErrorState
-	KillState
-	DestroyState
-	StopState
-	RestartState
-	EscalatedState
-	RestartFailureState
-	DeliveryFailureState
-)
-
-// Stats exposes a method which returns a giving
-// ActorState entity for it's implementer.
-type Stats interface {
-	Stats() Stat
-}
-
-// Stat defines an interface which keeps internal
-// counters about the states of a actor over time. This can
-// be incremented, decremented and retrieved.
-type Stat interface {
-	// Incr increments counter for giving state.
-	Incr(ActorState)
-
-	// Decr decrements counter for giving state.
-	Decr(ActorState)
-
-	// Reset resets giving counter for giving state back to 0.
-	Reset(ActorState)
-
-	// Get retrieves latest count for giving state.
-	Get(ActorState) int
-
-	// Collate returns a map of count of all states.
-	Collate() map[string]int
-}
-
-var _ Stat = &ActorStatImpl{}
-
-// ActorStatImpl implements ActorState interface.
-type ActorStatImpl struct {
-	states map[ActorState]int64
-}
-
-// NewActorStatImpl returns a new instance of ActorStatImpl.
-func NewActorStatImpl() *ActorStatImpl {
-	return &ActorStatImpl{
-		states: map[ActorState]int64{},
-	}
-}
-
-// Reset resets giving counter for giving state back to 0.
-func (as *ActorStatImpl) Reset(s ActorState) {
-	if m, ok := as.states[s]; ok {
-		atomic.StoreInt64(&m, 0)
-	}
-}
-
-// Incr increments counter for giving state.
-func (as *ActorStatImpl) Incr(s ActorState) {
-	if m, ok := as.states[s]; ok {
-		atomic.StoreInt64(&m, 0)
-	} else {
-		as.states[s] = 1
-	}
-}
-
-// Decr decrements counter for giving state.
-func (as *ActorStatImpl) Decr(s ActorState) {
-	if m, ok := as.states[s]; ok {
-		if m > 0 {
-			atomic.AddInt64(&m, -1)
-		}
-	} else {
-		as.states[s] = 1
-	}
-}
-
-// Get retrieves latest count for giving state.
-func (as *ActorStatImpl) Get(s ActorState) int {
-	if m, ok := as.states[s]; ok {
-		return int(atomic.LoadInt64(&m))
-	}
-	return 0
-}
-
-// Collate returns a map of all counts with associated name.
-func (as *ActorStatImpl) Collate() map[string]int {
-	collated := make(map[string]int, len(as.states))
-	for state, count := range as.states {
-		collated[state.String()] = int(atomic.LoadInt64(&count))
-	}
-	return collated
 }
 
 //***********************************
@@ -799,10 +688,10 @@ type Resolvables interface {
 // SupervisionInvoker defines a invocation watcher, which reports
 // giving action taken for a giving error.
 type SupervisionInvoker interface {
-	InvokedStop(cause interface{}, stat map[string]int, addr Addr, target Actor)
-	InvokedKill(cause interface{}, stat map[string]int, addr Addr, target Actor)
-	InvokedDestroy(cause interface{}, stat map[string]int, addr Addr, target Actor)
-	InvokedRestart(cause interface{}, stat map[string]int, addr Addr, target Actor)
+	InvokedStop(cause interface{}, stat Stat, addr Addr, target Actor)
+	InvokedKill(cause interface{}, stat Stat, addr Addr, target Actor)
+	InvokedDestroy(cause interface{}, stat Stat, addr Addr, target Actor)
+	InvokedRestart(cause interface{}, stat Stat, addr Addr, target Actor)
 }
 
 // MailInvoker defines an interface that exposes methods
@@ -880,17 +769,6 @@ type TerminatedActor struct {
 // SystemMessage identifies giving type as a system message.
 func (TerminatedActor) SystemMessage() {}
 
-// ActorStartRequested defines message sent to indicate starting request or in process
-// starting request to an actor.
-type ActorStartRequested struct {
-	ID   string
-	Addr string
-	Data interface{}
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorStartRequested) SystemMessage() {}
-
 // FutureResolved indicates the resolution of a giving future.
 type FutureResolved struct {
 	ID   string
@@ -902,12 +780,88 @@ func (FutureResolved) SystemMessage() {}
 
 // FutureRejected indicates the rejection of a giving future.
 type FutureRejected struct {
-	ID    string
-	Error error
+	ID  string
+	Err error
+}
+
+// Error implements the error interface.
+func (f FutureRejected) Error() string {
+	return f.Err.Error()
+}
+
+// Unwrap returns the original error for giving rejection,
+// unravelling any further FutureRejected struct if gets.
+func (f *FutureRejected) Unwrap() error {
+	if fm, ok := f.Err.(FutureRejected); ok {
+		return fm.Unwrap()
+	}
+	return f.Err
 }
 
 // SystemMessage identifies giving type as a system message.
 func (FutureRejected) SystemMessage() {}
+
+// ActorStartRequest defines message sent to indicate starting request or in process
+// starting request to an actor.
+type ActorStartRequest struct {
+	ID   string
+	Addr string
+	Data interface{}
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorStartRequest) SystemMessage() {}
+
+// ActorRestartRequest indicates giving message sent to actor to
+// initiate stopping.
+type ActorRestartRequest struct {
+	ID   string
+	Addr string
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorRestartRequest) SystemMessage() {}
+
+// ActorKillRequest indicates giving message sent to actor to
+// initiate stopping.
+type ActorKillRequest struct {
+	ID   string
+	Addr string
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorKillRequest) SystemMessage() {}
+
+// ActorDestroyRequest indicates giving message sent to actor to
+// initiate stopping.
+type ActorDestroyRequest struct {
+	ID   string
+	Addr string
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorDestroyRequest) SystemMessage() {}
+
+// ActorStopRequest indicates giving message sent to actor to
+// initiate stopping.
+type ActorStopRequest struct {
+	ID   string
+	Addr string
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorStopRequest) SystemMessage() {}
+
+// ActorStartRequested defines message sent to indicate starting request or in process
+// starting request to an actor.
+type ActorStartRequested struct {
+	ID   string
+	Addr string
+	Data interface{}
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorStartRequested) SystemMessage() {}
 
 // ActorRestartRequested indicates giving message sent to actor to
 // initiate stopping.
@@ -918,6 +872,26 @@ type ActorRestartRequested struct {
 
 // SystemMessage identifies giving type as a system message.
 func (ActorRestartRequested) SystemMessage() {}
+
+// ActorKillRequested indicates giving message sent to actor to
+// initiate stopping.
+type ActorKillRequested struct {
+	ID   string
+	Addr string
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorKillRequested) SystemMessage() {}
+
+// ActorDestroyRequested indicates giving message sent to actor to
+// initiate stopping.
+type ActorDestroyRequested struct {
+	ID   string
+	Addr string
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorDestroyRequested) SystemMessage() {}
 
 // ActorStopRequested indicates giving message sent to actor to
 // initiate stopping.

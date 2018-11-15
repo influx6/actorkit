@@ -8,16 +8,66 @@ import (
 	"github.com/gokit/actorkit"
 )
 
-type basic struct{}
+type basic struct {
+	Message chan *actorkit.Envelope
+}
 
-func (b basic) Action(addr actorkit.Addr, env actorkit.Envelope) {
+func (b *basic) Action(addr actorkit.Addr, env actorkit.Envelope) {
+	b.Message <- &env
+}
+
+func TestActorImpl(t *testing.T) {
+	base := &basic{
+		Message: make(chan *actorkit.Envelope, 1),
+	}
+	am := actorkit.NewActorImpl(
+		actorkit.UseBehaviour(base),
+	)
+
+	assert.NoError(t, am.Start())
+	assert.True(t, am.Running())
+
+	assert.NoError(t, am.Restart())
+	assert.True(t, am.Running())
+
+	assert.NoError(t, am.Stop())
+	assert.False(t, am.Running())
+}
+
+func TestActorImplMessaging(t *testing.T) {
+	base := &basic{
+		Message: make(chan *actorkit.Envelope, 1),
+	}
+	am := actorkit.NewActorImpl(
+		actorkit.UseBehaviour(base),
+	)
+
+	assert.NoError(t, am.Start())
+	assert.True(t, am.Running())
+
+	addr := actorkit.AddressOf(am, "basic")
+	assert.NoError(t, addr.Send(2, nil))
+
+	assert.NoError(t, am.Stop())
+	assert.False(t, am.Running())
+
+	assert.Len(t, base.Message, 1)
+	content := <-base.Message
+	assert.NotNil(t, content)
+	assert.Equal(t, content.Data, 2)
+
 }
 
 func TestActorWithChildTreeStates(t *testing.T) {
-	am := actorkit.NewActorImpl(actorkit.UseBehaviour(&basic{}))
+	base := &basic{
+		Message: make(chan *actorkit.Envelope, 1),
+	}
+	am := actorkit.NewActorImpl(
+		actorkit.UseBehaviour(base),
+	)
 
-	assert.NoError(t, am.Start().Wait())
-	assert.False(t, am.Stopped())
+	assert.NoError(t, am.Start())
+	assert.True(t, am.Running())
 
 	childAddr, err := am.Spawn("child", &basic{})
 	assert.NoError(t, err)
@@ -25,11 +75,11 @@ func TestActorWithChildTreeStates(t *testing.T) {
 	grandChild, err := childAddr.Spawn("grand-child", &basic{})
 	assert.NoError(t, err)
 
-	assert.NoError(t, am.Restart().Wait())
-	assert.False(t, am.Stopped())
+	assert.NoError(t, am.Restart())
+	assert.True(t, am.Running())
 
-	assert.NoError(t, am.Stop().Wait())
-	assert.True(t, am.Stopped())
+	assert.NoError(t, am.Stop())
+	assert.False(t, am.Running())
 
 	assert.True(t, childAddr.ID() != am.ID())
 	assert.Error(t, childAddr.Send("a", nil))
@@ -39,37 +89,25 @@ func TestActorWithChildTreeStates(t *testing.T) {
 }
 
 func TestActorWithChildStates(t *testing.T) {
+	base := &basic{
+		Message: make(chan *actorkit.Envelope, 1),
+	}
 	am := actorkit.NewActorImpl(
-		actorkit.UseBehaviour(&basic{}),
+		actorkit.UseBehaviour(base),
 	)
 
-	assert.NoError(t, am.Start().Wait())
-	assert.False(t, am.Stopped())
+	assert.NoError(t, am.Start())
+	assert.True(t, am.Running())
 
 	childAddr, err := am.Spawn("child", &basic{})
 	assert.NoError(t, err)
 
-	assert.NoError(t, am.Restart().Wait())
-	assert.False(t, am.Stopped())
+	assert.NoError(t, am.Restart())
+	assert.True(t, am.Running())
 
-	assert.NoError(t, am.Stop().Wait())
-	assert.True(t, am.Stopped())
+	assert.NoError(t, am.Stop())
+	assert.False(t, am.Running())
 
 	assert.True(t, childAddr.ID() != am.ID())
 	assert.Error(t, childAddr.Send("a", nil))
-}
-
-func TestActorImpl(t *testing.T) {
-	am := actorkit.NewActorImpl(
-		actorkit.UseBehaviour(basic{}),
-	)
-
-	assert.NoError(t, am.Start().Wait())
-	assert.False(t, am.Stopped())
-
-	assert.NoError(t, am.Restart().Wait())
-	assert.False(t, am.Stopped())
-
-	assert.NoError(t, am.Stop().Wait())
-	assert.True(t, am.Stopped())
 }
