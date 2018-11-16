@@ -473,7 +473,7 @@ func (a *AddrImpl) SendWithHeader(data interface{}, h Header, sender Addr) error
 	return a.actor.Receive(a, CreateEnvelope(sender, h, data))
 }
 
-// Stopped returns true/false if giving process of Addr as being stopped.
+// Running returns true/false if actor is running.
 func (a *AddrImpl) Running() bool {
 	if a.deadletter {
 		return true

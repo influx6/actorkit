@@ -408,7 +408,7 @@ type Destroyable interface {
 	DestroyChildren() error
 }
 
-// PostDestroy defines a function to be called after the destruction
+// PreDestroy defines a function to be called after the destruction
 // of an actor. It is called after stopping routine.
 type PreDestroy interface {
 	PreDestroy(Addr)

@@ -2,6 +2,8 @@ package actorkit
 
 import (
 	"math/rand"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,12 +23,16 @@ type AllForOneSupervisor struct {
 	Invoker     SupervisionInvoker
 
 	failedRestarts int
+	work           sync.Mutex
 }
 
 // Handle implements the Supervisor interface and provides the algorithm logic for the
 // all-for-one monitoring strategy, where a failed actor causes the same effect to be applied
 // to all siblings and parent.
 func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
+	on.work.Lock()
+	defer on.work.Unlock()
+
 	switch on.Direction(err) {
 	case PanicDirective:
 		parent.Kill()
@@ -98,12 +104,16 @@ type OneForOneSupervisor struct {
 	Invoker     SupervisionInvoker
 
 	failedRestarts int
+	work           sync.Mutex
 }
 
 // Handle implements the Supervisor interface and provides the algorithm logic for the
 // one-for-one monitoring strategy, where a failed actor is dealt with singularly without affecting
 // it's siblings.
 func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
+	on.work.Lock()
+	defer on.work.Unlock()
+
 	switch on.Direction(err) {
 	case PanicDirective:
 		target.Kill()
@@ -117,8 +127,13 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			return
 		}
 
-		if pe, ok := err.(ActorPanic); ok {
-			panic(string(pe.Stack))
+		switch tm := err.(type) {
+		case ActorPanic:
+			panic(string(tm.Stack))
+		case ActorRoutinePanic:
+			panic(string(tm.Stack))
+		default:
+			panic(err)
 		}
 	case KillDirective:
 		target.Kill()
@@ -167,11 +182,15 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 // RestartingSupervisor implements a one-to-one supervising strategy for giving actors.
 type RestartingSupervisor struct {
 	Invoker SupervisionInvoker
+	work    sync.Mutex
 }
 
 // Handle implements a restarting supervision strategy where any escalated error will lead to
 // a restart of actor.
 func (sp *RestartingSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
+	sp.work.Lock()
+	defer sp.work.Unlock()
+
 	restartErr := target.Restart()
 	if sp.Invoker != nil {
 		sp.Invoker.InvokedRestart(err, target.Stats(), targetAddr, target)
@@ -194,12 +213,17 @@ type ExponentialBackOffSupervisor struct {
 	Backoff time.Duration
 	Invoker SupervisionInvoker
 
-	failedRestart int
+	failedRestart int64
+	work          sync.Mutex
 }
 
 // Handle implements the exponential restart of giving target actor within giving maximum allowed runs.
 func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr, target Actor, parent Actor) {
-	if sp.failedRestart >= sp.Max {
+	sp.work.Lock()
+	defer sp.work.Unlock()
+
+	failed := atomic.LoadInt64(&sp.failedRestart)
+	if int(failed) >= sp.Max {
 		target.Stop()
 		if sp.Invoker != nil {
 			sp.Invoker.InvokedStop(err, target.Stats(), targetAddr, target)
@@ -208,7 +232,13 @@ func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr,
 		return
 	}
 
-	backoff := target.Stats().Restarted * sp.Backoff.Nanoseconds()
+	var backoff int64
+	if failed > 0 {
+		backoff = failed * sp.Backoff.Nanoseconds()
+	} else {
+		backoff = sp.Backoff.Nanoseconds()
+	}
+
 	noise := rand.Int63n(500)
 	dur := time.Duration(backoff + noise)
 
@@ -224,6 +254,6 @@ func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr,
 			return
 		}
 
-		sp.failedRestart = 0
+		atomic.AddInt64(&sp.failedRestart, 1)
 	})
 }

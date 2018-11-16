@@ -25,6 +25,28 @@ var (
 )
 
 //********************************************************
+// Behaviour Function
+//********************************************************
+
+// BehaviourFunc defines a function type which is wrapped by a
+// type implementing the Behaviour interface to be used in a
+// actor.
+type BehaviourFunc func(Addr, Envelope)
+
+// FromBehaviourFunc returns a new Behaviour from the function.
+func FromBehaviourFunc(b BehaviourFunc) Behaviour {
+	return &behaviourFunctioner{fn: b}
+}
+
+type behaviourFunctioner struct {
+	fn BehaviourFunc
+}
+
+func (bh *behaviourFunctioner) Action(addr Addr, env Envelope) {
+	bh.fn(addr, env)
+}
+
+//********************************************************
 // Actor Constructors
 //********************************************************
 
@@ -37,16 +59,35 @@ func FromPartial(ops ...ActorOption) ActorSpawner {
 	}
 }
 
-// FromOptions returns a new Function which spawns giving Actor based on provided ActorOptions.
-func FromOptions(ops ...ActorOption) func() Actor {
-	return func() Actor {
-		return NewActorImpl(ops...)
+// FromPartialFunc defines a giving function which can be supplied a function which will
+// be called with provided ActorOption to be used for generating new actors for
+// giving options.
+func FromPartialFunc(partial func(...ActorOption) Actor, pre ...ActorOption) func(...ActorOption) Actor {
+	return func(ops ...ActorOption) Actor {
+		pre = append(pre, ops...)
+		return partial(pre...)
 	}
 }
 
 // From returns a new spawned and not yet started Actor based on provided ActorOptions.
 func From(ops ...ActorOption) Actor {
 	return NewActorImpl(ops...)
+}
+
+// FromFunc returns a new actor based on provided function.
+func FromFunc(fn BehaviourFunc, ops ...ActorOption) Actor {
+	actor := NewActorImpl(ops...)
+	UseBehaviour(FromBehaviourFunc(fn))(actor)
+	return actor
+}
+
+// Func returns a Actor generating function which uses provided BehaviourFunc.
+func Func(fn BehaviourFunc) func(...ActorOption) Actor {
+	return FromPartialFunc(func(options ...ActorOption) Actor {
+		actor := NewActorImpl(options...)
+		UseBehaviour(FromBehaviourFunc(fn))(actor)
+		return actor
+	})
 }
 
 // System is generally used to create an Ancestor actor with a default behaviour, it returns
@@ -156,27 +197,50 @@ func UseBehaviour(bh Behaviour) ActorOption {
 		ac.receiver = bh
 		if tm, ok := bh.(PreStart); ok {
 			ac.preStart = tm
+		} else {
+			ac.preStart = nil
 		}
+
 		if tm, ok := bh.(PostStart); ok {
 			ac.postStart = tm
+		} else {
+			ac.postStart = nil
 		}
+
 		if tm, ok := bh.(PreDestroy); ok {
 			ac.preDestroy = tm
+		} else {
+			ac.preDestroy = nil
 		}
+
 		if tm, ok := bh.(PostDestroy); ok {
 			ac.postDestroy = tm
+		} else {
+			ac.postDestroy = nil
 		}
+
 		if tm, ok := bh.(PreRestart); ok {
 			ac.preRestart = tm
+		} else {
+			ac.preStart = nil
 		}
+
 		if tm, ok := bh.(PostRestart); ok {
 			ac.postRestart = tm
+		} else {
+			ac.postRestart = nil
 		}
+
 		if tm, ok := bh.(PreStop); ok {
 			ac.preStop = tm
+		} else {
+			ac.preStop = nil
 		}
+
 		if tm, ok := bh.(PostStop); ok {
 			ac.postStop = tm
+		} else {
+			ac.postStop = nil
 		}
 	}
 }
@@ -235,7 +299,6 @@ type ActorImpl struct {
 	addActor            chan Actor
 	rmActor             chan Actor
 	signal              chan struct{}
-	supervisorChan      chan interface{}
 	killChan            chan chan error
 	stopChan            chan chan error
 	destroyChan         chan chan error
@@ -243,6 +306,7 @@ type ActorImpl struct {
 	restartChildrenChan chan chan error
 	stopChildrenChan    chan chan error
 	destroyChildrenChan chan chan error
+	actionChan          chan func()
 
 	started     *SwitchImpl
 	starting    *SwitchImpl
@@ -326,8 +390,8 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 	ac.signal = make(chan struct{}, 1)
 	ac.stopChan = make(chan chan error, 1)
 	ac.killChan = make(chan chan error, 1)
+	ac.actionChan = make(chan func(), 0)
 	ac.destroyChan = make(chan chan error, 1)
-	ac.supervisorChan = make(chan interface{}, 0)
 	ac.stopChildrenChan = make(chan chan error, 1)
 	ac.killChildrenChan = make(chan chan error, 1)
 	ac.restartChildrenChan = make(chan chan error, 1)
@@ -510,12 +574,19 @@ func (ati *ActorImpl) Parent() Actor {
 // All address have attached service name "access" for returned address,
 // to indicate we are accessing this actors.
 func (ati *ActorImpl) Children() []Addr {
-	addrs := make([]Addr, 0, ati.tree.Length())
-	ati.tree.Each(func(actor Actor) bool {
-		addrs = append(addrs, AddressOf(actor, "access"))
-		return true
-	})
-	return addrs
+	kids := make(chan []Addr, 1)
+
+	ati.actionChan <- func() {
+		addrs := make([]Addr, 0, ati.tree.Length())
+		ati.tree.Each(func(actor Actor) bool {
+			addrs = append(addrs, AddressOf(actor, "access"))
+			return true
+		})
+
+		kids <- addrs
+	}
+
+	return <-kids
 }
 
 // Running returns true/false if giving actor is running.
@@ -927,12 +998,12 @@ func (ati *ActorImpl) manageLifeCycle() {
 		case <-deadlockTicker.C:
 			// do nothing but also allow us avoid
 			// possible all goroutine sleep bug.
+		case action := <-ati.actionChan:
+			action()
 		case actor := <-ati.addActor:
 			ati.registerChild(actor)
 		case actor := <-ati.rmActor:
 			ati.unregisterChild(actor)
-		case incoming := <-ati.supervisorChan:
-			ati.Escalate(incoming, ati.accessAddr)
 		case res := <-ati.stopChan:
 			atomic.AddInt64(&ati.stoppedCount, 1)
 			ati.preStopSystem()
@@ -979,7 +1050,6 @@ func (ati *ActorImpl) readMessages() {
 		ati.routines.Done()
 
 		if err := recover(); err != nil {
-			ati.routines.Done()
 
 			trace := make([]byte, stackSize)
 			coll := runtime.Stack(trace, false)
@@ -994,11 +1064,7 @@ func (ati *ActorImpl) readMessages() {
 
 			ati.events.Publish(event)
 
-			select {
-			case ati.supervisorChan <- event:
-			default:
-				return
-			}
+			ati.Escalate(event, ati.accessAddr)
 		}
 	}()
 
