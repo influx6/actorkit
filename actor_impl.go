@@ -22,6 +22,9 @@ var (
 
 	// ErrActorMustBeRunning is returned when an operation is to be done and the giving actor is not started.
 	ErrActorMustBeRunning = errors.New("Actor must be running")
+
+	// ErrActorHasNoBehaviour is returned when an is to start with no attached behaviour.
+	ErrActorHasNoBehaviour = errors.New("Actor must be running")
 )
 
 //********************************************************
@@ -291,6 +294,7 @@ type ActorImpl struct {
 	id          xid.ID
 	parent      Actor
 	mails       Mailbox
+	tree        *ActorTree
 	deadLockDur time.Duration
 	busyDur     time.Duration
 	events      *es.EventStream
@@ -343,9 +347,6 @@ type ActorImpl struct {
 	subs  map[Actor]Subscription
 	chl   sync.RWMutex
 	chain []DiscoveryService
-
-	tl   sync.Mutex
-	tree *ActorTree
 }
 
 // NewActorImpl returns a new instance of an ActorImpl assigned giving protocol and service name.
@@ -355,10 +356,6 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 	// apply the options.
 	for _, op := range ops {
 		op(ac)
-	}
-
-	if ac.receiver == nil {
-		panic("Cant have a nil receiver")
 	}
 
 	// set the namespace to localhost if not set.
@@ -597,9 +594,6 @@ func (ati *ActorImpl) Parent() Actor {
 // All address have attached service name "access" for returned address,
 // to indicate we are accessing this actors.
 func (ati *ActorImpl) Children() []Addr {
-	ati.tl.Lock()
-	defer ati.tl.Unlock()
-
 	addrs := make([]Addr, 0, ati.tree.Length())
 	ati.tree.Each(func(actor Actor) bool {
 		addrs = append(addrs, AccessOf(actor))
@@ -763,6 +757,10 @@ func (ati *ActorImpl) DestroyChildren() error {
 //****************************************************************
 
 func (ati *ActorImpl) runSystem(restart bool) error {
+	if ati.receiver == nil {
+		return errors.WrapOnly(ErrActorHasNoBehaviour)
+	}
+
 	ati.starting.On()
 	defer ati.starting.Off()
 
@@ -976,13 +974,6 @@ func (ati *ActorImpl) exhaustSignalChan(signal chan chan error) {
 }
 
 func (ati *ActorImpl) registerChild(ac Actor) {
-	ati.tl.Lock()
-	if ati.tree.HasActor(ac.ID()) {
-		ati.tl.Unlock()
-		return
-	}
-	ati.tl.Unlock()
-
 	sub := ac.Watch(func(event interface{}) {
 		switch event.(type) {
 		case ActorDestroyed:
@@ -990,20 +981,13 @@ func (ati *ActorImpl) registerChild(ac Actor) {
 		}
 	})
 
-	// add new actor into tree.
-	ati.tl.Lock()
-	ati.tree.AddActor(ac)
-	ati.tl.Unlock()
-
 	// add actor subscription into map.
 	ati.subs[ac] = sub
 }
 
 func (ati *ActorImpl) unregisterChild(ac Actor) {
 	// Remove actor from tree and subscription
-	ati.tl.Lock()
 	ati.tree.RemoveActor(ac)
-	ati.tl.Unlock()
 
 	if sub, ok := ati.subs[ac]; ok {
 		sub.Stop()
@@ -1016,6 +1000,9 @@ func (ati *ActorImpl) manageChild(an Actor) error {
 	if err := an.Start(); err != nil {
 		return err
 	}
+
+	// add new actor into tree.
+	ati.tree.AddActor(an)
 
 	// send actor for registration
 	ati.addActor <- an
@@ -1149,8 +1136,9 @@ func (ati *ActorImpl) process(a Addr, x Envelope) {
 // It combines internally a map and list to take advantage of quick lookup
 // and order maintenance.
 //
-// ActorTree is not safe for concurrent access.
+// ActorTree is safe for concurrent access.
 type ActorTree struct {
+	ml       sync.RWMutex
 	children []Actor
 	registry map[string]int
 }
@@ -1166,13 +1154,18 @@ func NewActorTree(initialLength int) *ActorTree {
 
 // Reset resets content of actor tree, removing all children and registry.
 func (at *ActorTree) Reset() {
+	at.ml.Lock()
 	at.children = nil
 	at.registry = map[string]int{}
+	at.ml.Unlock()
 }
 
 // Length returns the length of actors within tree.
 func (at *ActorTree) Length() int {
-	return len(at.children)
+	at.ml.RLock()
+	m := len(at.children)
+	at.ml.RUnlock()
+	return m
 }
 
 // Each will call giving function on all registered actors,
@@ -1181,6 +1174,9 @@ func (at *ActorTree) Length() int {
 // continue iterating in the case of true or to stop iterating in
 // the case of false.			res <- nil
 func (at *ActorTree) Each(fn func(Actor) bool) {
+	at.ml.RLock()
+	defer at.ml.RUnlock()
+
 	// If handler returns true, then continue else stop.
 	for _, child := range at.children {
 		if !fn(child) {
@@ -1191,6 +1187,9 @@ func (at *ActorTree) Each(fn func(Actor) bool) {
 
 // HasActor returns true/false if giving actor exists.
 func (at *ActorTree) HasActor(id string) bool {
+	at.ml.RLock()
+	defer at.ml.RUnlock()
+
 	if _, ok := at.registry[id]; ok {
 		return true
 	}
@@ -1199,6 +1198,9 @@ func (at *ActorTree) HasActor(id string) bool {
 
 // GetActor returns giving actor from tree using requested id.
 func (at *ActorTree) GetActor(id string) (Actor, error) {
+	at.ml.RLock()
+	defer at.ml.RUnlock()
+
 	if index, ok := at.registry[id]; ok {
 		return at.children[index], nil
 	}
@@ -1208,6 +1210,9 @@ func (at *ActorTree) GetActor(id string) (Actor, error) {
 
 // RemoveActor removes attached actor from tree if found.
 func (at *ActorTree) RemoveActor(c Actor) {
+	at.ml.Lock()
+	defer at.ml.Unlock()
+
 	index := at.registry[c.ID()]
 	total := len(at.children)
 
@@ -1226,6 +1231,9 @@ func (at *ActorTree) RemoveActor(c Actor) {
 
 // AddActor adds giving actor into tree.
 func (at *ActorTree) AddActor(c Actor) {
+	at.ml.Lock()
+	defer at.ml.Unlock()
+
 	if _, ok := at.registry[c.ID()]; ok {
 		return
 	}

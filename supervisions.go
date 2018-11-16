@@ -124,9 +124,8 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 	switch on.Direction(err) {
 	case PanicDirective:
-		fmt.Printf("Incoming Panic %T\n", err)
 		if err := target.Kill(); err != nil {
-			fmt.Printf("Failed to kill  %#v\n", err)
+			fmt.Printf("Failed to kill at %q: %#v\n", target.Addr(), err)
 		}
 
 		if on.Invoker != nil {
@@ -138,7 +137,6 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			return
 		}
 
-		fmt.Printf("Incoming %T\n", err)
 		switch tm := err.(type) {
 		case ActorPanic:
 			panic(tm.Error())

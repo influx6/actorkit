@@ -960,7 +960,6 @@ func (a *ActorPanic) Error() string {
 	return fmt.Sprintf(`ActorPanic:
 		Actor: %q
 		Address: %q
-		Error: %+q
 		CausedAddr: %q
 		CauseEnvelope: %#v
 		Panic: %#v
