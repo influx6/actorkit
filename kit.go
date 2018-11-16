@@ -1,6 +1,7 @@
 package actorkit
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/gokit/es"
@@ -954,6 +955,20 @@ type ActorPanic struct {
 	Stack         []byte
 }
 
+// Error returns giving error string for panic details.
+func (a *ActorPanic) Error() string {
+	return fmt.Sprintf(`ActorPanic:
+		Actor: %q
+		Address: %q
+		Error: %+q
+		CausedAddr: %q
+		CauseEnvelope: %#v
+		Panic: %#v
+		Stack:
+		%s
+`, a.ID, a.Addr, a.CausedAddr.Addr(), a.CausedMessage, a.Panic, string(a.Stack))
+}
+
 // SystemMessage identifies giving type as a system message.
 func (ActorPanic) SystemMessage() {}
 
@@ -990,6 +1005,15 @@ type ActorRoutineError struct {
 // SystemMessage identifies giving type as a system message.
 func (ActorRoutineError) SystemMessage() {}
 
+// Error returns giving error string for panic details.
+func (a *ActorRoutineError) Error() string {
+	return fmt.Sprintf(`ActorRoutineError:
+		Actor: %q
+		Address: %q
+		Error: %+q
+`, a.ID, a.Addr, a.Err.Error())
+}
+
 // ActorRoutinePanic is sent when a actor internal routine panics.
 type ActorRoutinePanic struct {
 	ID    string
@@ -1000,3 +1024,14 @@ type ActorRoutinePanic struct {
 
 // SystemMessage identifies giving type as a system message.
 func (ActorRoutinePanic) SystemMessage() {}
+
+// Error returns giving error string for panic details.
+func (a *ActorRoutinePanic) Error() string {
+	return fmt.Sprintf(`ActorRoutinePanic:
+		Actor: %q
+		Address: %q
+		Panic: %#v
+		Stack:
+		%s
+`, a.ID, a.Addr, a.Panic, string(a.Stack))
+}

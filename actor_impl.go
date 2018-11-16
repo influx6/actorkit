@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultFlood          = 10
+	defaultWaitDuration   = time.Second * 4
 	defaultDeadLockTicker = time.Second * 5
 )
 
@@ -156,10 +156,20 @@ func Namespace(ns string) ActorOption {
 	}
 }
 
-// UseDeadLockTicker sets the duration for giving anti-deadlock
+// DeadLockTicker sets the duration for giving anti-deadlock
 // ticker which is runned for every actor, to avoid all goroutines
 // sleeping error. Set within durable time, by default 5s is used.
-func UseDeadLockTicker(dur time.Duration) ActorOption {
+func DeadLockTicker(dur time.Duration) ActorOption {
+	return func(ac *ActorImpl) {
+		ac.deadLockDur = dur
+	}
+}
+
+// WaitBusyDuration sets  giving duration to wait for a critical
+// call to Stop, Kill, Destroy a actor or it's children before
+// the actor returns a ErrActorBusyState error, due to a previously
+// busy state operation.
+func WaitBusyDuration(dur time.Duration) ActorOption {
 	return func(ac *ActorImpl) {
 		ac.deadLockDur = dur
 	}
@@ -197,6 +207,7 @@ func UseMailInvoker(st MailInvoker) ActorOption {
 func UseBehaviour(bh Behaviour) ActorOption {
 	return func(ac *ActorImpl) {
 		ac.receiver = bh
+
 		if tm, ok := bh.(PreStart); ok {
 			ac.preStart = tm
 		} else {
@@ -224,7 +235,7 @@ func UseBehaviour(bh Behaviour) ActorOption {
 		if tm, ok := bh.(PreRestart); ok {
 			ac.preRestart = tm
 		} else {
-			ac.preStart = nil
+			ac.preRestart = nil
 		}
 
 		if tm, ok := bh.(PostRestart); ok {
@@ -280,8 +291,8 @@ type ActorImpl struct {
 	id          xid.ID
 	parent      Actor
 	mails       Mailbox
-	tree        *ActorTree
 	deadLockDur time.Duration
+	busyDur     time.Duration
 	events      *es.EventStream
 
 	stateInvoker   StateInvoker
@@ -308,7 +319,6 @@ type ActorImpl struct {
 	restartChildrenChan chan chan error
 	stopChildrenChan    chan chan error
 	destroyChildrenChan chan chan error
-	actionChan          chan func()
 
 	started     *SwitchImpl
 	starting    *SwitchImpl
@@ -333,6 +343,9 @@ type ActorImpl struct {
 	subs  map[Actor]Subscription
 	chl   sync.RWMutex
 	chain []DiscoveryService
+
+	tl   sync.Mutex
+	tree *ActorTree
 }
 
 // NewActorImpl returns a new instance of an ActorImpl assigned giving protocol and service name.
@@ -342,6 +355,10 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 	// apply the options.
 	for _, op := range ops {
 		op(ac)
+	}
+
+	if ac.receiver == nil {
+		panic("Cant have a nil receiver")
 	}
 
 	// set the namespace to localhost if not set.
@@ -357,6 +374,10 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 	// use default deadlock timer.
 	if ac.deadLockDur <= 0 {
 		ac.deadLockDur = defaultDeadLockTicker
+	}
+
+	if ac.busyDur <= 0 {
+		ac.busyDur = defaultWaitDuration
 	}
 
 	// add event provider.
@@ -387,12 +408,12 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 		}
 	}
 
-	ac.addActor = make(chan Actor, 0)
 	ac.rmActor = make(chan Actor, 0)
+	ac.addActor = make(chan Actor, 0)
+
 	ac.signal = make(chan struct{}, 1)
 	ac.stopChan = make(chan chan error, 1)
 	ac.killChan = make(chan chan error, 1)
-	ac.actionChan = make(chan func(), 0)
 	ac.destroyChan = make(chan chan error, 1)
 	ac.stopChildrenChan = make(chan chan error, 1)
 	ac.killChildrenChan = make(chan chan error, 1)
@@ -576,19 +597,15 @@ func (ati *ActorImpl) Parent() Actor {
 // All address have attached service name "access" for returned address,
 // to indicate we are accessing this actors.
 func (ati *ActorImpl) Children() []Addr {
-	kids := make(chan []Addr, 1)
+	ati.tl.Lock()
+	defer ati.tl.Unlock()
 
-	ati.actionChan <- func() {
-		addrs := make([]Addr, 0, ati.tree.Length())
-		ati.tree.Each(func(actor Actor) bool {
-			addrs = append(addrs, AddressOf(actor, "access"))
-			return true
-		})
-
-		kids <- addrs
-	}
-
-	return <-kids
+	addrs := make([]Addr, 0, ati.tree.Length())
+	ati.tree.Each(func(actor Actor) bool {
+		addrs = append(addrs, AccessOf(actor))
+		return true
+	})
+	return addrs
 }
 
 // Running returns true/false if giving actor is running.
@@ -613,7 +630,7 @@ func (ati *ActorImpl) RestartChildren() error {
 	select {
 	case ati.restartChildrenChan <- res:
 		return <-res
-	default:
+	case <-time.After(ati.busyDur):
 		res <- errors.WrapOnly(ErrActorBusyState)
 	}
 	return <-res
@@ -630,6 +647,7 @@ func (ati *ActorImpl) Restart() error {
 	if err := ati.Stop(); err != nil {
 		return err
 	}
+
 	if err := ati.runSystem(true); err != nil {
 		return err
 	}
@@ -648,7 +666,7 @@ func (ati *ActorImpl) Stop() error {
 	select {
 	case ati.stopChan <- res:
 		return <-res
-	default:
+	case <-time.After(ati.busyDur):
 		res <- errors.WrapOnly(ErrActorBusyState)
 	}
 
@@ -669,7 +687,7 @@ func (ati *ActorImpl) StopChildren() error {
 	select {
 	case ati.stopChildrenChan <- res:
 		return <-res
-	default:
+	case <-time.After(ati.busyDur):
 		res <- errors.WrapOnly(ErrActorBusyState)
 	}
 	return <-res
@@ -685,7 +703,7 @@ func (ati *ActorImpl) Kill() error {
 	select {
 	case ati.killChan <- res:
 		return <-res
-	default:
+	case <-time.After(ati.busyDur):
 		res <- errors.WrapOnly(ErrActorBusyState)
 	}
 	return <-res
@@ -701,7 +719,7 @@ func (ati *ActorImpl) KillChildren() error {
 	select {
 	case ati.killChildrenChan <- res:
 		return <-res
-	default:
+	case <-time.After(ati.busyDur):
 		res <- errors.WrapOnly(ErrActorBusyState)
 	}
 	return <-res
@@ -718,7 +736,7 @@ func (ati *ActorImpl) Destroy() error {
 	select {
 	case ati.destroyChan <- res:
 		return <-res
-	default:
+	case <-time.After(ati.busyDur):
 		res <- errors.WrapOnly(ErrActorBusyState)
 	}
 	return <-res
@@ -734,7 +752,7 @@ func (ati *ActorImpl) DestroyChildren() error {
 	select {
 	case ati.destroyChildrenChan <- res:
 		return <-res
-	default:
+	case <-time.After(ati.busyDur):
 		res <- errors.WrapOnly(ErrActorBusyState)
 	}
 	return <-res
@@ -750,6 +768,9 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 
 	ati.proc.Add(1)
 	ati.routines.Add(1)
+
+	ati.initRoutines()
+	ati.processable.On()
 
 	if restart {
 		atomic.AddInt64(&ati.restartedCount, 1)
@@ -777,9 +798,6 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 			}
 		}
 	}
-
-	ati.initRoutines()
-	ati.processable.On()
 
 	if restart {
 		if ati.postRestart != nil {
@@ -893,7 +911,17 @@ func (ati *ActorImpl) stopMessageReception() {
 	ati.processable.Off()
 	ati.signal <- struct{}{}
 	ati.mails.Signal()
+
+	// TODO(influx6): Noticed a rare bug where the initial call to
+	// ati.mails.Signal() fails to signal end of giving mail check routine.
+	// hence am adding this into this as a temporary fix.
+	// Please remove once we figure how to fix this scheduling issue.
+	tm := time.AfterFunc(1*time.Second, func() {
+		ati.mails.Signal()
+	})
+
 	ati.routines.Wait()
+	tm.Stop()
 }
 
 func (ati *ActorImpl) startChildrenSystems() {
@@ -948,9 +976,12 @@ func (ati *ActorImpl) exhaustSignalChan(signal chan chan error) {
 }
 
 func (ati *ActorImpl) registerChild(ac Actor) {
+	ati.tl.Lock()
 	if ati.tree.HasActor(ac.ID()) {
+		ati.tl.Unlock()
 		return
 	}
+	ati.tl.Unlock()
 
 	sub := ac.Watch(func(event interface{}) {
 		switch event.(type) {
@@ -960,7 +991,9 @@ func (ati *ActorImpl) registerChild(ac Actor) {
 	})
 
 	// add new actor into tree.
+	ati.tl.Lock()
 	ati.tree.AddActor(ac)
+	ati.tl.Unlock()
 
 	// add actor subscription into map.
 	ati.subs[ac] = sub
@@ -968,7 +1001,9 @@ func (ati *ActorImpl) registerChild(ac Actor) {
 
 func (ati *ActorImpl) unregisterChild(ac Actor) {
 	// Remove actor from tree and subscription
+	ati.tl.Lock()
 	ati.tree.RemoveActor(ac)
+	ati.tl.Unlock()
 
 	if sub, ok := ati.subs[ac]; ok {
 		sub.Stop()
@@ -1000,8 +1035,6 @@ func (ati *ActorImpl) manageLifeCycle() {
 		case <-deadlockTicker.C:
 			// do nothing but also allow us avoid
 			// possible all goroutine sleep bug.
-		case action := <-ati.actionChan:
-			action()
 		case actor := <-ati.addActor:
 			ati.registerChild(actor)
 		case actor := <-ati.rmActor:

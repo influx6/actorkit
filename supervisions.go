@@ -1,6 +1,7 @@
 package actorkit
 
 import (
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -46,8 +47,15 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			return
 		}
 
-		if pe, ok := err.(ActorPanic); ok {
-			panic(string(pe.Stack))
+		switch tm := err.(type) {
+		case ActorPanic:
+			panic(tm.Error())
+		case ActorRoutineError:
+			panic(tm.Error())
+		case ActorRoutinePanic:
+			panic(tm.Error())
+		default:
+			panic(err)
 		}
 	case KillDirective:
 		parent.Kill()
@@ -116,7 +124,10 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 	switch on.Direction(err) {
 	case PanicDirective:
-		target.Kill()
+		fmt.Printf("Incoming Panic %T\n", err)
+		if err := target.Kill(); err != nil {
+			fmt.Printf("Failed to kill  %#v\n", err)
+		}
 
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
@@ -127,11 +138,14 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			return
 		}
 
+		fmt.Printf("Incoming %T\n", err)
 		switch tm := err.(type) {
 		case ActorPanic:
-			panic(string(tm.Stack))
+			panic(tm.Error())
+		case ActorRoutineError:
+			panic(tm.Error())
 		case ActorRoutinePanic:
-			panic(string(tm.Stack))
+			panic(tm.Error())
 		default:
 			panic(err)
 		}

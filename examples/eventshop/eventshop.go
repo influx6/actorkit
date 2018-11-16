@@ -18,32 +18,40 @@ func main() {
 		panic(err)
 	}
 
+	var c int
 	for i := 0; i < 50; i++ {
 		tm := rand.Intn(20)
 		switch tm {
 		case 0:
+			c++
 			if err := books.Send(BookCreated{}, nil); err != nil {
 				panic(err)
 			}
 		case 1:
+			c++
 			if err := books.Send(BookUpdated{}, nil); err != nil {
 				panic(err)
 			}
 		case 2:
+			c++
 			if err := books.Send(BookUpvoted{}, nil); err != nil {
 				panic(err)
 			}
 		case 3:
+			c++
 			if err := books.Send(BookSigned{}, nil); err != nil {
 				panic(err)
 			}
 		case 4:
+			c++
 			if err := books.Send(BookEdited{}, nil); err != nil {
 				panic(err)
 			}
 		}
 	}
 
+	fmt.Println("Poison system")
+	fmt.Printf("Sent %d messages\n", c)
 	actorkit.Poison(system)
 }
 
