@@ -90,19 +90,21 @@ func Func(fn BehaviourFunc) func(...ActorOption) Actor {
 	})
 }
 
-// System is generally used to create an Ancestor actor with a default behaviour, it returns
-// the actor itself, it's access address and an error if failed.
+// Ancestor create an actor with a default DeadLetter behaviour, where this actor
+// is the root node in a tree of actors. It is the entity by which all children
+// spawned or discovered from it will be connected to, and allows a group control
+// over them.
 //
 // Usually you always have one root or system actor per namespace (i.e host:port, ipv6, ..etc),
-// then build off your actor system off of it, so do ensure to minimize the
+// then build off your child actors from of it, so do ensure to minimize the
 // use of multiple system or ancestor actor roots.
 //
 // Remember all child actors spawned from an ancestor always takes its protocol and
 // namespace.
-func System(protocol string, namespace string, ops ...ActorOption) (Addr, Actor, error) {
+func Ancestor(protocol string, namespace string, ops ...ActorOption) (Addr, error) {
 	ops = append(ops, UseBehaviour(&DeadLetterBehaviour{}), Protocol(protocol), Namespace(namespace))
 	actor := NewActorImpl(ops...)
-	return AccessOf(actor), actor, actor.Start()
+	return AccessOf(actor), actor.Start()
 }
 
 //********************************************************

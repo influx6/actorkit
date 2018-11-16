@@ -15,7 +15,7 @@ func AwaitActorInterrupt(actor actorkit.Actor) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Kill, syscall.SIGTERM, syscall.SIGINT, syscall.SIGKILL, syscall.SIGQUIT)
 	<-signals
-	actor.Stop().Wait()
+	actor.Stop()
 }
 
 // AwaitAddrInterrupt will setup signalling for use in a commandline application
@@ -26,7 +26,7 @@ func AwaitAddrInterrupt(addr actorkit.Addr) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Kill, syscall.SIGTERM, syscall.SIGINT, syscall.SIGKILL, syscall.SIGQUIT)
 	<-signals
-	actorkit.Poison(addr).Wait()
+	actorkit.Poison(addr)
 }
 
 // KillAwaitActorInterrupt will setup signalling for use in a commandline application
@@ -36,7 +36,7 @@ func KillAwaitActorInterrupt(actor actorkit.Actor) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Kill, syscall.SIGTERM, syscall.SIGINT, syscall.SIGKILL, syscall.SIGQUIT)
 	<-signals
-	actor.Kill().Wait()
+	actor.Kill()
 }
 
 // KillAwaitAddrInterrupt will setup signalling for use in a commandline application
@@ -47,7 +47,7 @@ func KillAwaitAddrInterrupt(addr actorkit.Addr) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Kill, syscall.SIGTERM, syscall.SIGINT, syscall.SIGKILL, syscall.SIGQUIT)
 	<-signals
-	actorkit.Kill(addr).Wait()
+	actorkit.Kill(addr)
 }
 
 // DestroyAwaitActorInterrupt will setup signalling for use in a commandline application
@@ -57,7 +57,7 @@ func DestroyAwaitActorInterrupt(actor actorkit.Actor) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Kill, syscall.SIGTERM, syscall.SIGINT, syscall.SIGKILL, syscall.SIGQUIT)
 	<-signals
-	actor.Destroy().Wait()
+	actor.Destroy()
 }
 
 // DestroyAwaitAddrInterrupt will setup signalling for use in a commandline application
@@ -68,5 +68,5 @@ func DestroyAwaitAddrInterrupt(addr actorkit.Addr) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Kill, syscall.SIGTERM, syscall.SIGINT, syscall.SIGKILL, syscall.SIGQUIT)
 	<-signals
-	actorkit.Destroy(addr).Wait()
+	actorkit.Destroy(addr)
 }

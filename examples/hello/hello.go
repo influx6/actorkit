@@ -22,7 +22,7 @@ func (h *HelloOp) Action(me actorkit.Addr, e actorkit.Envelope) {
 }
 
 func main() {
-	addr, _, err := actorkit.System("kit", "localhost:0")
+	addr, err := actorkit.Ancestor("kit", "localhost:0")
 	if err != nil {
 		panic(err)
 	}
@@ -32,11 +32,11 @@ func main() {
 		panic(err)
 	}
 
-	if err := hello.Send(HelloMessage{Name: "Wally"}, actorkit.Header{}, actorkit.DeadLetters()); err != nil {
+	if err := hello.Send(HelloMessage{Name: "Wally"}, actorkit.DeadLetters()); err != nil {
 		panic(err)
 	}
 
-	if err := actorkit.Poison(addr).Wait(); err != nil {
+	if err := actorkit.Poison(addr); err != nil {
 		panic(err)
 	}
 }

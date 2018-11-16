@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	system, _, err := actorkit.System("kit", "localhost:0")
+	system, err := actorkit.Ancestor("kit", "localhost:0")
 	if err != nil {
 		panic(err)
 	}
@@ -22,29 +22,29 @@ func main() {
 		tm := rand.Intn(20)
 		switch tm {
 		case 0:
-			if err := books.Send(BookCreated{}, actorkit.Header{}, nil); err != nil {
+			if err := books.Send(BookCreated{}, nil); err != nil {
 				panic(err)
 			}
 		case 1:
-			if err := books.Send(BookUpdated{}, actorkit.Header{}, nil); err != nil {
+			if err := books.Send(BookUpdated{}, nil); err != nil {
 				panic(err)
 			}
 		case 2:
-			if err := books.Send(BookUpvoted{}, actorkit.Header{}, nil); err != nil {
+			if err := books.Send(BookUpvoted{}, nil); err != nil {
 				panic(err)
 			}
 		case 3:
-			if err := books.Send(BookSigned{}, actorkit.Header{}, nil); err != nil {
+			if err := books.Send(BookSigned{}, nil); err != nil {
 				panic(err)
 			}
 		case 4:
-			if err := books.Send(BookEdited{}, actorkit.Header{}, nil); err != nil {
+			if err := books.Send(BookEdited{}, nil); err != nil {
 				panic(err)
 			}
 		}
 	}
 
-	actorkit.Poison(system).Wait()
+	actorkit.Poison(system)
 }
 
 type BookCreated struct{}

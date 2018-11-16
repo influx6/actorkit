@@ -35,9 +35,7 @@ func TestActorImpl(t *testing.T) {
 }
 
 func TestActorImplMessaging(t *testing.T) {
-	base := &basic{
-		Message: make(chan *actorkit.Envelope, 1),
-	}
+	base := &basic{Message: make(chan *actorkit.Envelope, 1)}
 	am := actorkit.NewActorImpl(actorkit.UseBehaviour(base))
 
 	assert.NoError(t, am.Start())
@@ -48,6 +46,30 @@ func TestActorImplMessaging(t *testing.T) {
 
 	assert.NoError(t, am.Stop())
 	assert.False(t, am.Running())
+
+	assert.Len(t, base.Message, 1)
+	content := <-base.Message
+	assert.NotNil(t, content)
+	assert.Equal(t, content.Data, 2)
+}
+
+func TestActorChildMessaging(t *testing.T) {
+	system, err := actorkit.Ancestor("kit", "localhost")
+	assert.NoError(t, err)
+	assert.NotNil(t, system)
+
+	base := &basic{
+		Message: make(chan *actorkit.Envelope, 1),
+	}
+
+	addr, err := system.Spawn("basic", base)
+	assert.NoError(t, err)
+	assert.NotNil(t, addr)
+
+	assert.NoError(t, addr.Send(2, nil))
+
+	assert.NoError(t, actorkit.Poison(system))
+	assert.False(t, system.Actor().Running())
 
 	assert.Len(t, base.Message, 1)
 	content := <-base.Message
