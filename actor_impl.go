@@ -936,14 +936,14 @@ func (ati *ActorImpl) startChildrenSystems() {
 
 func (ati *ActorImpl) stopChildrenSystems() {
 	ati.tree.Each(func(actor Actor) bool {
-		actor.Stop()
+		LinearDoUntil(actor.Stop, 100, time.Second)
 		return true
 	})
 }
 
 func (ati *ActorImpl) killChildrenSystems() {
 	ati.tree.Each(func(actor Actor) bool {
-		actor.Kill()
+		LinearDoUntil(actor.Kill, 100, time.Second)
 		return true
 	})
 }
@@ -951,7 +951,7 @@ func (ati *ActorImpl) killChildrenSystems() {
 func (ati *ActorImpl) destroyChildrenSystems() {
 	ati.tree.Each(func(actor Actor) bool {
 		ati.unregisterChild(actor)
-		actor.Destroy()
+		LinearDoUntil(actor.Destroy, 100, time.Second)
 		return true
 	})
 }

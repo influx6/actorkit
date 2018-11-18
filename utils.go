@@ -1,5 +1,7 @@
 package actorkit
 
+import "time"
+
 const (
 	digits = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~+"
 )
@@ -20,4 +22,19 @@ func uint64ToID(u uint64) string {
 	buf[i] = '$'
 
 	return string(buf[i:])
+}
+
+// LinearDoUntil will continuously run the giving function until no error is returned.
+// If duration is supplied, the goroutine is made to sleep before making next run.
+// The same duration is consistently used for each sleep.
+func LinearDoUntil(fx func() error, total int, elapse time.Duration) {
+	for i := total; i > 0; i-- {
+		if err := fx(); err == nil {
+			return
+		}
+
+		if elapse > 0 {
+			time.Sleep(elapse)
+		}
+	}
 }

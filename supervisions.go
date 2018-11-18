@@ -1,7 +1,6 @@
 package actorkit
 
 import (
-	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -13,7 +12,7 @@ import (
 //*****************************************************************
 
 // PanicAction defines a function type which embodies the action to
-// be done with paniced value.
+// be done with panic'ed value.
 type PanicAction func(interface{}, Addr, Actor)
 
 // AllForOneSupervisor implements a one-to-one supervising strategy for giving actors.
@@ -36,7 +35,7 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 	switch on.Direction(err) {
 	case PanicDirective:
-		parent.Kill()
+		LinearDoUntil(target.Kill, 100, time.Second)
 
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
@@ -58,12 +57,12 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			panic(err)
 		}
 	case KillDirective:
-		parent.Kill()
+		LinearDoUntil(target.Kill, 100, time.Second)
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
 		}
 	case StopDirective:
-		parent.Stop()
+		LinearDoUntil(target.Stop, 100, time.Second)
 		if on.Invoker != nil {
 			on.Invoker.InvokedStop(err, target.Stats(), targetAddr, target)
 		}
@@ -85,7 +84,7 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 		on.failedRestarts = 0
 	case DestroyDirective:
-		parent.Destroy()
+		LinearDoUntil(target.Destroy, 100, time.Second)
 
 		if on.Invoker != nil {
 			on.Invoker.InvokedDestroy(err, target.Stats(), targetAddr, target)
@@ -124,9 +123,7 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 	switch on.Direction(err) {
 	case PanicDirective:
-		if err := target.Kill(); err != nil {
-			fmt.Printf("Failed to kill at %q: %#v\n", target.Addr(), err)
-		}
+		LinearDoUntil(target.Kill, 100, time.Second)
 
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
@@ -148,12 +145,12 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			panic(err)
 		}
 	case KillDirective:
-		target.Kill()
+		LinearDoUntil(target.Kill, 100, time.Second)
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
 		}
 	case StopDirective:
-		target.Stop()
+		LinearDoUntil(target.Stop, 100, time.Second)
 		if on.Invoker != nil {
 			on.Invoker.InvokedStop(err, target.Stats(), targetAddr, target)
 		}
@@ -175,7 +172,7 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 		on.failedRestarts = 0
 	case DestroyDirective:
-		target.Destroy()
+		LinearDoUntil(target.Destroy, 100, time.Second)
 
 		if on.Invoker != nil {
 			on.Invoker.InvokedDestroy(err, target.Stats(), targetAddr, target)
