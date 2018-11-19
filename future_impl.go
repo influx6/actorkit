@@ -178,6 +178,17 @@ func (f *FutureImpl) Addr() string {
 	return f.parent.Addr() + "/:future/" + f.id.String()
 }
 
+// ProtocolAddr implements the ProtocolAddr interface. It
+// always returns
+func (f *FutureImpl) ProtocolAddr() string {
+	return "future@" + f.parent.Namespace()
+}
+
+// Namespace returns future's parent namespace value.
+func (f *FutureImpl) Namespace() string {
+	return f.parent.Namespace()
+}
+
 // Wait blocks till the giving future is resolved and returns error if
 // occurred.
 func (f *FutureImpl) Wait() error {

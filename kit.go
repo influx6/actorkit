@@ -125,7 +125,9 @@ type Actor interface {
 	Destroyable
 
 	Identity
+	Namespace
 	Addressable
+	ProtocolAddr
 
 	Ancestry
 	Descendants
@@ -143,6 +145,42 @@ type Actor interface {
 	Stats
 
 	MailboxOwner
+}
+
+//***********************************
+// Addr
+//***********************************
+
+// Addr represent a advertised capability and behavior which an actor provides, it is
+// possible for one actor to exhibit ability of processing multiple operations/behaviors
+// by being able to be expressed using different service addresses. Address simply express
+// a reference handle by which an actor able to provide said service can be communicated with.
+//
+// Interaction of one service to another is always through an address, which makes them a common
+// concept that can be transferable between zones, distributed system and networks.
+//
+// Addr by their nature can have a one-to-many and many-to-many relations with actors.
+//
+// A single actor can have multiple addresses pointing to it, based on different services it can render
+// or even based on same service type, more so one address can be a means of communicating with multiple
+// actors in the case of clustering or distributing messaging through a proxy address.
+//
+type Addr interface {
+	Sender
+	Service
+	Spawner
+	Identity
+	Futures
+	Watchable
+	Descendants
+	Addressable
+	ProtocolAddr
+	DiscoveryChain
+	Escalatable
+	Namespace
+	AddressActor
+	AncestralAddr
+	AddressService
 }
 
 //***********************************
@@ -219,6 +257,18 @@ type Identity interface {
 // associated address of implementer.
 type Addressable interface {
 	Addr() string
+}
+
+// ProtocolAddr defines a self named function which returns a giving value
+// representing it's protocol address.
+type ProtocolAddr interface {
+	ProtocolAddr() string
+}
+
+// Namespace exposes a self named method to get a giving value for namespace of
+// implementer.
+type Namespace interface {
+	Namespace() string
 }
 
 // AddressService exposes a single method to locate given address for a target
@@ -507,40 +557,6 @@ type PostRestart interface {
 }
 
 //***********************************
-// Addr
-//***********************************
-
-// Addr represent a advertised capability and behavior which an actor provides, it is
-// possible for one actor to exhibit ability of processing multiple operations/behaviors
-// by being able to be expressed using different service addresses. Address simply express
-// a reference handle by which an actor able to provide said service can be communicated with.
-//
-// Interaction of one service to another is always through an address, which makes them a common
-// concept that can be transferable between zones, distributed system and networks.
-//
-// Addr by their nature can have a one-to-many and many-to-many relations with actors.
-//
-// A single actor can have multiple addresses pointing to it, based on different services it can render
-// or even based on same service type, more so one address can be a means of communicating with multiple
-// actors in the case of clustering or distributing messaging through a proxy address.
-//
-type Addr interface {
-	Sender
-	Service
-	Spawner
-	Identity
-	Futures
-	Watchable
-	Descendants
-	Addressable
-	DiscoveryChain
-	Escalatable
-	AddressActor
-	AncestralAddr
-	AddressService
-}
-
-//***********************************
 //  AddressActor
 //***********************************
 
@@ -802,59 +818,8 @@ func (f *FutureRejected) Unwrap() error {
 // SystemMessage identifies giving type as a system message.
 func (FutureRejected) SystemMessage() {}
 
-// ActorStartRequest defines message sent to indicate starting request or in process
-// starting request to an actor.
-type ActorStartRequest struct {
-	ID   string
-	Addr string
-	Data interface{}
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorStartRequest) SystemMessage() {}
-
-// ActorRestartRequest indicates giving message sent to actor to
-// initiate stopping.
-type ActorRestartRequest struct {
-	ID   string
-	Addr string
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorRestartRequest) SystemMessage() {}
-
-// ActorKillRequest indicates giving message sent to actor to
-// initiate stopping.
-type ActorKillRequest struct {
-	ID   string
-	Addr string
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorKillRequest) SystemMessage() {}
-
-// ActorDestroyRequest indicates giving message sent to actor to
-// initiate stopping.
-type ActorDestroyRequest struct {
-	ID   string
-	Addr string
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorDestroyRequest) SystemMessage() {}
-
-// ActorStopRequest indicates giving message sent to actor to
-// initiate stopping.
-type ActorStopRequest struct {
-	ID   string
-	Addr string
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorStopRequest) SystemMessage() {}
-
 // ActorStartRequested defines message sent to indicate starting request or in process
-// starting request to an actor.
+// starting request by an actor.
 type ActorStartRequested struct {
 	ID   string
 	Addr string
@@ -864,7 +829,7 @@ type ActorStartRequested struct {
 // SystemMessage identifies giving type as a system message.
 func (ActorStartRequested) SystemMessage() {}
 
-// ActorRestartRequested indicates giving message sent to actor to
+// ActorRestartRequested indicates giving message sent by actor to
 // initiate stopping.
 type ActorRestartRequested struct {
 	ID   string
@@ -874,7 +839,7 @@ type ActorRestartRequested struct {
 // SystemMessage identifies giving type as a system message.
 func (ActorRestartRequested) SystemMessage() {}
 
-// ActorKillRequested indicates giving message sent to actor to
+// ActorKillRequested indicates giving message sent by actor to
 // initiate stopping.
 type ActorKillRequested struct {
 	ID   string
@@ -884,8 +849,8 @@ type ActorKillRequested struct {
 // SystemMessage identifies giving type as a system message.
 func (ActorKillRequested) SystemMessage() {}
 
-// ActorDestroyRequested indicates giving message sent to actor to
-// initiate stopping.
+// ActorDestroyRequested indicates giving message sent by actor to
+// initiate destruction.
 type ActorDestroyRequested struct {
 	ID   string
 	Addr string
@@ -933,6 +898,16 @@ type ActorStopped struct {
 
 // SystemMessage identifies giving type as a system message.
 func (ActorStopped) SystemMessage() {}
+
+// ActorKilled indicates giving message sent by actor to
+// initiate stopping.
+type ActorKilled struct {
+	ID   string
+	Addr string
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorKilled) SystemMessage() {}
 
 // ActorDestroyed is sent when an actor is absolutely stopped and is removed
 // totally from network. It's operation will be not allowed to run as it

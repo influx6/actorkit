@@ -191,6 +191,26 @@ type Hashed interface {
 	Hash() string
 }
 
+// HashingReference defines a function which is provided to the HashRouter
+// which will return a string from a adderess. This allows custom values based
+// of giving Addr to be returned as hashing input value.
+type HashingReference func(Addr) string
+
+// ProtocolAddrReference defines a function which matches the HashingReference function
+// type. It simply returns the ProtocolAddr() value of a Addr object.
+func ProtocolAddrReference(addr Addr) string {
+	return addr.ProtocolAddr()
+}
+
+// AddressReference defines a function which matches the HashingReference function
+// type and is the default use. It simply returns the Addr() value of a Addr object.
+//
+// This might not necessarily be desired as the address contains the actor's process id
+// details which can become too specific in certain cases.
+func AddressReference(addr Addr) string {
+	return addr.Addr()
+}
+
 // HashedRouter implements a router which delivers messages to giving address
 // based on hash value from message to possible address.
 //

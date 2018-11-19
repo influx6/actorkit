@@ -591,6 +591,23 @@ func (a *AddrImpl) Addr() string {
 	return a.actor.Addr() + "/" + a.service
 }
 
+// ProtocolAddr returns the Actors.ProtocolAddr() and Addr.ServiceName
+// values in the format: Protocol@Namespace/Service.
+func (a *AddrImpl) ProtocolAddr() string {
+	if a.deadletter {
+		return "kit@localhost/deadletter"
+	}
+	return a.actor.ProtocolAddr() + "/" + a.service
+}
+
+// Namespace returns address actor namespace.
+func (a *AddrImpl) Namespace() string {
+	if a.deadletter {
+		return "localhost"
+	}
+	return a.actor.Namespace()
+}
+
 // String returns address string of giving AddrImpl.
 func (a *AddrImpl) String() string {
 	return a.Addr()

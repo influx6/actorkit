@@ -105,7 +105,7 @@ func Func(fn BehaviourFunc) func(...ActorOption) Actor {
 // Remember all child actors spawned from an ancestor always takes its protocol and
 // namespace.
 func Ancestor(protocol string, namespace string, ops ...ActorOption) (Addr, error) {
-	ops = append(ops, UseBehaviour(&DeadLetterBehaviour{}), Protocol(protocol), Namespace(namespace))
+	ops = append(ops, UseBehaviour(&DeadLetterBehaviour{}), UseProtocol(protocol), UseNamespace(namespace))
 	actor := NewActorImpl(ops...)
 	return AccessOf(actor), actor.Start()
 }
@@ -129,8 +129,8 @@ func UseMailbox(m Mailbox) ActorOption {
 	}
 }
 
-// Protocol sets giving protocol value for a actor.
-func Protocol(proc string) ActorOption {
+// UseProtocol sets giving protocol value for a actor.
+func UseProtocol(proc string) ActorOption {
 	return func(impl *ActorImpl) {
 		impl.protocol = proc
 	}
@@ -152,8 +152,8 @@ func ForceID(forceID string) ActorOption {
 	}
 }
 
-// Namespace sets giving namespace value for a actor.
-func Namespace(ns string) ActorOption {
+// UseNamespace sets giving namespace value for a actor.
+func UseNamespace(ns string) ActorOption {
 	return func(impl *ActorImpl) {
 		impl.namespace = ns
 	}
@@ -326,6 +326,7 @@ type ActorImpl struct {
 
 	started     *SwitchImpl
 	starting    *SwitchImpl
+	destruction *SwitchImpl
 	processable *SwitchImpl
 
 	supervisor Supervisor
@@ -420,6 +421,7 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 	ac.id = xid.New()
 	ac.started = NewSwitch()
 	ac.starting = NewSwitch()
+	ac.destruction = NewSwitch()
 	ac.accessAddr = AccessOf(ac)
 	ac.processable = NewSwitch()
 	ac.tree = NewActorTree(10)
@@ -519,7 +521,7 @@ func (ati *ActorImpl) Spawn(service string, rec Behaviour) (Addr, error) {
 		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
-	am := NewActorImpl(Namespace(ati.namespace), Protocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
+	am := NewActorImpl(UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
 	if err := ati.manageChild(am); err != nil {
 		return nil, err
 	}
@@ -564,6 +566,17 @@ func (ati *ActorImpl) Addr() string {
 		return ati.protocol + "://" + ati.namespace + "/" + ati.id.String()
 	}
 	return ati.parent.Addr() + "/:" + ati.protocol + "/" + ati.namespace + "/" + ati.id.String()
+}
+
+// Namespace returns actor's namespace.
+func (ati *ActorImpl) Namespace() string {
+	return ati.namespace
+}
+
+// ProtocolAddr returns the Actors.Protocol and Actors.Namespace
+// values in the format: Protocol@Namespace.
+func (ati *ActorImpl) ProtocolAddr() string {
+	return ati.protocol + "@" + ati.namespace
 }
 
 // Escalate sends giving error that occur to actor's supervisor
@@ -829,20 +842,8 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 }
 
 func (ati *ActorImpl) initRoutines() {
-	var w sync.WaitGroup
-	w.Add(2)
-
-	go func() {
-		w.Done()
-		ati.manageLifeCycle()
-	}()
-
-	go func() {
-		w.Done()
-		ati.readMessages()
-	}()
-
-	w.Wait()
+	waitTillRunned(ati.manageLifeCycle)
+	waitTillRunned(ati.readMessages)
 }
 
 func (ati *ActorImpl) exhaustMessages() {
@@ -855,6 +856,7 @@ func (ati *ActorImpl) exhaustMessages() {
 }
 
 func (ati *ActorImpl) preDestroySystem() {
+	ati.destruction.On()
 	ati.events.Publish(ActorDestroyRequested{
 		Addr: ati.Addr(),
 		ID:   ati.id.String(),
@@ -865,6 +867,15 @@ func (ati *ActorImpl) preDestroySystem() {
 	}
 }
 
+func (ati *ActorImpl) preMidDestroySystem() {
+	// clean out all subscription first.
+	for _, sub := range ati.subs {
+		sub.Stop()
+	}
+
+	ati.subs = map[Actor]Subscription{}
+}
+
 func (ati *ActorImpl) postDestroySystem() {
 	if ati.postDestroy != nil {
 		ati.postDestroy.PostDestroy(ati.accessAddr)
@@ -873,6 +884,21 @@ func (ati *ActorImpl) postDestroySystem() {
 	ati.events.Publish(ActorDestroyed{
 		Addr: ati.Addr(),
 		ID:   ati.id.String(),
+	})
+	ati.destruction.Off()
+}
+
+func (ati *ActorImpl) preKillSystem() {
+	ati.events.Publish(ActorKillRequested{
+		ID:   ati.id.String(),
+		Addr: ati.Addr(),
+	})
+}
+
+func (ati *ActorImpl) postKillSystem() {
+	ati.events.Publish(ActorKilled{
+		ID:   ati.id.String(),
+		Addr: ati.Addr(),
 	})
 }
 
@@ -936,22 +962,28 @@ func (ati *ActorImpl) startChildrenSystems() {
 
 func (ati *ActorImpl) stopChildrenSystems() {
 	ati.tree.Each(func(actor Actor) bool {
-		LinearDoUntil(actor.Stop, 100, time.Second)
+		// TODO: handle the error returned here or log it out.
+		linearDoUntil(actor.Stop, 100, time.Second)
 		return true
 	})
 }
 
 func (ati *ActorImpl) killChildrenSystems() {
 	ati.tree.Each(func(actor Actor) bool {
-		LinearDoUntil(actor.Kill, 100, time.Second)
+		// TODO: handle the error returned here or log it out.
+		linearDoUntil(actor.Kill, 100, time.Second)
 		return true
 	})
 }
 
 func (ati *ActorImpl) destroyChildrenSystems() {
 	ati.tree.Each(func(actor Actor) bool {
-		ati.unregisterChild(actor)
-		LinearDoUntil(actor.Destroy, 100, time.Second)
+		waitTillRunned(func() {
+			ati.unregisterChild(actor)
+		})
+
+		// TODO: handle the error returned here or log it out.
+		linearDoUntil(actor.Destroy, 100, time.Second)
 		return true
 	})
 }
@@ -977,6 +1009,10 @@ func (ati *ActorImpl) registerChild(ac Actor) {
 	sub := ac.Watch(func(event interface{}) {
 		switch event.(type) {
 		case ActorDestroyed:
+			if ati.destruction.IsOn() {
+				return
+			}
+
 			ati.rmActor <- ac
 		}
 	})
@@ -986,13 +1022,13 @@ func (ati *ActorImpl) registerChild(ac Actor) {
 }
 
 func (ati *ActorImpl) unregisterChild(ac Actor) {
+	if sub, ok := ati.subs[ac]; ok {
+		delete(ati.subs, ac)
+		sub.Stop()
+	}
+
 	// Remove actor from tree and subscription
 	ati.tree.RemoveActor(ac)
-
-	if sub, ok := ati.subs[ac]; ok {
-		sub.Stop()
-		delete(ati.subs, ac)
-	}
 }
 
 // manageChild handles addition of new actor into actor tree.
@@ -1040,10 +1076,13 @@ func (ati *ActorImpl) manageLifeCycle() {
 			res <- nil
 		case res := <-ati.killChan:
 			atomic.AddInt64(&ati.killedCount, 1)
+			ati.preKillSystem()
 			ati.preStopSystem()
 			ati.stopMessageReception()
+			ati.exhaustMessages()
 			ati.killChildrenSystems()
 			ati.postStopSystem()
+			ati.postKillSystem()
 			res <- nil
 			return
 		case res := <-ati.killChildrenChan:
@@ -1051,9 +1090,11 @@ func (ati *ActorImpl) manageLifeCycle() {
 			res <- nil
 		case res := <-ati.destroyChan:
 			ati.death = time.Now()
-			ati.preStopSystem()
+			ati.preDestroySystem()
+			ati.preMidDestroySystem()
 			ati.preStopSystem()
 			ati.stopMessageReception()
+			ati.exhaustMessages()
 			ati.destroyChildrenSystems()
 			ati.postStopSystem()
 			ati.postDestroySystem()
@@ -1061,6 +1102,7 @@ func (ati *ActorImpl) manageLifeCycle() {
 			res <- nil
 			return
 		case res := <-ati.destroyChildrenChan:
+			ati.preMidDestroySystem()
 			ati.destroyChildrenSystems()
 			res <- nil
 		}

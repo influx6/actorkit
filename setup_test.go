@@ -13,6 +13,14 @@ import (
 
 type AddrImpl struct{}
 
+func (am *AddrImpl) Namespace() string {
+	return ""
+}
+
+func (am *AddrImpl) ProtocolAddr() string {
+	return ""
+}
+
 func (am *AddrImpl) AddDiscovery(service actorkit.DiscoveryService) error {
 	return errors.New("not supported")
 }

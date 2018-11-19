@@ -22,7 +22,7 @@ type AllForOneSupervisor struct {
 	PanicAction PanicAction
 	Invoker     SupervisionInvoker
 
-	failedRestarts int
+	failedRestarts int64
 	work           sync.Mutex
 }
 
@@ -35,7 +35,7 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 	switch on.Direction(err) {
 	case PanicDirective:
-		LinearDoUntil(target.Kill, 100, time.Second)
+		linearDoUntil(parent.KillChildren, 100, time.Second)
 
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
@@ -57,34 +57,35 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			panic(err)
 		}
 	case KillDirective:
-		LinearDoUntil(target.Kill, 100, time.Second)
+		linearDoUntil(parent.KillChildren, 100, time.Second)
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
 		}
 	case StopDirective:
-		LinearDoUntil(target.Stop, 100, time.Second)
+		linearDoUntil(parent.StopChildren, 100, time.Second)
 		if on.Invoker != nil {
 			on.Invoker.InvokedStop(err, target.Stats(), targetAddr, target)
 		}
 	case RestartDirective:
-		if on.Max > 0 && on.failedRestarts >= on.Max {
+		failed := int(atomic.LoadInt64(&on.failedRestarts))
+		if on.Max > 0 && failed >= on.Max {
 			return
 		}
 
-		restartErr := parent.Restart()
+		restartErr := target.Restart()
 		if on.Invoker != nil {
 			on.Invoker.InvokedRestart(err, target.Stats(), targetAddr, target)
 		}
 
 		if restartErr != nil {
-			on.failedRestarts++
+			atomic.AddInt64(&on.failedRestarts, 1)
 			on.Handle(err, targetAddr, target, parent)
 			return
 		}
 
-		on.failedRestarts = 0
+		atomic.StoreInt64(&on.failedRestarts, 0)
 	case DestroyDirective:
-		LinearDoUntil(target.Destroy, 100, time.Second)
+		linearDoUntil(parent.DestroyChildren, 100, time.Second)
 
 		if on.Invoker != nil {
 			on.Invoker.InvokedDestroy(err, target.Stats(), targetAddr, target)
@@ -110,7 +111,7 @@ type OneForOneSupervisor struct {
 	PanicAction PanicAction
 	Invoker     SupervisionInvoker
 
-	failedRestarts int
+	failedRestarts int64
 	work           sync.Mutex
 }
 
@@ -123,7 +124,7 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 	switch on.Direction(err) {
 	case PanicDirective:
-		LinearDoUntil(target.Kill, 100, time.Second)
+		linearDoUntil(target.Kill, 100, time.Second)
 
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
@@ -145,17 +146,18 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 			panic(err)
 		}
 	case KillDirective:
-		LinearDoUntil(target.Kill, 100, time.Second)
+		linearDoUntil(target.Kill, 100, time.Second)
 		if on.Invoker != nil {
 			on.Invoker.InvokedKill(err, target.Stats(), targetAddr, target)
 		}
 	case StopDirective:
-		LinearDoUntil(target.Stop, 100, time.Second)
+		linearDoUntil(target.Stop, 100, time.Second)
 		if on.Invoker != nil {
 			on.Invoker.InvokedStop(err, target.Stats(), targetAddr, target)
 		}
 	case RestartDirective:
-		if on.Max > 0 && on.failedRestarts >= on.Max {
+		failed := int(atomic.LoadInt64(&on.failedRestarts))
+		if on.Max > 0 && failed >= on.Max {
 			return
 		}
 
@@ -166,13 +168,14 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 		if restartErr != nil {
 			on.failedRestarts++
+			atomic.AddInt64(&on.failedRestarts, 1)
 			on.Handle(err, targetAddr, target, parent)
 			return
 		}
 
-		on.failedRestarts = 0
+		atomic.StoreInt64(&on.failedRestarts, 0)
 	case DestroyDirective:
-		LinearDoUntil(target.Destroy, 100, time.Second)
+		linearDoUntil(target.Destroy, 100, time.Second)
 
 		if on.Invoker != nil {
 			on.Invoker.InvokedDestroy(err, target.Stats(), targetAddr, target)
@@ -213,17 +216,50 @@ func (sp *RestartingSupervisor) Handle(err interface{}, targetAddr Addr, target 
 }
 
 //*****************************************************************
+// ExponentialBackOffRestartStrategy
+//*****************************************************************
+
+// ExponentialBackOffRestartStrategy returns a new ExponentialBackOffSupervisor which will attempt to restart target actor
+// where error occurred. If restart fail, it will continuously attempt till it has maxed out chances.
+func ExponentialBackOffRestartStrategy(max int, backoff time.Duration, invoker SupervisionInvoker) *ExponentialBackOffSupervisor {
+	return &ExponentialBackOffSupervisor{
+		Max:     max,
+		Backoff: backoff,
+		Invoker: invoker,
+		Action: func(err interface{}, targetAddr Addr, target Actor, parent Actor) error {
+			return target.Restart()
+		},
+	}
+}
+
+// ExponentialBackOffStopStrategy returns a new ExponentialBackOffSupervisor which will attempt to stop target actor
+// where error occurred. If restart fail, it will continuously attempt till it has maxed out chances.
+func ExponentialBackOffStopStrategy(max int, backoff time.Duration, invoker SupervisionInvoker) *ExponentialBackOffSupervisor {
+	return &ExponentialBackOffSupervisor{
+		Max:     max,
+		Backoff: backoff,
+		Invoker: invoker,
+		Action: func(err interface{}, targetAddr Addr, target Actor, parent Actor) error {
+			return target.Stop()
+		},
+	}
+}
+
+//*****************************************************************
 // ExponentialBackOffStrategy
 //*****************************************************************
 
-// ExponentialBackOffSupervisor implements a
+// ExponentialBackOffSupervisor implements a supervisor which will attempt to
+// exponentially run a giving action function continuously with an increasing
+// backoff time, until it's maximum tries is reached.
 type ExponentialBackOffSupervisor struct {
 	Max     int
 	Backoff time.Duration
 	Invoker SupervisionInvoker
+	Action  func(err interface{}, targetAddr Addr, target Actor, parent Actor) error
 
-	failedRestart int64
-	work          sync.Mutex
+	failed int64
+	work   sync.Mutex
 }
 
 // Handle implements the exponential restart of giving target actor within giving maximum allowed runs.
@@ -231,7 +267,7 @@ func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr,
 	sp.work.Lock()
 	defer sp.work.Unlock()
 
-	failed := atomic.LoadInt64(&sp.failedRestart)
+	failed := atomic.LoadInt64(&sp.failed)
 	if int(failed) >= sp.Max {
 		target.Stop()
 		if sp.Invoker != nil {
@@ -252,17 +288,17 @@ func (sp *ExponentialBackOffSupervisor) Handle(err interface{}, targetAddr Addr,
 	dur := time.Duration(backoff + noise)
 
 	time.AfterFunc(dur, func() {
-		restartErr := target.Restart()
+		actionErr := sp.Action(err, targetAddr, target, parent)
 		if sp.Invoker != nil {
 			sp.Invoker.InvokedRestart(err, target.Stats(), targetAddr, target)
 		}
 
-		if restartErr != nil {
-			sp.failedRestart++
+		if actionErr != nil {
+			atomic.AddInt64(&sp.failed, 1)
 			sp.Handle(err, targetAddr, target, parent)
 			return
 		}
 
-		atomic.AddInt64(&sp.failedRestart, 1)
+		atomic.StoreInt64(&sp.failed, 0)
 	})
 }
