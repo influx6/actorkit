@@ -22,6 +22,8 @@ github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7 h1:9JJfPoUUpjeImyRSPb9BD3
 github.com/gokit/es v0.0.0-20181019151655-b31c4bdc4ad7/go.mod h1:u590NupW7qC90r1MhdNhQoHKY0WYGdHDo/4YszwlS1o=
 github.com/gokit/es v0.0.0-20181110103359-c61e83ce789f h1:0CR2pHS2XfYiTj73CZds93JRrR+MBaWl5NmdH2VpYqc=
 github.com/gokit/es v0.0.0-20181110103359-c61e83ce789f/go.mod h1:u590NupW7qC90r1MhdNhQoHKY0WYGdHDo/4YszwlS1o=
+github.com/gokit/es v0.0.0-20181119060828-b47412d74583 h1:7AvU2IXzyL02dng/q3aX+j2Gl+dEEZ5ScPx+3rYm0f8=
+github.com/gokit/es v0.0.0-20181119060828-b47412d74583/go.mod h1:3f6IH7olKgOkrbGNSgNm00Xyg2ltlMEAam213HgkxHI=
 github.com/gokit/futurechain v0.0.0-20181027053849-6f35d2aed70b h1:+pY/JwoxrcoS3uVuGClbA2LumPHVT94aM8UgOh+e8SE=
 github.com/gokit/futurechain v0.0.0-20181027053849-6f35d2aed70b/go.mod h1:gGl5VWei4qAvUe2lOfTlixAs51xMV0+OmKE3H4k0ntc=
 github.com/gokit/futurechain v0.0.0-20181027094057-cfba8de25ab9 h1:gabe6DCLs6lYbmmyGhdHQChyZ+Tw9zvDKO3QWh9tNAM=

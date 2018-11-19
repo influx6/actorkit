@@ -25,6 +25,11 @@ type ServiceSet struct {
 	addrs []Addr
 }
 
+// NewServiceSet returns a new instance of a ServiceSet.
+func NewServiceSet() *ServiceSet {
+	return &ServiceSet{}
+}
+
 // ForEach iterates through all available address against provided
 // function. It expects the function to return true if it wishes to
 // continue iteration or to stop by returning false.
@@ -77,6 +82,17 @@ func (ad *ServiceSet) IndexOf(addr Addr) int {
 		}
 	}
 	return -1
+}
+
+// Get returns giving Addr for a giving service string if in set.
+func (ad *ServiceSet) Get(service string) (Addr, bool) {
+	if ad.set != nil {
+		if index, ok := ad.set[service]; ok {
+			return ad.addrs[index], true
+		}
+
+	}
+	return nil, false
 }
 
 // Remove removes giving address (string version from underline set).
@@ -158,6 +174,11 @@ type IDSet struct {
 	addrs []Addr
 }
 
+// NewIDSet returns a new instance of a IDSet.
+func NewIDSet() *IDSet {
+	return &IDSet{}
+}
+
 // ForEach iterates through all available address against provided
 // function. It expects the function to return true if it wishes to
 // continue iteration or to stop by returning false.
@@ -210,6 +231,17 @@ func (ad *IDSet) IndexOf(addr Addr) int {
 		}
 	}
 	return -1
+}
+
+// Get returns giving Addr for a giving service string if in set.
+func (ad *IDSet) Get(service string) (Addr, bool) {
+	if ad.set != nil {
+		if index, ok := ad.set[service]; ok {
+			return ad.addrs[index], true
+		}
+
+	}
+	return nil, false
 }
 
 // Remove removes giving address (string version from underline set).

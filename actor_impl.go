@@ -1057,6 +1057,7 @@ func (ati *ActorImpl) manageLifeCycle() {
 			ati.destroyChildrenSystems()
 			ati.postStopSystem()
 			ati.postDestroySystem()
+			ati.events.Reset()
 			res <- nil
 			return
 		case res := <-ati.destroyChildrenChan:

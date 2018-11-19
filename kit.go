@@ -75,9 +75,9 @@ type Envelope struct {
 func CreateEnvelope(sender Addr, header Header, data interface{}) Envelope {
 	return Envelope{
 		Data:   data,
-		Ref:    xid.New(),
 		Header: header,
 		Sender: sender,
+		Ref:    xid.New(),
 	}
 }
 

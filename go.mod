@@ -2,7 +2,7 @@ module github.com/gokit/actorkit
 
 require (
 	github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe
-	github.com/gokit/es v0.0.0-20181110103359-c61e83ce789f
+	github.com/gokit/es v0.0.0-20181119060828-b47412d74583
 	github.com/gokit/futurechain v0.0.0-20181113182145-5452c1cd981d
 	github.com/gokit/xid v1.2.2
 	github.com/serialx/hashring v0.0.0-20180504054112-49a4782e9908
