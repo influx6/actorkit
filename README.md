@@ -27,7 +27,7 @@ type HelloMessage struct {
 }
 
 type HelloOp struct {
-	Done chan struct{}
+	
 }
 
 func (h *HelloOp) Action(me actorkit.Addr, e actorkit.Envelope) {
@@ -38,12 +38,12 @@ func (h *HelloOp) Action(me actorkit.Addr, e actorkit.Envelope) {
 }
 
 func main() {
-	addr, _, err := actorkit.System(&HelloOp{}, "kit", "localhos:0", nil)
+	addr,  err := actorkit.System(&HelloOp{}, "kit", "localhos:0", nil)
 	if err != nil {
 		panic(err)
 	}
 
 	addr.Send(HelloMessage{Name: "Wally"}, actorkit.Header{}, actorkit.DeadLetters())
-	actorkit.Destroy(addr, nil).Wait()
+	actorkit.Poison(addr)
 }
 ```

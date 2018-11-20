@@ -218,24 +218,26 @@ func AddressReference(addr Addr) string {
 // same Actor, they will be respected, added and broadcasted to, as the Addr represents
 // a unique capability.
 type HashedRouter struct {
+	ref    HashingReference
 	hashes *HashedSet
 	addrs  *ServiceSet
 }
 
 // NewHashedRouter returns a new instance of a HashedRouter.
-func NewHashedRouter(addrs ...Addr) *HashedRouter {
+func NewHashedRouter(ref HashingReference, addrs ...Addr) *HashedRouter {
 	var service ServiceSet
 
 	address := make([]string, 0, len(addrs))
 	for _, addr := range addrs {
 		if service.Add(addr) {
-			address = append(address, addr.Addr())
+			address = append(address, ref(addr))
 		}
 	}
 
 	return &HashedRouter{
 		hashes: NewHashedSet(address),
 		addrs:  &service,
+		ref:    ref,
 	}
 }
 
@@ -245,13 +247,13 @@ func (rr *HashedRouter) Action(addr Addr, msg Envelope) {
 	case AddRoute:
 		if msg.Sender != nil && msg.Sender.ID() != addr.ID() {
 			if rr.addrs.Add(msg.Sender) {
-				rr.hashes.Add(msg.Sender.Addr())
+				rr.hashes.Add(rr.ref(msg.Sender))
 			}
 		}
 	case RemoveRoute:
 		if msg.Sender != nil && msg.Sender.ID() != addr.ID() {
 			if rr.addrs.RemoveAddr(msg.Sender) {
-				rr.hashes.Remove(msg.Sender.Addr())
+				rr.hashes.Remove(rr.ref(msg.Sender))
 			}
 		}
 	default:
