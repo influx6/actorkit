@@ -16,11 +16,11 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
-	child1, err := system.Spawn("basic", &basic{})
+	child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, child1)
 
-	child2, err := system.Spawn("basic", &basic{})
+	child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, child2)
 
@@ -56,11 +56,11 @@ func TestRestartSupervisor(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
-	child1, err := system.Spawn("basic", &basic{})
+	child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, child1)
 
-	child2, err := system.Spawn("basic", &basic{})
+	child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, child2)
 
@@ -110,11 +110,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told destroy")
 	{
-		child1, err := system.Spawn("basic", &basic{})
+		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{})
+		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -147,11 +147,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told kill")
 	{
-		child1, err := system.Spawn("basic", &basic{})
+		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{})
+		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -186,11 +186,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told stop")
 	{
-		child1, err := system.Spawn("basic", &basic{})
+		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{})
+		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -225,11 +225,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told restart")
 	{
-		child1, err := system.Spawn("basic", &basic{})
+		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{})
+		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -284,11 +284,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told destroy")
 	{
-		child1, err := system.Spawn("basic", &basic{})
+		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{})
+		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -321,11 +321,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told kill")
 	{
-		child1, err := system.Spawn("basic", &basic{})
+		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{})
+		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -360,11 +360,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told stop")
 	{
-		child1, err := system.Spawn("basic", &basic{})
+		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{})
+		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -399,11 +399,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told restart")
 	{
-		child1, err := system.Spawn("basic", &basic{})
+		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{})
+		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 

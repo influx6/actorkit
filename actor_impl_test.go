@@ -62,7 +62,7 @@ func TestActorChildMessaging(t *testing.T) {
 		Message: make(chan *actorkit.Envelope, 1),
 	}
 
-	addr, err := system.Spawn("basic", base)
+	addr, err := system.Spawn("basic", base, actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, addr)
 
@@ -119,12 +119,12 @@ func TestActorWithChildTreeStates(t *testing.T) {
 	assert.NoError(t, am.Start())
 	assert.True(t, am.Running())
 
-	childAddr, err := am.Spawn("child", &basic{})
+	childAddr, err := am.Spawn("child", &basic{}, actorkit.Prop{})
 	assert.NoError(t, err)
 
 	assert.Len(t, am.Children(), 1)
 
-	grandChild, err := childAddr.Spawn("grand-child", &basic{})
+	grandChild, err := childAddr.Spawn("grand-child", &basic{}, actorkit.Prop{})
 	assert.NoError(t, err)
 
 	assert.Len(t, childAddr.Children(), 1)
@@ -153,7 +153,7 @@ func TestActorWithChildStates(t *testing.T) {
 	assert.NoError(t, am.Start())
 	assert.True(t, am.Running())
 
-	childAddr, err := am.Spawn("child", &basic{})
+	childAddr, err := am.Spawn("child", &basic{}, actorkit.Prop{})
 	assert.NoError(t, err)
 
 	assert.NoError(t, am.Restart())

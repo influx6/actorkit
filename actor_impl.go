@@ -53,6 +53,10 @@ func (bh *behaviourFunctioner) Action(addr Addr, env Envelope) {
 // Actor Constructors
 //********************************************************
 
+// ActorSpawner defines a function interface which takes a giving set of
+// options returns a new instantiated Actor.
+type ActorSpawner func(...ActorOption) Actor
+
 // FromPartial returns a ActorSpawner which will be used for spawning new Actor using
 // provided options both from the call to FromPartial and those passed to the returned function.
 func FromPartial(ops ...ActorOption) ActorSpawner {
@@ -114,13 +118,24 @@ func Ancestor(protocol string, namespace string, ops ...ActorOption) (Addr, erro
 // ActorOptions
 //********************************************************
 
+// Prop defines underline actor operation which are used to
+// generate said handlers for an instantiated actor.
+type Prop struct {
+	Event            *es.EventStream
+	GlobalEvent      *es.EventStream
+	BusyDuration     time.Duration
+	DeadLockDuration time.Duration
+	Supervisor       Supervisor
+	StateInvoker     StateInvoker
+	MessageInvoker   MessageInvoker
+	Sentinel         Sentinel
+	Mailbox          Mailbox
+	MailInvoker      MailInvoker
+}
+
 // ActorOption defines a function type which is used to set giving
 // field values for a ActorImpl instance
 type ActorOption func(*ActorImpl)
-
-// ActorSpawner defines a function interface which takes a giving set of
-// options returns a new instantiated Actor.
-type ActorSpawner func(...ActorOption) Actor
 
 // UseMailbox sets the mailbox to be used by the actor.
 func UseMailbox(m Mailbox) ActorOption {
@@ -133,22 +148,6 @@ func UseMailbox(m Mailbox) ActorOption {
 func UseProtocol(proc string) ActorOption {
 	return func(impl *ActorImpl) {
 		impl.protocol = proc
-	}
-}
-
-// ForceXID forces giving id value for a actor.
-func ForceXID(id xid.ID) ActorOption {
-	return func(impl *ActorImpl) {
-		impl.id = id
-	}
-}
-
-// ForceID forces giving id value for a actor if the id is a valid xid (github.com/gokit/xid) id string.
-func ForceID(forceID string) ActorOption {
-	return func(impl *ActorImpl) {
-		if id, err := xid.FromString(forceID); err != nil {
-			impl.id = id
-		}
 	}
 }
 
@@ -181,7 +180,7 @@ func DeadLockTicker(dur time.Duration) ActorOption {
 // busy state operation.
 func WaitBusyDuration(dur time.Duration) ActorOption {
 	return func(ac *ActorImpl) {
-		ac.deadLockDur = dur
+		ac.busyDur = dur
 	}
 }
 
@@ -589,12 +588,54 @@ func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
 // created actor.
 //
 // The method will return an error if Actor is not already running.
-func (ati *ActorImpl) Spawn(service string, rec Behaviour, ops ...ActorOption) (Addr, error) {
+func (ati *ActorImpl) Spawn(service string, rec Behaviour, prop Prop) (Addr, error) {
 	if !ati.started.IsOn() && !ati.starting.IsOn() {
 		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
+	ops := make([]ActorOption, 0, 16)
 	ops = append(ops, UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
+
+	if prop.BusyDuration > 0 {
+		ops = append(ops, WaitBusyDuration(prop.BusyDuration))
+	}
+
+	if prop.DeadLockDuration > 0 {
+		ops = append(ops, DeadLockTicker(prop.DeadLockDuration))
+	}
+
+	if prop.StateInvoker != nil {
+		ops = append(ops, UseStateInvoker(prop.StateInvoker))
+	}
+
+	if prop.MessageInvoker != nil {
+		ops = append(ops, UseMessageInvoker(prop.MessageInvoker))
+	}
+
+	if prop.Supervisor != nil {
+		ops = append(ops, UseSupervisor(prop.Supervisor))
+	}
+
+	if prop.MailInvoker != nil {
+		ops = append(ops, UseMailInvoker(prop.MailInvoker))
+	}
+
+	if prop.Mailbox != nil {
+		ops = append(ops, UseMailbox(prop.Mailbox))
+	}
+
+	if prop.GlobalEvent != nil {
+		ops = append(ops, UseGlobalEventStream(prop.GlobalEvent))
+	}
+
+	if prop.Event != nil {
+		ops = append(ops, UseEventStream(prop.Event))
+	}
+
+	if prop.Sentinel != nil {
+		ops = append(ops, UseSentinel(prop.Sentinel))
+	}
+
 	am := NewActorImpl(ops...)
 	if err := ati.manageChild(am); err != nil {
 		return nil, err

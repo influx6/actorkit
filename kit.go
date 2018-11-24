@@ -359,7 +359,7 @@ type DeathWatch interface {
 // Spawner exposes a single method to spawn an underline actor returning
 // the address for spawned actor.
 type Spawner interface {
-	Spawn(service string, bh Behaviour, ops ...ActorOption) (Addr, error)
+	Spawn(service string, bh Behaviour, props Prop) (Addr, error)
 }
 
 //***********************************
