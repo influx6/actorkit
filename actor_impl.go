@@ -324,6 +324,11 @@ type actorSub struct {
 	Sub   Subscription
 }
 
+func isSystemMessages(ev interface{}) bool {
+	_, ok := ev.(SystemMessage)
+	return ok
+}
+
 // ActorImpl implements the Actor interface.
 type ActorImpl struct {
 	namespace   string
@@ -386,6 +391,7 @@ type ActorImpl struct {
 	preDestroy  PreDestroy
 	postDestroy PostDestroy
 
+	gsub         *es.Subscription
 	sentinelSubs map[Addr]Subscription
 	subs         map[Actor]Subscription
 	chl          sync.RWMutex
@@ -471,6 +477,11 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 	ac.subs = map[Actor]Subscription{}
 
 	ac.processable.On()
+
+	// if global gevent is provided, connect it to local events for system Messages.
+	if ac.gevents != nil {
+		ac.gsub = ac.events.Subscribe(ac.gevents.Publish).WithPredicate(isSystemMessages)
+	}
 
 	return ac
 }
@@ -934,6 +945,10 @@ func (ati *ActorImpl) preMidDestroySystem() {
 	// clean out all subscription first.
 	for _, sub := range ati.subs {
 		sub.Stop()
+	}
+
+	if ati.gsub != nil {
+		ati.gsub.Stop()
 	}
 
 	ati.subs = map[Actor]Subscription{}
