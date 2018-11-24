@@ -206,6 +206,15 @@ func UseEventStream(es *es.EventStream) ActorOption {
 	}
 }
 
+// UseGlobalEventStream provides giving actor with a global event stream
+// which will be used to connect to it's internal stream for all it's
+// system events to be wired into.
+func UseGlobalEventStream(es *es.EventStream) ActorOption {
+	return func(ac *ActorImpl) {
+		ac.gevents = es
+	}
+}
+
 // UseMailInvoker sets the mail invoker to be used by the actor.
 func UseMailInvoker(st MailInvoker) ActorOption {
 	return func(ac *ActorImpl) {
@@ -214,9 +223,31 @@ func UseMailInvoker(st MailInvoker) ActorOption {
 }
 
 // UseBehaviour sets the behaviour to be used by a given actor.
+//
+// Important:
+//
+// When using this function, it will set giving receiver of an
+// actor to provided Behaviour and will also reset the values
+// for the ff:
+//
+//  1. PreStart and PostStart
+//  2. PreStop and PostStop
+//  3. PreKill and PostKill
+//  4. PreDestroy and PostDestroy
+//  5. PreRestart and PostRestart
+//
+// It also will set the actor's sentinel provider to the behaviour if
+// it implements the sentinel interface, unless a sentinel was previously
+// provided.
+//
 func UseBehaviour(bh Behaviour) ActorOption {
 	return func(ac *ActorImpl) {
 		ac.receiver = bh
+
+		// if we implement Sentinel, then use if no sentinel was set.
+		if tm, ok := bh.(Sentinel); ok && ac.sentinel == nil {
+			ac.sentinel = tm
+		}
 
 		if tm, ok := bh.(PreStart); ok {
 			ac.preStart = tm
@@ -305,6 +336,7 @@ type ActorImpl struct {
 	deadLockDur time.Duration
 	busyDur     time.Duration
 	events      *es.EventStream
+	gevents     *es.EventStream
 
 	sentinel       Sentinel
 	stateInvoker   StateInvoker
@@ -405,7 +437,7 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 			Invoker: &EventSupervisingInvoker{
 				Event: ac.events,
 			},
-			Direction: func(tm interface{}) Directive {
+			Decider: func(tm interface{}) Directive {
 				switch tm.(type) {
 				case ActorPanic, ActorRoutinePanic:
 					return PanicDirective
@@ -473,13 +505,13 @@ func (ati *ActorImpl) Watch(fn func(interface{})) Subscription {
 	return ati.events.Subscribe(fn)
 }
 
-// WatchOther asks this actor sentinel to advice on behaviour or operation to
+// DeathWatch asks this actor sentinel to advice on behaviour or operation to
 // be performed for the provided actor's states (i.e Stopped, Restarted, Killed, Destroyed).
 // being watched for.
 //
 // If actor has no Sentinel then an error is returned.
 // Sentinels are required to advice on action for watched actors by watching actor.
-func (ati *ActorImpl) WatchOther(addr Addr) error {
+func (ati *ActorImpl) DeathWatch(addr Addr) error {
 	if ati.sentinel == nil {
 		return errors.New("Actor does not have a sentinel")
 	}
@@ -546,12 +578,13 @@ func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
 // created actor.
 //
 // The method will return an error if Actor is not already running.
-func (ati *ActorImpl) Spawn(service string, rec Behaviour) (Addr, error) {
+func (ati *ActorImpl) Spawn(service string, rec Behaviour, ops ...ActorOption) (Addr, error) {
 	if !ati.started.IsOn() && !ati.starting.IsOn() {
 		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
-	am := NewActorImpl(UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
+	ops = append(ops, UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
+	am := NewActorImpl(ops...)
 	if err := ati.manageChild(am); err != nil {
 		return nil, err
 	}

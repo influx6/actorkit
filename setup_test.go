@@ -13,6 +13,10 @@ import (
 
 type AddrImpl struct{}
 
+func (am *AddrImpl) DeathWatch(addr actorkit.Addr) error {
+	return errors.New("not supported")
+}
+
 func (am *AddrImpl) Namespace() string {
 	return ""
 }
@@ -53,7 +57,7 @@ func (*AddrImpl) Service() string {
 	return "addr"
 }
 
-func (*AddrImpl) Spawn(service string, bh actorkit.Behaviour) (actorkit.Addr, error) {
+func (*AddrImpl) Spawn(service string, bh actorkit.Behaviour, ops ...actorkit.ActorOption) (actorkit.Addr, error) {
 	return &AddrImpl{}, nil
 }
 

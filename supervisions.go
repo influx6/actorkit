@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+// Decider defines a function which giving a value will return a directive.
+type Decider func(interface{}) Directive
+
+// DelayProvider defines a function which giving a int value representing
+// increasing attempts, will return an appropriate duration.
+type DelayProvider func(int) time.Duration
+
 //*****************************************************************
 // AllForOneSupervisor
 //*****************************************************************
@@ -18,8 +25,9 @@ type PanicAction func(interface{}, Addr, Actor)
 // AllForOneSupervisor implements a one-to-one supervising strategy for giving actors.
 type AllForOneSupervisor struct {
 	Max         int
-	Direction   Direction
+	Decider     Decider
 	PanicAction PanicAction
+	Delay       DelayProvider
 	Invoker     SupervisionInvoker
 
 	failedRestarts int64
@@ -33,7 +41,7 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 	on.work.Lock()
 	defer on.work.Unlock()
 
-	switch on.Direction(err) {
+	switch on.Decider(err) {
 	case PanicDirective:
 		linearDoUntil(parent.KillChildren, 100, time.Second)
 
@@ -78,7 +86,14 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 		}
 
 		if restartErr != nil {
-			atomic.AddInt64(&on.failedRestarts, 1)
+			newFailed := atomic.AddInt64(&on.failedRestarts, 1)
+
+			if on.Delay != nil {
+				time.AfterFunc(on.Delay(int(newFailed)), func() {
+					on.Handle(err, targetAddr, target, parent)
+				})
+				return
+			}
 			on.Handle(err, targetAddr, target, parent)
 			return
 		}
@@ -101,13 +116,11 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 // OneForOneSupervisor
 //*****************************************************************
 
-// Direction defines a function which giving a value will return a directive.
-type Direction func(interface{}) Directive
-
 // OneForOneSupervisor implements a one-to-one supervising strategy for giving actors.
 type OneForOneSupervisor struct {
 	Max         int
-	Direction   Direction
+	Delay       DelayProvider
+	Decider     Decider
 	PanicAction PanicAction
 	Invoker     SupervisionInvoker
 
@@ -122,7 +135,7 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 	on.work.Lock()
 	defer on.work.Unlock()
 
-	switch on.Direction(err) {
+	switch on.Decider(err) {
 	case PanicDirective:
 		linearDoUntil(target.Kill, 100, time.Second)
 
@@ -167,8 +180,15 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 		}
 
 		if restartErr != nil {
-			on.failedRestarts++
-			atomic.AddInt64(&on.failedRestarts, 1)
+			newFailed := atomic.AddInt64(&on.failedRestarts, 1)
+
+			if on.Delay != nil {
+				time.AfterFunc(on.Delay(int(newFailed)), func() {
+					on.Handle(err, targetAddr, target, parent)
+				})
+				return
+			}
+
 			on.Handle(err, targetAddr, target, parent)
 			return
 		}
@@ -193,8 +213,10 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 
 // RestartingSupervisor implements a one-to-one supervising strategy for giving actors.
 type RestartingSupervisor struct {
-	Invoker SupervisionInvoker
-	work    sync.Mutex
+	Delay    DelayProvider
+	Invoker  SupervisionInvoker
+	work     sync.Mutex
+	attempts int
 }
 
 // Handle implements a restarting supervision strategy where any escalated error will lead to
@@ -209,9 +231,17 @@ func (sp *RestartingSupervisor) Handle(err interface{}, targetAddr Addr, target 
 	}
 
 	if restartErr == nil {
+		sp.attempts = 0
 		return
 	}
 
+	sp.attempts++
+	if sp.Delay != nil {
+		time.AfterFunc(sp.Delay(sp.attempts), func() {
+			sp.Handle(err, targetAddr, target, parent)
+		})
+		return
+	}
 	sp.Handle(err, targetAddr, target, parent)
 }
 

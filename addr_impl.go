@@ -444,12 +444,12 @@ func (a *AddrImpl) Children() []Addr {
 
 // Spawn creates a new actor based on giving service name by requesting all
 // discovery services registered to giving underline address actor.
-func (a *AddrImpl) Spawn(service string, rec Behaviour) (Addr, error) {
+func (a *AddrImpl) Spawn(service string, rec Behaviour, ops ...ActorOption) (Addr, error) {
 	if a.deadletter {
 		return nil, errors.New("not possible from a deadletter address")
 	}
 
-	return a.actor.Spawn(service, rec)
+	return a.actor.Spawn(service, rec, ops...)
 }
 
 // AddDiscovery adds discovery service to giving underline actor if possible.
@@ -554,6 +554,14 @@ func (a *AddrImpl) Escalate(v interface{}) {
 		return
 	}
 	a.actor.Escalate(v, a)
+}
+
+// DeathWatch implements the DeathWatch interface.
+func (a *AddrImpl) DeathWatch(addr Addr) error {
+	if a.deadletter {
+		return errors.WrapOnly(ErrHasNoActor)
+	}
+	return a.actor.DeathWatch(addr)
 }
 
 // Watch adds  a giving function into the subscription

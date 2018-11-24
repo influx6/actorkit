@@ -122,7 +122,7 @@ func (f *FutureImpl) AddressOf(service string, ancestry bool) (Addr, error) {
 }
 
 // Spawn requests giving service and Receiver from future's parent Spawn method.
-func (f *FutureImpl) Spawn(service string, rr Behaviour) (Addr, error) {
+func (f *FutureImpl) Spawn(service string, rr Behaviour, ops ...ActorOption) (Addr, error) {
 	return nil, errors.New("not possible")
 }
 
@@ -145,6 +145,11 @@ func (f *FutureImpl) TimedFuture(d time.Duration) Future {
 // Watch adds giving function into event system for future.
 func (f *FutureImpl) Watch(fn func(interface{})) Subscription {
 	return f.events.Subscribe(fn)
+}
+
+// DeathWatch implements DeathWatch interface.
+func (f *FutureImpl) DeathWatch(addr Addr) error {
+	return errors.WrapOnly(ErrHasNoActor)
 }
 
 // Parent returns the address of the parent of giving Future.

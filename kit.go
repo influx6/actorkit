@@ -142,6 +142,7 @@ type Actor interface {
 
 	Waiter
 	Watchable
+	DeathWatch
 	Stats
 
 	MailboxOwner
@@ -172,6 +173,7 @@ type Addr interface {
 	Identity
 	Futures
 	Watchable
+	DeathWatch
 	Descendants
 	Addressable
 	ProtocolAddr
@@ -344,6 +346,12 @@ type Watchable interface {
 	Watch(func(interface{})) Subscription
 }
 
+// DeadWatch exposes a method to watch the state transition of
+// a giving Addr if possible.
+type DeathWatch interface {
+	DeathWatch(addr Addr) error
+}
+
 //***********************************
 // Spawner
 //***********************************
@@ -351,7 +359,7 @@ type Watchable interface {
 // Spawner exposes a single method to spawn an underline actor returning
 // the address for spawned actor.
 type Spawner interface {
-	Spawn(service string, bh Behaviour) (Addr, error)
+	Spawn(service string, bh Behaviour, ops ...ActorOption) (Addr, error)
 }
 
 //***********************************

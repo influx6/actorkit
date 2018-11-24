@@ -99,7 +99,7 @@ func TestOneForOneSupervisor(t *testing.T) {
 			assert.NotNil(t, i)
 			assert.IsType(t, actorkit.ActorRoutinePanic{}, i)
 		},
-		Direction: func(tm interface{}) actorkit.Directive {
+		Decider: func(tm interface{}) actorkit.Directive {
 			return supervisingAction(tm)
 		},
 	}
@@ -273,7 +273,7 @@ func TestAllForOneSupervisor(t *testing.T) {
 			assert.NotNil(t, i)
 			assert.IsType(t, actorkit.ActorRoutinePanic{}, i)
 		},
-		Direction: func(tm interface{}) actorkit.Directive {
+		Decider: func(tm interface{}) actorkit.Directive {
 			return supervisingAction(tm)
 		},
 	}
