@@ -783,6 +783,10 @@ type Future interface {
 	// of giving future result or error.
 	Pipe(...Addr)
 
+	// PipeAction adds giving function as receiver of result
+	// of giving future result or error.
+	PipeAction(...func(Envelope))
+
 	// Err returns an error if processing failed or if the timeout elapsed
 	// or if the future was stopped.
 	Err() error

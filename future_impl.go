@@ -25,7 +25,7 @@ type FutureImpl struct {
 	events *es.EventStream
 
 	ac    sync.Mutex
-	pipes []Addr
+	pipes []func(Envelope)
 
 	w      sync.WaitGroup
 	cw     sync.Mutex
@@ -204,6 +204,21 @@ func (f *FutureImpl) Wait() error {
 	return f.Err()
 }
 
+// PipeAction allows the addition of functions to be called with result of
+// future.
+func (f *FutureImpl) PipeAction(actions ...func(envelope Envelope)) {
+	if f.resolved() {
+		for _, action := range actions {
+			action(*f.result)
+		}
+		return
+	}
+
+	f.ac.Lock()
+	f.pipes = append(f.pipes, actions...)
+	f.ac.Unlock()
+}
+
 // Pipe adds giving set of address into giving Future.
 func (f *FutureImpl) Pipe(addrs ...Addr) {
 	if f.resolved() {
@@ -213,9 +228,13 @@ func (f *FutureImpl) Pipe(addrs ...Addr) {
 		return
 	}
 
-	f.ac.Lock()
-	f.pipes = append(f.pipes, addrs...)
-	f.ac.Unlock()
+	for _, addr := range addrs {
+		func(a Addr) {
+			f.PipeAction(func(msg Envelope) {
+				a.Forward(msg)
+			})
+		}(addr)
+	}
 }
 
 // Err returns the error for the failure of
@@ -275,9 +294,10 @@ func (f *FutureImpl) broadcast() {
 	res = f.result
 	f.ac.Unlock()
 
-	for _, addr := range f.pipes {
-		addr.Forward(*res)
+	for _, action := range f.pipes {
+		action(*res)
 	}
+
 	f.pipes = nil
 }
 
