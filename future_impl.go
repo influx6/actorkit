@@ -17,6 +17,10 @@ var (
 	ErrFutureEscalatedFailure = errors.New("Future failed due to escalated error")
 )
 
+var (
+	_ Future = &FutureImpl{}
+)
+
 // FutureImpl defines an implementation for the Future actor type.
 type FutureImpl struct {
 	id     xid.ID
