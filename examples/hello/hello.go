@@ -27,7 +27,7 @@ func main() {
 		panic(err)
 	}
 
-	hello, err := addr.Spawn("hello", &HelloOp{})
+	hello, err := addr.Spawn("hello", &HelloOp{}, actorkit.Prop{})
 	if err != nil {
 		panic(err)
 	}
