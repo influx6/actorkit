@@ -346,7 +346,7 @@ type Watchable interface {
 	Watch(func(interface{})) Subscription
 }
 
-// DeadWatch exposes a method to watch the state transition of
+// DeathWatch exposes a method to watch the state transition of
 // a giving Addr if possible.
 type DeathWatch interface {
 	DeathWatch(addr Addr) error
