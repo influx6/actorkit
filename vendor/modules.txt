@@ -1,0 +1,16 @@
+# github.com/davecgh/go-spew v1.1.1
+github.com/davecgh/go-spew/spew
+# github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe
+github.com/gokit/errors
+# github.com/gokit/es v0.0.0-20181119091109-8d78b96ec2c1
+github.com/gokit/es
+# github.com/gokit/xid v1.2.2
+github.com/gokit/xid
+# github.com/gopherjs/gopherjs v0.0.0-20181017120253-0766667cb4d1
+github.com/gopherjs/gopherjs/js
+# github.com/pmezard/go-difflib v1.0.0
+github.com/pmezard/go-difflib/difflib
+# github.com/serialx/hashring v0.0.0-20180504054112-49a4782e9908
+github.com/serialx/hashring
+# github.com/stretchr/testify v1.2.2
+github.com/stretchr/testify/assert
