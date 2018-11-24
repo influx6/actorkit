@@ -61,18 +61,15 @@ func (f *FutureImpl) Forward(reply Envelope) error {
 		return errors.Wrap(ErrFutureResolved, "Future %q already resolved", f.Addr())
 	}
 
-	if fm, ok := reply.Data.(FutureRejected); ok {
-		f.Reject(fm)
-		f.broadcastError()
-		return nil
-	}
-
 	f.Resolve(reply)
 	f.broadcast()
 	return nil
 }
 
 // Send delivers giving data to resolve the future.
+//
+// If data is a type of error then the giving future is
+// rejected.
 func (f *FutureImpl) Send(data interface{}, addr Addr) error {
 	if f.resolved() {
 		return errors.Wrap(ErrFutureResolved, "Future %q already resolved", f.Addr())
@@ -86,6 +83,9 @@ func (f *FutureImpl) Send(data interface{}, addr Addr) error {
 // SendWithHeader delivers giving data to Future as the resolution of
 // said Future. The data provided will be used as the resolved
 // value of giving future, if it's not already resolved.
+//
+// If data is a type of error then the giving future is
+// rejected.
 func (f *FutureImpl) SendWithHeader(data interface{}, h Header, addr Addr) error {
 	if f.resolved() {
 		return errors.Wrap(ErrFutureResolved, "Future %q already resolved", f.Addr())
@@ -99,13 +99,16 @@ func (f *FutureImpl) SendWithHeader(data interface{}, h Header, addr Addr) error
 // Escalate escalates giving value into the parent of giving future, which also fails future
 // and resolves it as a failure.
 func (f *FutureImpl) Escalate(m interface{}) {
+	var data EscalatedError
+	data.Err = ErrFutureEscalatedFailure
+	data.Value = m
+
 	if merr, ok := m.(error); ok {
-		f.Reject(merr)
-	} else {
-		f.Reject(ErrFutureEscalatedFailure)
+		data.Err = merr
 	}
 
-	f.broadcastError()
+	f.Resolve(CreateEnvelope(DeadLetters(), Header{}, data))
+	f.broadcast()
 }
 
 // AddDiscovery attempts to add giving discovery service to underline future.
@@ -192,17 +195,8 @@ func (f *FutureImpl) Namespace() string {
 // Wait blocks till the giving future is resolved and returns error if
 // occurred.
 func (f *FutureImpl) Wait() error {
-	var err error
 	f.w.Wait()
-	f.cw.Lock()
-	err = f.err
-	f.cw.Unlock()
-
-	if fm, ok := err.(FutureRejected); ok {
-		return fm.Unwrap()
-	}
-
-	return err
+	return f.Err()
 }
 
 // Pipe adds giving set of address into giving Future.
@@ -226,11 +220,6 @@ func (f *FutureImpl) Err() error {
 	f.cw.Lock()
 	merr = f.err
 	f.cw.Unlock()
-
-	if fm, ok := merr.(FutureRejected); ok {
-		return fm.Unwrap()
-	}
-
 	return merr
 }
 
@@ -247,61 +236,31 @@ func (f *FutureImpl) Resolve(env Envelope) {
 		return
 	}
 
+	var ok bool
+	var err error
+	var rejected bool
+
 	f.cw.Lock()
+	if err, ok = env.Data.(error); ok {
+		rejected = true
+		f.err = err
+	}
+
 	f.result = &env
 	f.cw.Unlock()
 	f.w.Done()
 
-	f.events.Publish(FutureResolved{Data: env, ID: f.id.String()})
-}
-
-// Reject rejects giving future with error.
-func (f *FutureImpl) Reject(err error) {
-	if f.resolved() {
+	if rejected {
+		f.events.Publish(FutureRejected{Err: err, ID: f.id.String()})
 		return
 	}
-
-	f.cw.Lock()
-	f.err = err
-	f.cw.Unlock()
-	f.w.Done()
-
-	if fm, ok := err.(FutureRejected); ok {
-		f.events.Publish(FutureRejected{Err: fm.Unwrap(), ID: f.id.String()})
-	} else {
-		f.events.Publish(FutureRejected{Err: err, ID: f.id.String()})
-	}
+	f.events.Publish(FutureResolved{Data: env, ID: f.id.String()})
 }
 
 func (f *FutureImpl) resolved() bool {
 	f.cw.Lock()
 	defer f.cw.Unlock()
 	return f.result != nil || f.err != nil
-}
-
-func (f *FutureImpl) broadcastError() {
-	var res error
-
-	f.ac.Lock()
-	res = f.err
-	f.ac.Unlock()
-
-	var msg Envelope
-
-	if ferr, ok := res.(FutureRejected); ok {
-		msg = CreateEnvelope(f, Header{}, ferr)
-	} else {
-		msg = CreateEnvelope(f, Header{}, FutureRejected{
-			Err: res,
-			ID:  f.ID(),
-		})
-	}
-
-	for _, addr := range f.pipes {
-		addr.Forward(msg)
-	}
-
-	f.pipes = nil
 }
 
 func (f *FutureImpl) broadcast() {
@@ -322,5 +281,5 @@ func (f *FutureImpl) timedResolved() {
 	if f.resolved() {
 		return
 	}
-	f.Reject(ErrFutureTimeout)
+	f.Escalate(ErrFutureTimeout)
 }

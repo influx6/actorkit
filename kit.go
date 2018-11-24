@@ -287,6 +287,13 @@ type Behaviour interface {
 	Action(Addr, Envelope)
 }
 
+// ErrorBehaviour defines an interface that exposes the
+// a method which returns an error if one occurred for
+// it's operation on a received Envelope.
+type ErrorBehaviour interface {
+	Action(Addr, Envelope) error
+}
+
 //***********************************
 //  Receiver
 //***********************************
@@ -557,6 +564,17 @@ type PostRestart interface {
 }
 
 //***********************************
+//  Sentinel
+//***********************************
+
+// Sentinel exposes a method which handles necessarily logic
+// for a giving watched actor. It allows notifications about
+// said actor be handled and responded to.
+type Sentinel interface {
+	Advice(Addr, SystemMessage)
+}
+
+//***********************************
 //  AddressActor
 //***********************************
 
@@ -688,13 +706,12 @@ type Sender interface {
 }
 
 //***********************************
-//  Resolvables
+//  Resolvable
 //***********************************
 
-// Resolvables defines an interface which exposes methods for
-// resolving an implementation
-type Resolvables interface {
-	Reject(error)
+// Resolvable defines an interface which exposes a method for
+// resolving the implementer.
+type Resolvable interface {
 	Resolve(Envelope)
 }
 
@@ -770,6 +787,25 @@ type Future interface {
 //  Actor System Message
 //***********************************
 
+// EscalatedError defines a type which represents a
+// escalated error and value.
+//
+// It implements the error interface.
+type EscalatedError struct {
+	Err   error
+	Value interface{}
+}
+
+// Unwrap returns the internal error.
+func (e EscalatedError) Unwrap() error {
+	return e.Err
+}
+
+// Error returns the value of the internal error.
+func (e EscalatedError) Error() string {
+	return e.Err.Error()
+}
+
 // SystemMessage defines a type to identify giving message
 // data as a system message.
 type SystemMessage interface {
@@ -822,7 +858,7 @@ func (FutureRejected) SystemMessage() {}
 // starting request by an actor.
 type ActorStartRequested struct {
 	ID   string
-	Addr string
+	Addr Addr
 	Data interface{}
 }
 
@@ -833,7 +869,7 @@ func (ActorStartRequested) SystemMessage() {}
 // initiate stopping.
 type ActorRestartRequested struct {
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -843,7 +879,7 @@ func (ActorRestartRequested) SystemMessage() {}
 // initiate stopping.
 type ActorKillRequested struct {
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -853,7 +889,7 @@ func (ActorKillRequested) SystemMessage() {}
 // initiate destruction.
 type ActorDestroyRequested struct {
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -863,7 +899,7 @@ func (ActorDestroyRequested) SystemMessage() {}
 // initiate stopping.
 type ActorStopRequested struct {
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -873,7 +909,7 @@ func (ActorStopRequested) SystemMessage() {}
 // completely started.
 type ActorStarted struct {
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -883,7 +919,7 @@ func (ActorStarted) SystemMessage() {}
 // restart.
 type ActorRestarted struct {
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -893,7 +929,7 @@ func (ActorRestarted) SystemMessage() {}
 // has completely shutdown.
 type ActorStopped struct {
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -903,7 +939,7 @@ func (ActorStopped) SystemMessage() {}
 // initiate stopping.
 type ActorKilled struct {
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -914,7 +950,7 @@ func (ActorKilled) SystemMessage() {}
 // as become un-existent.
 type ActorDestroyed struct {
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -923,7 +959,7 @@ func (ActorDestroyed) SystemMessage() {}
 // ActorPanic is sent when an actor panics internally.
 type ActorPanic struct {
 	ID            string
-	Addr          string
+	Addr          Addr
 	CausedAddr    Addr
 	CausedMessage Envelope
 	Panic         interface{}
@@ -951,7 +987,7 @@ func (ActorPanic) SystemMessage() {}
 type ActorFailedStart struct {
 	Err  error
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -962,7 +998,7 @@ func (ActorFailedStart) SystemMessage() {}
 type ActorFailedRestart struct {
 	Err  error
 	ID   string
-	Addr string
+	Addr Addr
 }
 
 // SystemMessage identifies giving type as a system message.
@@ -972,7 +1008,7 @@ func (ActorFailedRestart) SystemMessage() {}
 // either during stop, kill, destruction commands.
 type ActorRoutineError struct {
 	ID   string
-	Addr string
+	Addr Addr
 	Err  error
 }
 
@@ -991,7 +1027,7 @@ func (a *ActorRoutineError) Error() string {
 // ActorRoutinePanic is sent when a actor internal routine panics.
 type ActorRoutinePanic struct {
 	ID    string
-	Addr  string
+	Addr  Addr
 	Panic interface{}
 	Stack []byte
 }

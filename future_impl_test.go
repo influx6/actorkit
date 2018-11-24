@@ -29,26 +29,26 @@ func TestFuturePipe(t *testing.T) {
 	failure := errors.New("bad error")
 	newFuture.Escalate(failure)
 
-	assert.Equal(t, failure, newFuture.Wait())
-	assert.Equal(t, failure, newFuture2.Wait())
-	assert.Equal(t, failure, newFuture3.Wait())
+	assert.Equal(t, failure.Error(), newFuture.Wait().Error())
+	assert.Equal(t, failure.Error(), newFuture2.Wait().Error())
+	assert.Equal(t, failure.Error(), newFuture3.Wait().Error())
 
-	assert.Equal(t, failure, newFuture.Err())
-	assert.Equal(t, failure, newFuture2.Err())
-	assert.Equal(t, failure, newFuture3.Err())
+	assert.Equal(t, failure.Error(), newFuture.Err().Error())
+	assert.Equal(t, failure.Error(), newFuture2.Err().Error())
+	assert.Equal(t, failure.Error(), newFuture3.Err().Error())
 }
 
 func TestFutureEscalate(t *testing.T) {
 	addr := new(AddrImpl)
 	newFuture := actorkit.NewFuture(addr)
 	newFuture.Escalate("wake")
-	assert.Equal(t, newFuture.Err(), actorkit.ErrFutureEscalatedFailure)
+	assert.Equal(t, newFuture.Err().Error(), actorkit.ErrFutureEscalatedFailure.Error())
 }
 
 func TestFutureTimeout(t *testing.T) {
 	addr := new(AddrImpl)
 	newFuture := actorkit.TimedFuture(addr, 1*time.Second)
 	<-time.After(2 * time.Second)
-	assert.Equal(t, newFuture.Err(), actorkit.ErrFutureTimeout)
+	assert.Equal(t, newFuture.Err().Error(), actorkit.ErrFutureTimeout.Error())
 	assert.Error(t, newFuture.Send("ready", eb))
 }

@@ -152,6 +152,13 @@ func ForceID(forceID string) ActorOption {
 	}
 }
 
+// UseSentinel sets giving Sentinel provider for a actor.
+func UseSentinel(sn Sentinel) ActorOption {
+	return func(impl *ActorImpl) {
+		impl.sentinel = sn
+	}
+}
+
 // UseNamespace sets giving namespace value for a actor.
 func UseNamespace(ns string) ActorOption {
 	return func(impl *ActorImpl) {
@@ -299,6 +306,7 @@ type ActorImpl struct {
 	busyDur     time.Duration
 	events      *es.EventStream
 
+	sentinel       Sentinel
 	stateInvoker   StateInvoker
 	mailInvoker    MailInvoker
 	messageInvoker MessageInvoker
@@ -316,6 +324,7 @@ type ActorImpl struct {
 	addActor            chan Actor
 	rmActor             chan Actor
 	signal              chan struct{}
+	sentinelChan        chan Addr
 	killChan            chan chan error
 	stopChan            chan chan error
 	destroyChan         chan chan error
@@ -345,9 +354,10 @@ type ActorImpl struct {
 	preDestroy  PreDestroy
 	postDestroy PostDestroy
 
-	subs  map[Actor]Subscription
-	chl   sync.RWMutex
-	chain []DiscoveryService
+	sentinelSubs map[Addr]Subscription
+	subs         map[Actor]Subscription
+	chl          sync.RWMutex
+	chain        []DiscoveryService
 }
 
 // NewActorImpl returns a new instance of an ActorImpl assigned giving protocol and service name.
@@ -410,6 +420,7 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 	ac.addActor = make(chan Actor, 0)
 
 	ac.signal = make(chan struct{}, 1)
+	ac.sentinelChan = make(chan Addr, 1)
 	ac.stopChan = make(chan chan error, 1)
 	ac.killChan = make(chan chan error, 1)
 	ac.destroyChan = make(chan chan error, 1)
@@ -460,6 +471,25 @@ func (ati *ActorImpl) AddDiscovery(b DiscoveryService) error {
 // can be used to end giving subscription.
 func (ati *ActorImpl) Watch(fn func(interface{})) Subscription {
 	return ati.events.Subscribe(fn)
+}
+
+// WatchOther asks this actor sentinel to advice on behaviour or operation to
+// be performed for the provided actor's states (i.e Stopped, Restarted, Killed, Destroyed).
+// being watched for.
+//
+// If actor has no Sentinel then an error is returned.
+// Sentinels are required to advice on action for watched actors by watching actor.
+func (ati *ActorImpl) WatchOther(addr Addr) error {
+	if ati.sentinel == nil {
+		return errors.New("Actor does not have a sentinel")
+	}
+
+	select {
+	case ati.sentinelChan <- addr:
+		return nil
+	case <-time.After(ati.busyDur):
+		return errors.WrapOnly(ErrActorBusyState)
+	}
 }
 
 // Publish publishes an event into the actor event notification system.
@@ -788,7 +818,7 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 
 		ati.events.Publish(ActorRestartRequested{
 			ID:   ati.id.String(),
-			Addr: ati.Addr(),
+			Addr: ati.accessAddr,
 		})
 
 		if ati.preRestart != nil {
@@ -800,7 +830,7 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 	} else {
 		ati.events.Publish(ActorStartRequested{
 			ID:   ati.id.String(),
-			Addr: ati.Addr(),
+			Addr: ati.accessAddr,
 		})
 
 		if ati.preStart != nil {
@@ -819,7 +849,7 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 		}
 
 		ati.events.Publish(ActorRestarted{
-			Addr: ati.Addr(),
+			Addr: ati.accessAddr,
 			ID:   ati.id.String(),
 		})
 	} else {
@@ -832,7 +862,7 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 
 		ati.events.Publish(ActorStarted{
 			ID:   ati.id.String(),
-			Addr: ati.Addr(),
+			Addr: ati.accessAddr,
 		})
 	}
 
@@ -858,7 +888,7 @@ func (ati *ActorImpl) exhaustMessages() {
 func (ati *ActorImpl) preDestroySystem() {
 	ati.destruction.On()
 	ati.events.Publish(ActorDestroyRequested{
-		Addr: ati.Addr(),
+		Addr: ati.accessAddr,
 		ID:   ati.id.String(),
 	})
 
@@ -882,7 +912,7 @@ func (ati *ActorImpl) postDestroySystem() {
 	}
 
 	ati.events.Publish(ActorDestroyed{
-		Addr: ati.Addr(),
+		Addr: ati.accessAddr,
 		ID:   ati.id.String(),
 	})
 	ati.destruction.Off()
@@ -891,21 +921,21 @@ func (ati *ActorImpl) postDestroySystem() {
 func (ati *ActorImpl) preKillSystem() {
 	ati.events.Publish(ActorKillRequested{
 		ID:   ati.id.String(),
-		Addr: ati.Addr(),
+		Addr: ati.accessAddr,
 	})
 }
 
 func (ati *ActorImpl) postKillSystem() {
 	ati.events.Publish(ActorKilled{
 		ID:   ati.id.String(),
-		Addr: ati.Addr(),
+		Addr: ati.accessAddr,
 	})
 }
 
 func (ati *ActorImpl) preStopSystem() {
 	ati.events.Publish(ActorStopRequested{
 		ID:   ati.id.String(),
-		Addr: ati.Addr(),
+		Addr: ati.accessAddr,
 	})
 
 	if ati.preStop != nil {
@@ -920,10 +950,35 @@ func (ati *ActorImpl) postStopSystem() {
 
 	ati.events.Publish(ActorStopped{
 		ID:   ati.id.String(),
-		Addr: ati.Addr(),
+		Addr: ati.accessAddr,
 	})
 
 	ati.started.Off()
+}
+
+func (ati *ActorImpl) addSentinelWatch(addr Addr) {
+	sub := addr.Watch(func(ev interface{}) {
+		switch tm := ev.(type) {
+		case ActorDestroyed:
+			ati.sentinel.Advice(addr, tm)
+		case ActorRestarted:
+			ati.sentinel.Advice(addr, tm)
+		case ActorStopped:
+			ati.sentinel.Advice(addr, tm)
+		case ActorKilled:
+			ati.sentinel.Advice(addr, tm)
+		default:
+			return
+		}
+	})
+
+	ati.sentinelSubs[addr] = sub
+}
+
+func (ati *ActorImpl) stopSentinelSubscriptions() {
+	for _, sub := range ati.sentinelSubs {
+		sub.Stop()
+	}
 }
 
 func (ati *ActorImpl) awaitMessageExhaustion() {
@@ -991,10 +1046,18 @@ func (ati *ActorImpl) destroyChildrenSystems() {
 func (ati *ActorImpl) exhaustSignals() {
 	ati.exhaustSignalChan(ati.stopChan)
 	ati.exhaustSignalChan(ati.killChan)
+	ati.exhaustSentinel(ati.sentinelChan)
 	ati.exhaustSignalChan(ati.destroyChan)
 	ati.exhaustSignalChan(ati.stopChildrenChan)
 	ati.exhaustSignalChan(ati.killChildrenChan)
 	ati.exhaustSignalChan(ati.destroyChildrenChan)
+}
+
+func (ati *ActorImpl) exhaustSentinel(signal chan Addr) {
+	if len(signal) == 0 {
+		return
+	}
+	<-signal
 }
 
 func (ati *ActorImpl) exhaustSignalChan(signal chan chan error) {
@@ -1058,6 +1121,8 @@ func (ati *ActorImpl) manageLifeCycle() {
 		case <-deadlockTicker.C:
 			// do nothing but also allow us avoid
 			// possible all goroutine sleep bug.
+		case addr := <-ati.sentinelChan:
+			ati.addSentinelWatch(addr)
 		case actor := <-ati.addActor:
 			ati.registerChild(actor)
 		case actor := <-ati.rmActor:
@@ -1078,6 +1143,7 @@ func (ati *ActorImpl) manageLifeCycle() {
 			atomic.AddInt64(&ati.killedCount, 1)
 			ati.preKillSystem()
 			ati.preStopSystem()
+			ati.stopSentinelSubscriptions()
 			ati.stopMessageReception()
 			ati.exhaustMessages()
 			ati.killChildrenSystems()
@@ -1092,6 +1158,7 @@ func (ati *ActorImpl) manageLifeCycle() {
 			ati.death = time.Now()
 			ati.preDestroySystem()
 			ati.preMidDestroySystem()
+			ati.stopSentinelSubscriptions()
 			ati.preStopSystem()
 			ati.stopMessageReception()
 			ati.exhaustMessages()
@@ -1123,7 +1190,7 @@ func (ati *ActorImpl) readMessages() {
 			event := ActorRoutinePanic{
 				Stack: trace,
 				Panic: err,
-				Addr:  ati.Addr(),
+				Addr:  ati.accessAddr,
 				ID:    ati.id.String(),
 			}
 
@@ -1181,17 +1248,19 @@ func (ati *ActorImpl) process(a Addr, x Envelope) {
 //
 // ActorTree is safe for concurrent access.
 type ActorTree struct {
-	ml       sync.RWMutex
-	children []Actor
-	registry map[string]int
+	ml        sync.RWMutex
+	children  []Actor
+	registry  map[string]int
+	addresses map[string]int
 }
 
 // NewActorTree returns a new instance of an actor tree using the initial length
 // as capacity to the underline slice for storing actors.
 func NewActorTree(initialLength int) *ActorTree {
 	return &ActorTree{
-		registry: map[string]int{},
-		children: make([]Actor, 0, initialLength),
+		registry:  map[string]int{},
+		addresses: map[string]int{},
+		children:  make([]Actor, 0, initialLength),
 	}
 }
 
@@ -1200,6 +1269,7 @@ func (at *ActorTree) Reset() {
 	at.ml.Lock()
 	at.children = nil
 	at.registry = map[string]int{}
+	at.addresses = map[string]int{}
 	at.ml.Unlock()
 }
 
@@ -1239,6 +1309,18 @@ func (at *ActorTree) HasActor(id string) bool {
 	return false
 }
 
+// GetActorByAddr returns giving actor from tree using requested id.
+func (at *ActorTree) GetActorByAddr(addr string) (Actor, error) {
+	at.ml.RLock()
+	defer at.ml.RUnlock()
+
+	if index, ok := at.addresses[addr]; ok {
+		return at.children[index], nil
+	}
+
+	return nil, errors.New("Actor %q not found", addr)
+}
+
 // GetActor returns giving actor from tree using requested id.
 func (at *ActorTree) GetActor(id string) (Actor, error) {
 	at.ml.RLock()
@@ -1248,7 +1330,7 @@ func (at *ActorTree) GetActor(id string) (Actor, error) {
 		return at.children[index], nil
 	}
 
-	return nil, errors.New("AActor %q not found", id)
+	return nil, errors.New("Actor %q not found", id)
 }
 
 // RemoveActor removes attached actor from tree if found.
@@ -1267,8 +1349,10 @@ func (at *ActorTree) RemoveActor(c Actor) {
 	}
 
 	delete(at.registry, c.ID())
+	delete(at.addresses, c.Addr())
 	at.children[index] = item
 	at.registry[item.ID()] = index
+	at.addresses[item.Addr()] = index
 	at.children = at.children[:total-1]
 }
 
@@ -1284,4 +1368,5 @@ func (at *ActorTree) AddActor(c Actor) {
 	currentIndex := len(at.children)
 	at.children = append(at.children, c)
 	at.registry[c.ID()] = currentIndex
+	at.addresses[c.Addr()] = currentIndex
 }
