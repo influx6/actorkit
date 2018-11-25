@@ -14,8 +14,9 @@ const (
 )
 
 var (
-	deadLetterID = xid.New()
-	deadLetters  = es.New()
+	deadLetterID    = xid.New()
+	deadLetters     = es.New()
+	eventDeathMails = NewEventDeathMail(deadLetters)
 )
 
 // DeadMail defines the type of event triggered by the deadletters
@@ -183,6 +184,36 @@ type Addr interface {
 	AddressActor
 	AncestralAddr
 	AddressService
+}
+
+//***********************************
+//  DeadLetter
+//***********************************
+
+// DeadLetter defines an interface which exists for the
+// purpose of handling dead mails from terminated actors
+// which have unprocessed mails within mailbox.
+// It allows counter-measure to be provided to a actor's
+// life cycle ending phase.
+type DeadLetter interface {
+	RecoverMail(DeadMail)
+}
+
+// EventDeathMail implements the DeadLetter interface, where dead mails
+// are delivered to a underline event system.
+type EventDeathMail struct {
+	stream *es.EventStream
+}
+
+// NewEventDeathMail returns a new instance of a EventDeathMail.
+func NewEventDeathMail(stream *es.EventStream) *EventDeathMail {
+	return &EventDeathMail{stream: stream}
+}
+
+// RecoverMail implements DeadLetter interface. Sending
+// mails into event stream.
+func (em *EventDeathMail) RecoverMail(mail DeadMail) {
+	em.stream.Publish(mail)
 }
 
 //***********************************
@@ -355,6 +386,62 @@ type DeathWatch interface {
 //***********************************
 // Spawner
 //***********************************
+
+// Prop defines underline actor operation which are used to
+// generate said handlers for an instantiated actor.
+type Prop struct {
+	// BusyDuration defines the acceptable wait time for an actor
+	// to allow for calls to giving state functions like Restart, Stop
+	// Kill, Destroy, as an actor could be busy handling a different state
+	// request.
+	BusyDuration time.Duration
+
+	// DeadLockDuration defines the custom duration to be used for the deadlock
+	// go-routine asleep issue, which may occur if all actor goroutines become idle.
+	// The default used is 5s, but if it brings performance costs, then this can be
+	// increased or decreased as desired for optimum performance.
+	DeadLockDuration time.Duration
+
+	// Event represent the local events coming from the
+	// actor. Usually good to isolate events for actor
+	// only and is what is bounded to by Actor.Watch.
+	Event *es.EventStream
+
+	// GlobalEvent represents the global event stream which
+	// should receive all local events for global watching
+	// by others.
+	GlobalEvent *es.EventStream
+
+	// Mailbox is the actors's mailbox to be used for queuing
+	// incoming messages.
+	Mailbox Mailbox
+
+	// Sentinel provides a advisor of behaviours to be performed
+	// for actors being watched by owner of this prop. This allows
+	// behaviours to be implemented or optionally provided. You can
+	// also implement the Sentinel interface on the Behaviour implementer
+	// instead.
+	Sentinel Sentinel
+
+	// DeadLetters provides a means of receiving dead mails i.e mails which
+	// could not be processed by actor due to termination.
+	DeadLetters DeadLetter
+
+	// Supervisor defines the supervisor which the actor is to use for managing
+	// it's state errors and child state errors.
+	Supervisor Supervisor
+
+	// StateInvoker defines the invoker called for update metrics or other uses cases
+	// for different states of the actor.
+	StateInvoker StateInvoker
+
+	// MessageInvoker defines the invoker called for updating metrics on status of incoming
+	// messages.
+	MessageInvoker MessageInvoker
+
+	// MailInvoker defines the invoker called for updating metrics on mailbox usage.
+	MailInvoker MailInvoker
+}
 
 // Spawner exposes a single method to spawn an underline actor returning
 // the address for spawned actor.

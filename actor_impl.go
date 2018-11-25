@@ -118,21 +118,6 @@ func Ancestor(protocol string, namespace string, ops ...ActorOption) (Addr, erro
 // ActorOptions
 //********************************************************
 
-// Prop defines underline actor operation which are used to
-// generate said handlers for an instantiated actor.
-type Prop struct {
-	Event            *es.EventStream
-	GlobalEvent      *es.EventStream
-	BusyDuration     time.Duration
-	DeadLockDuration time.Duration
-	Supervisor       Supervisor
-	StateInvoker     StateInvoker
-	MessageInvoker   MessageInvoker
-	Sentinel         Sentinel
-	Mailbox          Mailbox
-	MailInvoker      MailInvoker
-}
-
 // ActorOption defines a function type which is used to set giving
 // field values for a ActorImpl instance
 type ActorOption func(*ActorImpl)
@@ -155,6 +140,13 @@ func UseProtocol(proc string) ActorOption {
 func UseSentinel(sn Sentinel) ActorOption {
 	return func(impl *ActorImpl) {
 		impl.sentinel = sn
+	}
+}
+
+// UseDeadLetter sets giving deadletter as processor for death mails.
+func UseDeadLetter(ml DeadLetter) ActorOption {
+	return func(impl *ActorImpl) {
+		impl.deathmails = ml
 	}
 }
 
@@ -343,6 +335,7 @@ type ActorImpl struct {
 	gevents     *es.EventStream
 
 	sentinel       Sentinel
+	deathmails     DeadLetter
 	stateInvoker   StateInvoker
 	mailInvoker    MailInvoker
 	messageInvoker MessageInvoker
@@ -430,6 +423,10 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 		ac.events = es.New()
 	}
 
+	if ac.deathmails == nil {
+		ac.deathmails = eventDeathMails
+	}
+
 	// add unbouned mailbox.
 	if ac.mails == nil {
 		ac.mails = UnboundedBoxQueue(ac.mailInvoker)
@@ -472,8 +469,8 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 	ac.destruction = NewSwitch()
 	ac.accessAddr = AccessOf(ac)
 	ac.processable = NewSwitch()
-	ac.tree = NewActorTree(10)
 	ac.subs = map[Actor]Subscription{}
+	ac.tree = NewActorTree(10)
 
 	ac.processable.On()
 
@@ -593,7 +590,7 @@ func (ati *ActorImpl) Spawn(service string, rec Behaviour, prop Prop) (Addr, err
 		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
-	ops := make([]ActorOption, 0, 16)
+	ops := make([]ActorOption, 0, 17)
 	ops = append(ops, UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
 
 	if prop.BusyDuration > 0 {
@@ -602,6 +599,10 @@ func (ati *ActorImpl) Spawn(service string, rec Behaviour, prop Prop) (Addr, err
 
 	if prop.DeadLockDuration > 0 {
 		ops = append(ops, DeadLockTicker(prop.DeadLockDuration))
+	}
+
+	if prop.DeadLetters != nil {
+		ops = append(ops, UseDeadLetter(prop.DeadLetters))
 	}
 
 	if prop.StateInvoker != nil {
@@ -965,7 +966,9 @@ func (ati *ActorImpl) exhaustMessages() {
 	for !ati.mails.IsEmpty() {
 		if nextAddr, next, err := ati.mails.Pop(); err == nil {
 			ati.messages.Done()
-			deadLetters.Publish(DeadMail{To: nextAddr, Message: next})
+
+			dm := DeadMail{To: nextAddr, Message: next}
+			ati.deathmails.RecoverMail(dm)
 		}
 	}
 }
