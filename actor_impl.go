@@ -136,6 +136,15 @@ func UseProtocol(proc string) ActorOption {
 	}
 }
 
+// UseGlobalRegistry applies giving registry to be used by
+// generated actor for registry itself when started and unregister
+// itself when destroyed.
+func UseGlobalRegistry(registry ActorRegistry) ActorOption {
+	return func(impl *ActorImpl) {
+		impl.registry = registry
+	}
+}
+
 // UseSentinel sets giving Sentinel provider for a actor.
 func UseSentinel(sn Sentinel) ActorOption {
 	return func(impl *ActorImpl) {
@@ -329,6 +338,7 @@ type ActorImpl struct {
 	parent      Actor
 	mails       Mailbox
 	tree        *ActorTree
+	registry    ActorRegistry
 	deadLockDur time.Duration
 	busyDur     time.Duration
 	events      *es.EventStream
@@ -349,6 +359,7 @@ type ActorImpl struct {
 	processedCount      int64
 	stoppedCount        int64
 	killedCount         int64
+	registered          int64
 
 	addActor            chan Actor
 	rmActor             chan Actor
@@ -479,6 +490,18 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 		ac.gsub = ac.events.Subscribe(ac.gevents.Publish).WithPredicate(isSystemMessages)
 	}
 
+	// Add yourself into global registry.
+	if ac.registry != nil {
+		if err := ac.registry.AddActor(ac); err != nil {
+			ac.events.Publish(ActorRegistrationFailure{
+				Err:  err,
+				Addr: ac.accessAddr,
+			})
+		} else {
+			atomic.CompareAndSwapInt64(&ac.registered, 0, 1)
+		}
+	}
+
 	return ac
 }
 
@@ -495,14 +518,6 @@ func (ati *ActorImpl) ID() string {
 // Mailbox returns actors underline mailbox.
 func (ati *ActorImpl) Mailbox() Mailbox {
 	return ati.mails
-}
-
-// AddDiscovery adds new Discovery service into actor's discovery chain.
-func (ati *ActorImpl) AddDiscovery(b DiscoveryService) error {
-	ati.chl.Lock()
-	ati.chain = append(ati.chain, b)
-	ati.chl.Unlock()
-	return nil
 }
 
 // Watch adds provided function as a subscriber to be called
@@ -552,9 +567,20 @@ func (ati *ActorImpl) Receive(a Addr, e Envelope) error {
 	return ati.mails.Push(a, e)
 }
 
+// AddDiscovery adds new Discovery service into actor's discovery chain.
+func (ati *ActorImpl) AddDiscovery(b DiscoveryService) error {
+	ati.chl.Lock()
+	ati.chain = append(ati.chain, b)
+	ati.chl.Unlock()
+	return nil
+}
+
 // Discover returns actor's Addr from this actor's
-// discovery chain, else passing up the ladder till it
+// discovery chain, else passing up the service till it
 // reaches the actors root where no possible discovery can be done.
+//
+// The returned address is not added to this actor's death watch, so user
+// if desiring this must add it themselves.
 //
 // The method will return an error if Actor is not already running.
 func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
@@ -564,12 +590,9 @@ func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
 
 	ati.chl.RLock()
 	for _, disco := range ati.chain {
-		if actor, err := disco.Discover(service); err == nil {
+		if addr, err := disco.Discover(service); err == nil {
 			ati.chl.RUnlock()
-			if err := ati.manageChild(actor); err != nil {
-				return nil, err
-			}
-			return AddressOf(actor, service), nil
+			return addr, nil
 		}
 	}
 	ati.chl.RUnlock()
@@ -590,8 +613,8 @@ func (ati *ActorImpl) Spawn(service string, rec Behaviour, prop Prop) (Addr, err
 		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
-	ops := make([]ActorOption, 0, 17)
-	ops = append(ops, UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
+	ops := make([]ActorOption, 0, 18)
+	ops = append(ops, UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec), UseGlobalRegistry(ati.registry))
 
 	if prop.BusyDuration > 0 {
 		ops = append(ops, WaitBusyDuration(prop.BusyDuration))
@@ -665,13 +688,13 @@ func (ati *ActorImpl) Stats() Stat {
 //
 // 1. If Actor is the highest ancestor then it will return address in form:
 //
-//		Protocol://Namespace/ID
+//		Protocol@Namespace/ID
 //
 // 2. If Actor is the a child of another, then it will return address in form:
 //
-//		AncestorAddress/:PROTOCOL/NAMESPACE/ID
+//		AncestorAddress/ID
 //
-//    where AncestorAddress is "Protocol://Namespace/ID"
+//    where AncestorAddress is "Protocol@Namespace/ID"
 //
 // In either case, the protocol of both ancestor and parent is maintained.
 // Namespace provides a field area which can define specific information that
@@ -679,9 +702,9 @@ func (ati *ActorImpl) Stats() Stat {
 //
 func (ati *ActorImpl) Addr() string {
 	if ati.parent == nil {
-		return ati.protocol + "://" + ati.namespace + "/" + ati.id.String()
+		return ati.ProtocolAddrUUID()
 	}
-	return ati.parent.Addr() + "/:" + ati.protocol + "/" + ati.namespace + "/" + ati.id.String()
+	return ati.parent.Addr() + "/" + ati.id.String()
 }
 
 // Namespace returns actor's namespace.
@@ -690,9 +713,18 @@ func (ati *ActorImpl) Namespace() string {
 }
 
 // ProtocolAddr returns the Actors.Protocol and Actors.Namespace
-// values in the format: Protocol@Namespace.
+// values in the format:
+//
+//  Protocol@Namespace.
+//
 func (ati *ActorImpl) ProtocolAddr() string {
 	return ati.protocol + "@" + ati.namespace
+}
+
+// ProtocolAddrUUID returns the uuid address of actor in the following
+// format: ActorProtocolAddr():ActorUUID.
+func (ati *ActorImpl) ProtocolAddrUUID() string {
+	return ati.ProtocolAddr() + "/" + ati.id.String()
 }
 
 // Escalate sends giving error that occur to actor's supervisor
@@ -954,6 +986,20 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 
 	ati.started.On()
 
+	// If we were not added at startup then attempt now into global registry.
+	if atomic.LoadInt64(&ati.registered) == 0 {
+		if ati.registry != nil {
+			if err := ati.registry.AddActor(ati); err != nil {
+				ati.events.Publish(ActorRegistrationFailure{
+					Err:  err,
+					Addr: ati.accessAddr,
+				})
+			}
+		} else {
+			atomic.CompareAndSwapInt64(&ati.registered, 0, 1)
+		}
+	}
+
 	return nil
 }
 
@@ -1176,6 +1222,20 @@ func (ati *ActorImpl) registerChild(ac Actor) {
 	ati.subs[ac] = sub
 }
 
+func (ati *ActorImpl) unregisterSelf(ac Actor) {
+	if atomic.LoadInt64(&ati.registered) == 0 {
+		return
+	}
+
+	atomic.StoreInt64(&ati.registered, 0)
+	if err := ati.registry.RemoveActor(ati); err != nil {
+		ati.events.Publish(ActorUnregistrationFailure{
+			Err:  err,
+			Addr: ati.accessAddr,
+		})
+	}
+}
+
 func (ati *ActorImpl) unregisterChild(ac Actor) {
 	if sub, ok := ati.subs[ac]; ok {
 		delete(ati.subs, ac)
@@ -1338,6 +1398,8 @@ func (ati *ActorImpl) process(a Addr, x Envelope) {
 // It combines internally a map and list to take advantage of quick lookup
 // and order maintenance.
 //
+// ActorTree implements the ActorRegistry interface.
+//
 // ActorTree is safe for concurrent access.
 type ActorTree struct {
 	ml        sync.RWMutex
@@ -1402,7 +1464,7 @@ func (at *ActorTree) HasActor(id string) bool {
 }
 
 // GetActorByAddr returns giving actor from tree using requested id.
-func (at *ActorTree) GetActorByAddr(addr string) (Actor, error) {
+func (at *ActorTree) GetAddr(addr string) (Actor, error) {
 	at.ml.RLock()
 	defer at.ml.RUnlock()
 
@@ -1426,7 +1488,7 @@ func (at *ActorTree) GetActor(id string) (Actor, error) {
 }
 
 // RemoveActor removes attached actor from tree if found.
-func (at *ActorTree) RemoveActor(c Actor) {
+func (at *ActorTree) RemoveActor(c Actor) error {
 	at.ml.Lock()
 	defer at.ml.Unlock()
 
@@ -1437,7 +1499,7 @@ func (at *ActorTree) RemoveActor(c Actor) {
 	if total == 1 {
 		delete(at.registry, c.ID())
 		at.children = nil
-		return
+		return nil
 	}
 
 	delete(at.registry, c.ID())
@@ -1446,19 +1508,21 @@ func (at *ActorTree) RemoveActor(c Actor) {
 	at.registry[item.ID()] = index
 	at.addresses[item.Addr()] = index
 	at.children = at.children[:total-1]
+	return nil
 }
 
 // AddActor adds giving actor into tree.
-func (at *ActorTree) AddActor(c Actor) {
+func (at *ActorTree) AddActor(c Actor) error {
 	at.ml.Lock()
 	defer at.ml.Unlock()
 
 	if _, ok := at.registry[c.ID()]; ok {
-		return
+		return nil
 	}
 
 	currentIndex := len(at.children)
 	at.children = append(at.children, c)
 	at.registry[c.ID()] = currentIndex
 	at.addresses[c.Addr()] = currentIndex
+	return nil
 }

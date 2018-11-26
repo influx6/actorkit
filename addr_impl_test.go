@@ -9,10 +9,26 @@ import (
 	"github.com/gokit/actorkit"
 )
 
+func TestAddrAddressFormat(t *testing.T) {
+	system, err := actorkit.Ancestor("kitkat", "10.10.10.10:2020")
+	assert.NoError(t, err)
+	assert.NotNil(t, system)
+
+	assert.Equal(t, "kitkat@10.10.10.10:2020/"+system.ID()+"/actor:access", system.Addr())
+
+	child, err := system.Spawn("runner", &basic{}, actorkit.Prop{})
+	assert.NoError(t, err)
+	assert.NotNil(t, child)
+
+	assert.Equal(t, "kitkat@10.10.10.10:2020/"+system.ID()+"/"+child.ID()+"/runner", child.Addr())
+
+	actorkit.Destroy(system)
+}
+
 func TestDeadLetterAddr(t *testing.T) {
 	addr := actorkit.DeadLetters()
 
-	assert.True(t, strings.HasPrefix(addr.Addr(), "kit://localhost"), "should have prefix %q", addr.Addr())
+	assert.True(t, strings.HasPrefix(addr.Addr(), "kit@localhost"), "should have prefix %q", addr.Addr())
 
 	_, err := addr.Spawn("wap", &basic{}, actorkit.Prop{})
 	assert.Error(t, err)

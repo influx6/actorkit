@@ -2,6 +2,7 @@ package actorkit
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gokit/es"
@@ -83,17 +84,25 @@ func CreateEnvelope(sender Addr, header Header, data interface{}) Envelope {
 }
 
 //***********************************
-//  ProcRegistry
+//  ActorRegistry
 //***********************************
 
-// ProcRegistry implementers implement a giving registry which allows
-// collating giving actors within a searching entity for access and retrieval.
-// Registries should be able to update themselves based on actor's state.
-type ProcRegistry interface {
-	Register(Actor) error
-	UnRegister(Actor) error
+// ActorRegistry implementers implement a giving registry which allows
+// collating giving actors within a searchable entity for access and retrieval.
+//
+// Registries should be able to update themselves based on actor's state or
+// be automatically updated by said actors.
+type ActorRegistry interface {
+	AddActor(Actor) error
+	RemoveActor(Actor) error
 	GetID(string) (Actor, error)
 	GetAddr(string) (Actor, error)
+}
+
+// HashedProcessRegistry
+type HashedProcessRegistry struct {
+	hl     sync.RWMutex
+	actors map[string]Actor
 }
 
 //***********************************
@@ -445,6 +454,9 @@ type Prop struct {
 
 // Spawner exposes a single method to spawn an underline actor returning
 // the address for spawned actor.
+//
+// Note: Children actors always get their global registry from their parents
+// so if your root actor has no registry, then the kids won't get access to any.
 type Spawner interface {
 	Spawn(service string, bh Behaviour, props Prop) (Addr, error)
 }
@@ -463,11 +475,12 @@ type Discovery interface {
 }
 
 // DiscoveryService defines an interface which will return
-// a giving Actor for a desired service.
+// a giving Actor address for a desired service.
 //
 // DiscoveryServices provides a great way for adding service or actor discovery
-// patterns where we can hook in means of communicating and creating references
-// to remote actors without any complicated setup.
+// the actor system where. How the underline actor's who's address is returned is
+// up to the implementer, but by abstracting such a system by this interface we
+// provide a simple and easy way to add better discovery functionality into actor trees.
 //
 // DiscoveryServices also provide the means of templated actors, where actors with
 // behaviors is already defined by a generating function called 'Templated Functions'.
@@ -476,7 +489,7 @@ type Discovery interface {
 //
 //
 type DiscoveryService interface {
-	Discover(service string) (Actor, error)
+	Discover(service string) (Addr, error)
 }
 
 // DiscoveryChain defines a method which adds giving
@@ -492,27 +505,25 @@ type DiscoveryChain interface {
 	AddDiscovery(service DiscoveryService) error
 }
 
-//**************************************************************
-//  DiscoveryFor: Service discovery with function generators
-//*************************************************************
-
-// DiscoveryServiceFunction defines a function type which when
-// giving a underline service will return a suitable actor for
-// said service.
-type DiscoveryServiceFunction func(service string) (Actor, error)
+// DiscoveryServiceFunction defines a function type which will spawn a given
+// actor using a provided parent and returns address of spawned actor. This allows
+// us allocate management of giving actor to some parent whilst allowing others
+// gain access to giving actor.
+type DiscoveryServiceFunction func(parent Addr, service string) (Addr, error)
 
 // DiscoveryFor returns a new DiscoveryService which calls giving function
 // with service name for returning an actor suitable for handling a giving service.
-func DiscoveryFor(fn DiscoveryServiceFunction) DiscoveryService {
-	return &fnDiscoveryService{Fn: fn}
+func DiscoveryFor(parent Addr, fn DiscoveryServiceFunction) DiscoveryService {
+	return &fnDiscovery{parent: parent, Fn: fn}
 }
 
-type fnDiscoveryService struct {
-	Fn DiscoveryServiceFunction
+type fnDiscovery struct {
+	parent Addr
+	Fn     DiscoveryServiceFunction
 }
 
-func (dn fnDiscoveryService) Discover(service string) (Actor, error) {
-	return dn.Fn(service)
+func (dn *fnDiscovery) Discover(service string) (Addr, error) {
+	return dn.Fn(dn.parent, service)
 }
 
 //***********************************
@@ -1122,6 +1133,24 @@ func (a *ActorRoutineError) Error() string {
 		Error: %+q
 `, a.ID, a.Addr, a.Err.Error())
 }
+
+// ActorUnregistrationFailure is sent when a actor fails to successfully register itself.
+type ActorUnregistrationFailure struct {
+	Addr Addr
+	Err  error
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorUnregistrationFailure) SystemMessage() {}
+
+// ActorRegistrationFailure is sent when a actor fails to successfully register itself.
+type ActorRegistrationFailure struct {
+	Addr Addr
+	Err  error
+}
+
+// SystemMessage identifies giving type as a system message.
+func (ActorRegistrationFailure) SystemMessage() {}
 
 // ActorRoutinePanic is sent when a actor internal routine panics.
 type ActorRoutinePanic struct {

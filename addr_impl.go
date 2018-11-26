@@ -594,7 +594,7 @@ func (a *AddrImpl) Service() string {
 //
 func (a *AddrImpl) Addr() string {
 	if a.deadletter {
-		return "kit://localhost/" + a.ID() + "/" + a.service
+		return "kit@localhost/" + a.ID() + "/" + a.service
 	}
 	return a.actor.Addr() + "/" + a.service
 }
