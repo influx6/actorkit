@@ -15,13 +15,24 @@ import (
 )
 
 const (
-	pubsubIDName = "_actorkit_google_pubsub_id"
-	subIDFormat  = "_actorkit_google_pubsub_%s_%d"
+	pubsubIDName    = "_actorkit_google_pubsub_id"
+	pubsubTopicName = "_actorkit_google_pubsub_topic"
+	subIDFormat     = "_actorkit_google_pubsub_%s_%d"
 )
 
 var (
 	_ Marshaler   = &PubSubMarshaler{}
 	_ Unmarshaler = &PubSubUnmarshaler{}
+)
+
+// Directive defines a int type for representing
+// a giving action to be performed due to an error.
+type Directive int
+
+// set of possible directives.
+const (
+	Ack Directive = iota
+	Nack
 )
 
 // Marshaler defines a interface exposing method to transform a transit.Message
@@ -39,7 +50,11 @@ type PubSubMarshaler struct {
 func (ps PubSubMarshaler) Marshal(msg transit.Message) (pubsub.Message, error) {
 	var res pubsub.Message
 	if msg.Envelope.Has(pubsubIDName) {
-		return res, errors.New("key %q can not be used as it internally used for Google PubSub message tracking", pubsubIDName)
+		return res, errors.New("key %q is reserved for internal use only", pubsubIDName)
+	}
+
+	if msg.Envelope.Has(pubsubTopicName) {
+		return res, errors.New("key %q is reserved for internal use only", pubsubTopicName)
 	}
 
 	envData, err := ps.Marshaler.Marshal(msg.Envelope)
@@ -48,7 +63,8 @@ func (ps PubSubMarshaler) Marshal(msg transit.Message) (pubsub.Message, error) {
 	}
 
 	headers := map[string]string{
-		pubsubIDName: msg.Envelope.Ref.String(),
+		pubsubTopicName: msg.Topic,
+		pubsubIDName:    msg.Envelope.Ref.String(),
 	}
 
 	for k, v := range msg.Envelope.Header {
@@ -69,13 +85,25 @@ type Unmarshaler interface {
 
 // PubSubUnmarshaler implements the Unmarshaler interface.
 type PubSubUnmarshaler struct {
-	Unmarshaler Unmarshaler
+	Unmarshaler transit.Unmarshaler
 }
 
 // Unmarshal transforms giving pubsub.Message into a transit.Message type.
 func (ps *PubSubUnmarshaler) Unmarshal(msg *pubsub.Message) (transit.Message, error) {
-	var res transit.Message
-	return res, nil
+	var decoded transit.Message
+	if _, ok := msg.Attributes[pubsubIDName]; ok {
+		return decoded, errors.New("message is not a actorkit encoded type")
+	}
+
+	decoded.Topic = msg.Attributes[pubsubTopicName]
+
+	var err error
+	decoded.Envelope, err = ps.Unmarshaler.Unmarshal(msg.Data)
+	if err != nil {
+		return decoded, errors.Wrap(err, "Failed to decode envelope from message data")
+	}
+
+	return decoded, nil
 }
 
 //*****************************************************************************
@@ -265,7 +293,7 @@ func (p *Publisher) Run() {
 // Subscriber
 //*****************************************************************************
 
-// Subscriber defines giving configuration settings for google pubsub subscriber.
+// SubscriberConfig defines giving configuration settings for google pubsub subscriber.
 type SubscriberConfig struct {
 	ConsumersCount            int
 	ProjectID                 string
@@ -313,8 +341,8 @@ func NewSubscriptionFactory(ctx context.Context, config SubscriberConfig) (*Subs
 
 // Subscribe subscribes to a giving topic, if one exists then a new subscription with a ever incrementing id is assigned
 // to new subscription.
-func (sb *SubscriptionFactory) Subscribe(topic string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error) (actorkit.Subscription, error) {
-	return sb.createSubscription(topic, config, receiver)
+func (sb *SubscriptionFactory) Subscribe(topic string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error, action func(error) Directive) (actorkit.Subscription, error) {
+	return sb.createSubscription(topic, config, receiver, action)
 }
 
 // Wait blocks till all subscription and SubscriptionFactory is closed.
@@ -332,7 +360,7 @@ func (sb *SubscriptionFactory) Close() error {
 	return err
 }
 
-func (sb *SubscriptionFactory) createSubscription(topic string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error) (*Subscription, error) {
+func (sb *SubscriptionFactory) createSubscription(topic string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error, direction func(error) Directive) (*Subscription, error) {
 	errs := make(chan error, 1)
 	subs := make(chan *Subscription, 1)
 
@@ -352,10 +380,11 @@ func (sb *SubscriptionFactory) createSubscription(topic string, config *pubsub.S
 
 		var newSub Subscription
 		newSub.subc = co
-		newSub.id = newSubID
 		newSub.topic = topic
-		newSub.config = &sb.config
+		newSub.id = newSubID
 		newSub.receiver = receiver
+		newSub.config = &sb.config
+		newSub.direction = direction
 		newSub.ctx, newSub.canceler = context.WithCancel(sb.ctx)
 
 		if err := newSub.init(); err != nil {
@@ -418,17 +447,18 @@ func (sb *SubscriptionFactory) run() {
 // Subscription implements a subscriber of a giving topic which is being subscribe to
 // for. It implements the actorkit.Subscription interface.
 type Subscription struct {
-	id       string
-	topic    string
-	canceler func()
-	errs     chan error
-	tx       *pubsub.Topic
-	client   *pubsub.Client
-	config   *SubscriberConfig
-	subc     pubsub.SubscriptionConfig
-	sub      *pubsub.Subscription
-	ctx      context.Context
-	receiver func(transit.Message) error
+	id        string
+	topic     string
+	canceler  func()
+	errs      chan error
+	tx        *pubsub.Topic
+	client    *pubsub.Client
+	ctx       context.Context
+	config    *SubscriberConfig
+	sub       *pubsub.Subscription
+	direction func(error) Directive
+	subc      pubsub.SubscriptionConfig
+	receiver  func(transit.Message) error
 }
 
 // Error returns the associated received error.
@@ -503,12 +533,20 @@ func (s *Subscription) run() {
 	s.errs <- s.sub.Receive(s.ctx, func(ctx context.Context, message *pubsub.Message) {
 		decoded, err := s.config.Unmarshaler.Unmarshal(message)
 		if err != nil {
-			message.Nack()
+			switch s.direction(err) {
+			case Ack:
+				message.Nack()
+			case Nack:
+			}
 			return
 		}
 
 		if err := s.receiver(decoded); err != nil {
-			message.Nack()
+			switch s.direction(err) {
+			case Ack:
+				message.Nack()
+			case Nack:
+			}
 			return
 		}
 
