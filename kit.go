@@ -60,6 +60,23 @@ func (m Header) Has(n string) bool {
 }
 
 //***************************************************************************
+// LogEvent
+//***************************************************************************
+
+// LogEvent is a new interesting approach towards logging which rather than
+// using predefined logging libraries instead uses pubsub approach to fire defined
+// types presenting different metrics to implementers.
+// Only a single argument is required, this i believe allows us more flexibility
+// than fiddling with a giving set of argument types and length standard.
+//
+// This type need shouldn't be used outside of this package and accompany subpackages,
+// you should never have the need to use the declared interface type but just implement
+// and supply to to any user of interface type within package.
+type LogEvent interface {
+	Publish(interface{})
+}
+
+//***************************************************************************
 // Envelope
 //***************************************************************************
 
