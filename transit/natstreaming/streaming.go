@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	subIDFormat = "_actorkit_natsio_nats_%s_%d"
+	subIDFormat  = "_actorkit_nats_%s_%d"
+	subQIDFormat = "_actorkit_nats_group_%s_%d"
 )
 
 // Directive defines a int type for representing
@@ -96,6 +97,45 @@ func (pf *PublisherSubscriberFactory) Close() error {
 	pf.canceler()
 	pf.waiter.Wait()
 	return pf.ctx.Err()
+}
+
+// QueueSubscribe returns a new subscription for a giving topic in a given queue group which will be used for processing
+// messages for giving topic from the nats streaming provider. If the topic already has a subscriber then
+// a subscriber with a ever increasing _id is added and returned, the subscriber receives the giving
+// topc_id as durable name for it's subscription.
+func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, receiver func(transit.Message) error, direction func(error) Directive, ops []pubsub.SubscriptionOption) (*Subscription, error) {
+	if sub, ok := pf.getSubscription(topic); ok {
+		return sub, nil
+	}
+
+	pf.sl.RLock()
+	last := pf.topics[topic]
+	pf.sl.RUnlock()
+
+	last++
+
+	var sub Subscription
+	sub.ops = ops
+	sub.group = grp
+	sub.queue = true
+	sub.topic = topic
+	sub.client = pf.c
+	sub.receiver = receiver
+	sub.direction = direction
+	sub.errs = make(chan error, 1)
+	sub.id = fmt.Sprintf(subQIDFormat, topic, last)
+	sub.ctx, sub.canceler = context.WithCancel(sub.ctx)
+
+	if err := sub.init(); err != nil {
+		return nil, err
+	}
+
+	pf.sl.Lock()
+	pf.subs[sub.id] = &sub
+	pf.topics[topic] = last
+	pf.sl.Unlock()
+
+	return &sub, nil
 }
 
 // Subscribe returns a new subscription for a giving topic which will be used for processing
@@ -273,6 +313,8 @@ func (p *Publisher) run() {
 type Subscription struct {
 	id        string
 	topic     string
+	group     string
+	queue     bool
 	errs      chan error
 	canceler  func()
 	ctx       context.Context
@@ -324,7 +366,15 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 
 func (s *Subscription) init() error {
 	ops := append(s.ops, pubsub.DurableName(s.id))
-	sub, err := s.client.Subscribe(s.topic, s.handle, ops...)
+
+	var err error
+	var sub pubsub.Subscription
+	if s.queue {
+		sub, err = s.client.QueueSubscribe(s.topic, s.group, s.handle, ops...)
+	} else {
+		sub, err = s.client.Subscribe(s.topic, s.handle, ops...)
+	}
+
 	if err != nil {
 		return err
 	}
