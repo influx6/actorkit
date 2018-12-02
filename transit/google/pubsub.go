@@ -3,6 +3,7 @@ package google
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -253,6 +254,10 @@ func NewPublisher(ctx context.Context, topic string, sink *pubsub.Topic, marshal
 // Publish attempts to publish giving message into provided topic publisher returning an
 // error for failed attempt.
 func (p *Publisher) Publish(msg transit.Message) error {
+	if msg.Topic != p.topic {
+		return errors.New("invalid message topic %q to publisher of topic %q", msg.Topic, p.topic)
+	}
+
 	errs := make(chan error, 1)
 	action := func() {
 		marshalled, err := p.m.Marshal(msg)
@@ -322,6 +327,10 @@ type SubscriptionFactory struct {
 
 // NewSubscriptionFactory returns a new instance of a SubscriptionFactory.
 func NewSubscriptionFactory(ctx context.Context, config SubscriberConfig) (*SubscriptionFactory, error) {
+	if config.ConsumersCount == 0 {
+		config.ConsumersCount = runtime.NumCPU()
+	}
+
 	var sub SubscriptionFactory
 	sub.config = config
 	sub.actions = make(chan func(), 0)
@@ -535,8 +544,9 @@ func (s *Subscription) run() {
 		if err != nil {
 			switch s.direction(err) {
 			case Ack:
-				message.Nack()
+				message.Ack()
 			case Nack:
+				message.Nack()
 			}
 			return
 		}
@@ -544,8 +554,9 @@ func (s *Subscription) run() {
 		if err := s.receiver(decoded); err != nil {
 			switch s.direction(err) {
 			case Ack:
-				message.Nack()
+				message.Ack()
 			case Nack:
+				message.Nack()
 			}
 			return
 		}
