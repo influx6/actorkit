@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gokit/actorkit"
+
 	"github.com/gokit/xid"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
@@ -109,24 +111,54 @@ func (kc *KAUnmarshaler) Unmarshal(message *kafka.Message) (transit.Message, err
 	return msg, nil
 }
 
+//*****************************************************************************
+// PubSubFactory
+//*****************************************************************************
+
+// PublisherHandler defines a function type which takes a giving PublisherFactory
+// and a given topic, returning a new publisher with all related underline specific
+// details added and instantiated.
+type PublisherHandler func(string) (transit.Publisher, error)
+
+// SubscriberHandler defines a function type which takes a giving SubscriptionFactory
+// and a given topic, returning a new subscription with all related underline specific
+// details added and instantiated.
+type SubscriberHandler func(*ConsumerFactory, string, transit.Receiver) (actorkit.Subscription, error)
+
+// PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
+// a factory for generating publishers and subscribers.
+type PubSubFactoryGenerator func(*ConsumerFactory) transit.PubSubFactory
+
+// PubSubFactory provides a partial function for the generation of a transit.PubSubFactory
+// using the PubSubFactorGenerator function.
+func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
+	return func(sub *ConsumerFactory) transit.PubSubFactory {
+		return &transit.PubSubFactoryImpl{
+			Publishers: func(topic string) (transit.Publisher, error) {
+				return publishers(topic)
+			},
+			Subscribers: func(topic string, receiver transit.Receiver) (actorkit.Subscription, error) {
+				return subscribers(sub, topic, receiver)
+			},
+		}
+	}
+}
+
 //****************************************************************************
 // Kafka ConsumerFactor
 //****************************************************************************
 
 // Config defines configuration fields for use with a ConsumerFactory.
 type Config struct {
-	Brokers []string
-
-	Unmarshaler     Unmarshaler
+	Brokers         []string
+	ConsumersCount  int
+	AutoOffsetReset string
 	ConsumerGroup   string
 	NoConsumerGroup bool
-
-	AutoOffsetReset string
-
-	ConsumersCount int
-
-	PollingTime time.Duration
-	Overrides   kafka.ConfigMap
+	Unmarshaler     Unmarshaler
+	Log             actorkit.LogEvent
+	PollingTime     time.Duration
+	Overrides       kafka.ConfigMap
 }
 
 // ConsumerFactory implements a kafka subscriber provider which handles and manages
@@ -187,7 +219,7 @@ func (ka *ConsumerFactory) CreateConsumer(topic string, receiver func(message tr
 		return err
 	}
 
-	consumer, err := NewConsumer(config, topic, ka.config.PollingTime, ka.config.Unmarshaler, receiver, director)
+	consumer, err := NewConsumer(&ka.config, config, topic, ka.config.PollingTime, ka.config.Unmarshaler, receiver, director)
 	if err != nil {
 		return err
 	}
@@ -260,9 +292,12 @@ const (
 
 // Consumer implements a Kafka message subscription consumer.
 type Consumer struct {
-	err         error
 	topic       string
+	config      *Config
+	once        sync.Once
+	closer      chan struct{}
 	unmarshaler Unmarshaler
+	log         actorkit.LogEvent
 	polling     time.Duration
 	consumer    *kafka.Consumer
 	directive   func(error) Directive
@@ -270,7 +305,7 @@ type Consumer struct {
 }
 
 // NewConsumer returns a new instance of a Consumer.
-func NewConsumer(config *kafka.ConfigMap, topic string, polling time.Duration, unmarshaler Unmarshaler, receiver func(message transit.Message) error, director func(error) Directive) (*Consumer, error) {
+func NewConsumer(co *Config, config *kafka.ConfigMap, topic string, polling time.Duration, unmarshaler Unmarshaler, receiver func(message transit.Message) error, director func(error) Directive) (*Consumer, error) {
 	kconsumer, err := kafka.NewConsumer(config)
 	if err != nil {
 		return nil, err
@@ -278,11 +313,14 @@ func NewConsumer(config *kafka.ConfigMap, topic string, polling time.Duration, u
 
 	return &Consumer{
 		topic:       topic,
+		config:      co,
+		log:         co.Log,
 		polling:     polling,
 		consumer:    kconsumer,
 		directive:   director,
 		receiver:    receiver,
 		unmarshaler: unmarshaler,
+		closer:      make(chan struct{}, 0),
 	}, nil
 }
 
@@ -290,7 +328,11 @@ func NewConsumer(config *kafka.ConfigMap, topic string, polling time.Duration, u
 // from underline kafka consumer.
 func (c *Consumer) Consume(kill chan struct{}, errs chan error) {
 	if err := c.consumer.Subscribe(c.topic, nil); err != nil {
-		errs <- err
+		em := errors.Wrap(err, "Failed to subscribe to topic %q", c.topic)
+		if c.log != nil {
+			c.log.Publish(transit.SubscriptionError{Err: em, Topic: c.topic})
+		}
+		errs <- em
 		return
 	}
 
@@ -298,10 +340,20 @@ func (c *Consumer) Consume(kill chan struct{}, errs chan error) {
 	c.run(kill)
 }
 
-// Wait blocks till given consumer is closed returning
-// any encountered error if any.
-func (c *Consumer) Wait() error {
-	return c.err
+// Stop stops the giving consumer, ending all consuming operations.
+func (c *Consumer) Stop() {
+	c.once.Do(func() {
+		close(c.closer)
+	})
+}
+
+func (c *Consumer) close() {
+	if err := c.consumer.Close(); err != nil {
+		em := errors.Wrap(err, "Failed to close subscriber for topic %q", c.topic)
+		if c.log != nil {
+			c.log.Publish(transit.OpError{Err: em, Topic: c.topic})
+		}
+	}
 }
 
 func (c *Consumer) run(closer chan struct{}) {
@@ -309,8 +361,11 @@ func (c *Consumer) run(closer chan struct{}) {
 
 	for {
 		select {
+		case <-c.closer:
+			c.close()
+			return
 		case <-closer:
-			c.err = c.consumer.Close()
+			c.close()
 			return
 		default:
 			if event := c.consumer.Poll(ms); event != nil {
@@ -320,8 +375,6 @@ func (c *Consumer) run(closer chan struct{}) {
 						// close consumer has the given error is unacceptable.
 						c.consumer.Close()
 
-						// attach error to
-						c.err = err
 						return
 					}
 				case kafka.PartitionEOF:
@@ -340,14 +393,23 @@ func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 
 	rec, err := c.unmarshaler.Unmarshal(msg)
 	if err != nil {
+		if c.log != nil {
+			c.log.Publish(transit.UnmarshalingError{Err: errors.Wrap(err, "Failed to marshal message"), Data: msg.Value})
+		}
 		return c.handleError(err, msg)
 	}
 
 	if err := c.receiver(rec); err != nil {
+		if c.log != nil {
+			c.log.Publish(transit.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: msg.Value, Topic: c.topic})
+		}
 		return c.handleError(err, msg)
 	}
 
 	if _, err := c.consumer.StoreOffsets([]kafka.TopicPartition{msg.TopicPartition}); err != nil {
+		if c.log != nil {
+			c.log.Publish(transit.OpError{Err: errors.Wrap(err, "Failed to set new message offset for topic partition %q", c.topic), Topic: c.topic})
+		}
 		return err
 	}
 
@@ -365,7 +427,14 @@ func (c *Consumer) handleError(err error, msg *kafka.Message) error {
 }
 
 func (c *Consumer) rollback(msg *kafka.Message) error {
-	return c.consumer.Seek(msg.TopicPartition, 1000*60)
+	if err := c.consumer.Seek(msg.TopicPartition, 1000*60); err != nil {
+		sem := errors.Wrap(err, "Failed to rollback message")
+		if c.log != nil {
+			c.log.Publish(transit.OpError{Err: sem, Topic: c.topic})
+		}
+		return sem
+	}
+	return nil
 }
 
 //****************************************************************************
@@ -375,15 +444,15 @@ func (c *Consumer) rollback(msg *kafka.Message) error {
 // Publisher implements a customized wrapper around the kafka Publisher.
 type Publisher struct {
 	marshaler Marshaler
-	closer    chan struct{}
+	once      sync.Once
 	config    *kafka.ConfigMap
 	producer  *kafka.Producer
+	log       actorkit.LogEvent
 }
 
 // NewPublisher returns a new instance of Publisher.
-func NewPublisher(brokers []string, config kafka.ConfigMap, marshaler Marshaler) (*Publisher, error) {
+func NewPublisher(brokers []string, config kafka.ConfigMap, log actorkit.LogEvent, marshaler Marshaler) (*Publisher, error) {
 	var kap Publisher
-	kap.closer = make(chan struct{}, 0)
 	kap.config = &kafka.ConfigMap{
 		"debug":                        ",",
 		"queue.buffering.max.messages": 10000000,
@@ -400,6 +469,7 @@ func NewPublisher(brokers []string, config kafka.ConfigMap, marshaler Marshaler)
 		return nil, err
 	}
 
+	kap.log = log
 	kap.producer = producer
 	kap.marshaler = marshaler
 	return &kap, nil
@@ -407,38 +477,48 @@ func NewPublisher(brokers []string, config kafka.ConfigMap, marshaler Marshaler)
 
 // Close attempts to close giving underline producer.
 func (ka *Publisher) Close() error {
-	select {
-	case <-ka.closer:
-		return nil
-	default:
-	}
-
-	ka.producer.Close()
-	close(ka.closer)
+	ka.once.Do(func() {
+		ka.producer.Close()
+	})
 	return nil
 }
 
 // Publish sends giving message envelope  to given topic.
 func (ka *Publisher) Publish(msg transit.Message) error {
-	select {}
 	encoded, err := ka.marshaler.Marshal(msg)
 	if err != nil {
+		em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
+		if ka.log != nil {
+			ka.log.Publish(transit.MarshalingError{Err: em, Data: msg.Envelope})
+		}
 		return err
 	}
 
 	res := make(chan kafka.Event)
 	if err := ka.producer.Produce(&encoded, res); err != nil {
-		return errors.Wrap(err, "failed to send mesage to producer")
+		em := errors.Wrap(err, "failed to send mesage to producer")
+		if ka.log != nil {
+			ka.log.Publish(transit.PublishError{Err: em, Data: encoded, Topic: msg.Topic})
+		}
+		return em
 	}
 
 	event := <-res
 	kmessage, ok := event.(*kafka.Message)
 	if ok {
-		return errors.New("failed to recieve *Kafka.Message as event response")
+		em := errors.New("failed to receive *Kafka.Message as event response")
+		if ka.log != nil {
+			ka.log.Publish(transit.PublishError{Err: em, Data: encoded, Topic: msg.Topic})
+		}
+		return em
 	}
 
 	if kmessage.TopicPartition.Error != nil {
-		return errors.Wrap(kmessage.TopicPartition.Error, "failed to deliver message to kafka topic")
+		em := errors.Wrap(kmessage.TopicPartition.Error, "failed to deliver message to kafka topic")
+		if ka.log != nil {
+			ka.log.Publish(transit.PublishError{Err: em, Data: encoded, Topic: msg.Topic})
+		}
+		return em
 	}
 
 	return nil

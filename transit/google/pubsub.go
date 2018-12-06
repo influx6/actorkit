@@ -108,6 +108,39 @@ func (ps *PubSubUnmarshaler) Unmarshal(msg *pubsub.Message) (transit.Message, er
 }
 
 //*****************************************************************************
+// PubSubFactory
+//*****************************************************************************
+
+// PublisherHandler defines a function type which takes a giving PublisherFactory
+// and a given topic, returning a new publisher with all related underline specific
+// details added and instantiated.
+type PublisherHandler func(*PublisherFactory, string) (transit.Publisher, error)
+
+// SubscriberHandler defines a function type which takes a giving SubscriptionFactory
+// and a given topic, returning a new subscription with all related underline specific
+// details added and instantiated.
+type SubscriberHandler func(*SubscriptionFactory, string, transit.Receiver) (actorkit.Subscription, error)
+
+// PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
+// a factory for generating publishers and subscribers.
+type PubSubFactoryGenerator func(pub *PublisherFactory, sub *SubscriptionFactory) transit.PubSubFactory
+
+// PubSubFactory provides a partial function for the generation of a transit.PubSubFactory
+// using the PubSubFactorGenerator function.
+func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
+	return func(pub *PublisherFactory, sub *SubscriptionFactory) transit.PubSubFactory {
+		return &transit.PubSubFactoryImpl{
+			Publishers: func(topic string) (transit.Publisher, error) {
+				return publishers(pub, topic)
+			},
+			Subscribers: func(topic string, receiver transit.Receiver) (actorkit.Subscription, error) {
+				return subscribers(sub, topic, receiver)
+			},
+		}
+	}
+}
+
+//*****************************************************************************
 // Publisher
 //*****************************************************************************
 
@@ -116,6 +149,7 @@ type PublisherConfig struct {
 	ProjectID          string
 	CreateMissingTopic bool
 	Marshaler          Marshaler
+	Log                actorkit.LogEvent
 	ClientOptions      []option.ClientOption
 	PublishSettings    *pubsub.PublishSettings
 }
@@ -197,13 +231,13 @@ func (pf *PublisherFactory) Publisher(topic string, setting *pubsub.PublishSetti
 		t.PublishSettings = *pf.config.PublishSettings
 	}
 
-	pub := NewPublisher(pf.ctx, topic, t, pf.config.Marshaler)
+	pub := NewPublisher(pf.ctx, topic, t, &pf.config)
 	pf.addPublisher(pub)
 
 	pf.waiter.Add(1)
 	go func() {
 		defer pf.waiter.Done()
-		pub.Run()
+		pub.run()
 	}()
 
 	return pub, nil
@@ -232,22 +266,28 @@ func (pf *PublisherFactory) hasPublisher(topic string) bool {
 // Publisher implements the topic publishing provider for the google pubsub
 // layer.
 type Publisher struct {
-	topic   string
-	m       Marshaler
-	error   chan error
-	actions chan func()
-	sink    *pubsub.Topic
-	ctx     context.Context
+	topic    string
+	m        Marshaler
+	error    chan error
+	actions  chan func()
+	sink     *pubsub.Topic
+	ctx      context.Context
+	log      actorkit.LogEvent
+	canceler func()
 }
 
 // NewPublisher returns a new instance of a Publisher.
-func NewPublisher(ctx context.Context, topic string, sink *pubsub.Topic, marshaler Marshaler) *Publisher {
+func NewPublisher(ctx context.Context, topic string, sink *pubsub.Topic, config *PublisherConfig) *Publisher {
+	pctx, canceler := context.WithCancel(ctx)
 	return &Publisher{
-		ctx:     ctx,
-		sink:    sink,
-		topic:   topic,
-		error:   make(chan error, 1),
-		actions: make(chan func(), 0),
+		ctx:      pctx,
+		m:        config.Marshaler,
+		log:      config.Log,
+		canceler: canceler,
+		sink:     sink,
+		topic:    topic,
+		error:    make(chan error, 1),
+		actions:  make(chan func(), 0),
 	}
 }
 
@@ -262,7 +302,11 @@ func (p *Publisher) Publish(msg transit.Message) error {
 	action := func() {
 		marshalled, err := p.m.Marshal(msg)
 		if err != nil {
-			errs <- errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
+			perr := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
+			if p.log != nil {
+				p.log.Publish(transit.MarshalingError{Err: perr, Data: msg.Envelope})
+			}
+			errs <- perr
 			return
 		}
 
@@ -270,7 +314,14 @@ func (p *Publisher) Publish(msg transit.Message) error {
 		<-result.Ready()
 
 		_, err2 := result.Get(p.ctx)
-		errs <- errors.Wrap(err2, "Failed to publish incoming message: %%v", msg)
+		if err2 != nil {
+			perr2 := errors.Wrap(err2, "Failed to publish incoming message: %%v", msg)
+			if p.log != nil {
+				p.log.Publish(transit.PublishError{Err: perr2, Data: marshalled, Topic: msg.Topic})
+			}
+
+			errs <- perr2
+		}
 	}
 
 	select {
@@ -281,9 +332,15 @@ func (p *Publisher) Publish(msg transit.Message) error {
 	}
 }
 
+// Close closes giving publisher and returns any encountered error.
+func (p *Publisher) Close() error {
+	p.canceler()
+	return nil
+}
+
 // Run initializes publishing loop blocking till giving publisher is
-// stop/closed or faces an occured error.
-func (p *Publisher) Run() {
+// stop/closed or faces an occurred error.
+func (p *Publisher) run() {
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -304,6 +361,7 @@ type SubscriberConfig struct {
 	ProjectID                 string
 	MaxOutStandingMessage     int
 	MaxOutStandingBytes       int
+	Log                       actorkit.LogEvent
 	MaxExtension              time.Duration
 	Unmarshaler               Unmarshaler
 	ClientOptions             []option.ClientOption
@@ -391,6 +449,7 @@ func (sb *SubscriptionFactory) createSubscription(topic string, config *pubsub.S
 		newSub.subc = co
 		newSub.topic = topic
 		newSub.id = newSubID
+		newSub.Log = sb.config.Log
 		newSub.receiver = receiver
 		newSub.config = &sb.config
 		newSub.direction = direction
@@ -459,7 +518,7 @@ type Subscription struct {
 	id        string
 	topic     string
 	canceler  func()
-	errs      chan error
+	log       actorkit.LogEvent
 	tx        *pubsub.Topic
 	client    *pubsub.Client
 	ctx       context.Context
@@ -468,11 +527,6 @@ type Subscription struct {
 	direction func(error) Directive
 	subc      pubsub.SubscriptionConfig
 	receiver  func(transit.Message) error
-}
-
-// Error returns the associated received error.
-func (s *Subscription) Error() error {
-	return <-s.errs
 }
 
 // Stop ends giving subscription and it's operation in listening to given topic.
@@ -539,9 +593,12 @@ func (s *Subscription) init() error {
 }
 
 func (s *Subscription) run() {
-	s.errs <- s.sub.Receive(s.ctx, func(ctx context.Context, message *pubsub.Message) {
+	if err := s.sub.Receive(s.ctx, func(ctx context.Context, message *pubsub.Message) {
 		decoded, err := s.config.Unmarshaler.Unmarshal(message)
 		if err != nil {
+			if s.log != nil {
+				s.log.Publish(transit.UnmarshalingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
+			}
 			switch s.direction(err) {
 			case Ack:
 				message.Ack()
@@ -552,6 +609,9 @@ func (s *Subscription) run() {
 		}
 
 		if err := s.receiver(decoded); err != nil {
+			if s.log != nil {
+				s.log.Publish(transit.MessageHandlingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
+			}
 			switch s.direction(err) {
 			case Ack:
 				message.Ack()
@@ -562,5 +622,9 @@ func (s *Subscription) run() {
 		}
 
 		message.Ack()
-	})
+	}); err != nil {
+		if s.log != nil {
+			s.log.Publish(transit.OpError{Err: errors.WrapOnly(err), Topic: s.topic})
+		}
+	}
 }

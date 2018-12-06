@@ -3,6 +3,8 @@ module github.com/gokit/actorkit
 require (
 	cloud.google.com/go v0.33.1 // indirect
 	github.com/confluentinc/confluent-kafka-go v0.11.6 // indirect
+	github.com/go-redis/cache v6.3.5+incompatible // indirect
+	github.com/go-redis/redis v6.14.2+incompatible // indirect
 	github.com/gogo/protobuf v1.1.1 // indirect
 	github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe
 	github.com/gokit/es v0.0.0-20181119091109-8d78b96ec2c1

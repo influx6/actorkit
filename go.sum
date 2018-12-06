@@ -9,6 +9,10 @@ github.com/confluentinc/confluent-kafka-go v0.11.6/go.mod h1:u2zNLny2xq+5rWeTQjF
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
+github.com/go-redis/cache v6.3.5+incompatible h1:4OUyoXXYRRQ6tKA4ue3TlPUkBzk3occzjtXBZBxCzgs=
+github.com/go-redis/cache v6.3.5+incompatible/go.mod h1:XNnMdvlNjcZvHjsscEozHAeOeSE5riG9Fj54meG4WT4=
+github.com/go-redis/redis v6.14.2+incompatible h1:UE9pLhzmWf+xHNmZsoccjXosPicuiNaInPgym8nzfg0=
+github.com/go-redis/redis v6.14.2+incompatible/go.mod h1:NAIEuMOZ/fxfXJIrKDQDz8wamY7mA7PouImQ2Jvg6kA=
 github.com/gogo/protobuf v1.1.1 h1:72R+M5VuhED/KujmZVcIquuo8mBgX4oVda//DQb3PXo=
 github.com/gogo/protobuf v1.1.1/go.mod h1:r8qH/GZQm5c6nD/R0oafs1akxWv10x8SbQlK7atdtwQ=
 github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe h1:ialcZn3JZvJOHViYYiZ/aoL1ZT57GBTjZ6YZyqVWZvI=

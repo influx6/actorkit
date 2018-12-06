@@ -73,7 +73,13 @@ func (m Header) Has(n string) bool {
 // you should never have the need to use the declared interface type but just implement
 // and supply to to any user of interface type within package.
 type LogEvent interface {
-	Publish(interface{})
+	Publish(LogItem)
+}
+
+// LogItem defines an interface which exposes a method for retrieving
+// log details for giving log item.
+type LogItem interface {
+	Details() string
 }
 
 //***************************************************************************
