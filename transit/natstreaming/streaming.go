@@ -43,7 +43,7 @@ type PublisherHandler func(*PublisherSubscriberFactory, string) (transit.Publish
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*PublisherSubscriberFactory, string, transit.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(p *PublisherSubscriberFactory, topic string, id string, r transit.Receiver) (actorkit.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
@@ -57,8 +57,8 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 			Publishers: func(topic string) (transit.Publisher, error) {
 				return publishers(factory, topic)
 			},
-			Subscribers: func(topic string, receiver transit.Receiver) (actorkit.Subscription, error) {
-				return subscribers(factory, topic, receiver)
+			Subscribers: func(topic string, id string, receiver transit.Receiver) (actorkit.Subscription, error) {
+				return subscribers(factory, topic, id, receiver)
 			},
 		}
 	}
@@ -68,11 +68,13 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 // Publisher
 //*****************************************************************************
 
-// PublisherConfig provides a config struct for instantiating a Publisher type.
-type PublisherConfig struct {
+// Config provides a config struct for instantiating a Publisher type.
+type Config struct {
+	URL         string
 	ClusterID   string
 	Options     []pubsub.Option
 	Marshaler   transit.Marshaler
+	Unmarshaler transit.Unmarshaler
 	Log         actorkit.LogEvent
 	DefaultConn *nats.Conn
 }
@@ -81,7 +83,7 @@ type PublisherConfig struct {
 // creation of publishers for topic publishing and management.
 type PublisherSubscriberFactory struct {
 	id     xid.ID
-	config PublisherConfig
+	config Config
 	waiter sync.WaitGroup
 
 	ctx      context.Context
@@ -97,7 +99,7 @@ type PublisherSubscriberFactory struct {
 }
 
 // NewPublisherSubscriberFactory returns a new instance of publisher factory.
-func NewPublisherSubscriberFactory(ctx context.Context, config PublisherConfig) (*PublisherSubscriberFactory, error) {
+func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
 	var pb PublisherSubscriberFactory
 	pb.id = xid.New()
 	pb.config = config
@@ -110,6 +112,10 @@ func NewPublisherSubscriberFactory(ctx context.Context, config PublisherConfig) 
 
 	if config.DefaultConn != nil {
 		ops = append(ops, pubsub.NatsConn(config.DefaultConn))
+	}
+
+	if config.DefaultConn == nil && config.URL != "" {
+		ops = append(ops, pubsub.NatsURL(config.URL))
 	}
 
 	ops = append(ops, pb.config.Options...)
@@ -159,6 +165,7 @@ func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, r
 	sub.log = pf.config.Log
 	sub.receiver = receiver
 	sub.direction = direction
+	sub.m = pf.config.Unmarshaler
 	sub.errs = make(chan error, 1)
 	sub.id = fmt.Sprintf(subQIDFormat, topic, last)
 	sub.ctx, sub.canceler = context.WithCancel(sub.ctx)
@@ -227,7 +234,7 @@ func (pf *PublisherSubscriberFactory) Publisher(topic string) (*Publisher, error
 		return pm, nil
 	}
 
-	pub := NewPublisher(pf.ctx, topic, pf.c, pf.config.Marshaler)
+	pub := NewPublisher(pf.ctx, topic, pf.c, &pf.config)
 	pf.addPublisher(pub)
 
 	pf.waiter.Add(1)
@@ -291,7 +298,7 @@ type Publisher struct {
 }
 
 // NewPublisher returns a new instance of a Publisher.
-func NewPublisher(ctx context.Context, topic string, sink pubsub.Conn, config *PublisherConfig) *Publisher {
+func NewPublisher(ctx context.Context, topic string, sink pubsub.Conn, config *Config) *Publisher {
 	pctx, canceler := context.WithCancel(ctx)
 	return &Publisher{
 		ctx:      pctx,
@@ -313,26 +320,22 @@ func (p *Publisher) Close() error {
 
 // Publish attempts to publish giving message into provided topic publisher returning an
 // error for failed attempt.
-func (p *Publisher) Publish(msg transit.Message) error {
-	if msg.Topic != p.topic {
-		return errors.New("invalid message topic %q to publisher of topic %q", msg.Topic, p.topic)
-	}
-
+func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	errs := make(chan error, 1)
 	action := func() {
-		marshalled, err := p.m.Marshal(msg.Envelope)
+		marshaled, err := p.m.Marshal(msg)
 		if err != nil {
 			em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.MarshalingError{Err: em, Data: msg.Envelope})
+				p.log.Publish(transit.MarshalingError{Err: em, Data: msg})
 			}
 			errs <- em
 			return
 		}
 
-		pubErr := p.sink.Publish(msg.Topic, marshalled)
+		pubErr := p.sink.Publish(p.topic, marshaled)
 		if p.log != nil && pubErr != nil {
-			p.log.Publish(transit.PublishError{Err: errors.WrapOnly(pubErr), Data: marshalled, Topic: msg.Topic})
+			p.log.Publish(transit.PublishError{Err: errors.WrapOnly(pubErr), Data: marshaled, Topic: p.topic})
 		}
 		errs <- pubErr
 	}
@@ -404,7 +407,11 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 		}
 		switch s.direction(err) {
 		case Ack:
-			msg.Ack()
+			if err := msg.Ack(); err != nil {
+				if s.log != nil {
+					s.log.Publish(transit.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
+				}
+			}
 		case Nack:
 		}
 		return
@@ -416,13 +423,21 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 		}
 		switch s.direction(err) {
 		case Ack:
-			msg.Ack()
+			if err := msg.Ack(); err != nil {
+				if s.log != nil {
+					s.log.Publish(transit.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
+				}
+			}
 		case Nack:
 		}
 		return
 	}
 
-	msg.Ack()
+	if err := msg.Ack(); err != nil {
+		if s.log != nil {
+			s.log.Publish(transit.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
+		}
+	}
 }
 
 func (s *Subscription) init() error {

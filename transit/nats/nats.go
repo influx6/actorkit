@@ -66,19 +66,20 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 // Publisher
 //*****************************************************************************
 
-// PublisherConfig provides a config struct for instantiating a Publisher type.
-type PublisherConfig struct {
-	URL       string
-	Options   []pubsub.Option
-	Marshaler transit.Marshaler
-	Log       actorkit.LogEvent
+// Config provides a config struct for instantiating a Publisher type.
+type Config struct {
+	URL         string
+	Options     []pubsub.Option
+	Marshaler   transit.Marshaler
+	Unmarshaler transit.Unmarshaler
+	Log         actorkit.LogEvent
 }
 
 // PublisherSubscriberFactory implements a Google pubsub Publisher factory which handles
 // creation of publishers for topic publishing and management.
 type PublisherSubscriberFactory struct {
 	id     xid.ID
-	config PublisherConfig
+	config Config
 	waiter sync.WaitGroup
 
 	ctx      context.Context
@@ -94,7 +95,7 @@ type PublisherSubscriberFactory struct {
 }
 
 // NewPublisherSubscriberFactory returns a new instance of publisher factory.
-func NewPublisherSubscriberFactory(ctx context.Context, config PublisherConfig) (*PublisherSubscriberFactory, error) {
+func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
 	var pb PublisherSubscriberFactory
 	pb.id = xid.New()
 	pb.config = config
@@ -149,6 +150,7 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 	sub.log = pf.config.Log
 	sub.receiver = receiver
 	sub.direction = direction
+	sub.m = pf.config.Unmarshaler
 	sub.errs = make(chan error, 1)
 
 	if id == "" {
@@ -243,7 +245,7 @@ type Publisher struct {
 }
 
 // NewPublisher returns a new instance of a Publisher.
-func NewPublisher(ctx context.Context, topic string, sink *pubsub.Conn, config *PublisherConfig) *Publisher {
+func NewPublisher(ctx context.Context, topic string, sink *pubsub.Conn, config *Config) *Publisher {
 	pctx, canceler := context.WithCancel(ctx)
 	return &Publisher{
 		ctx:      pctx,
@@ -264,26 +266,22 @@ func (p *Publisher) Close() error {
 
 // Publish attempts to publish giving message into provided topic publisher returning an
 // error for failed attempt.
-func (p *Publisher) Publish(msg transit.Message) error {
-	if msg.Topic != p.topic {
-		return errors.New("invalid message topic %q to publisher of topic %q", msg.Topic, p.topic)
-	}
-
+func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	errs := make(chan error, 1)
 	action := func() {
-		marshaled, err := p.m.Marshal(msg.Envelope)
+		marshaled, err := p.m.Marshal(msg)
 		if err != nil {
 			em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.MarshalingError{Err: em, Data: msg.Envelope})
+				p.log.Publish(transit.MarshalingError{Err: em, Data: msg})
 			}
 			errs <- em
 			return
 		}
 
-		pubErr := p.sink.Publish(msg.Topic, marshaled)
+		pubErr := p.sink.Publish(p.topic, marshaled)
 		if p.log != nil && pubErr != nil {
-			p.log.Publish(transit.PublishError{Err: errors.WrapOnly(pubErr), Data: marshaled, Topic: msg.Topic})
+			p.log.Publish(transit.PublishError{Err: errors.WrapOnly(pubErr), Data: marshaled, Topic: p.topic})
 		}
 		errs <- pubErr
 	}

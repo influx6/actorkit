@@ -13,9 +13,17 @@ type Message struct {
 	Envelope actorkit.Envelope
 }
 
+// NewMessage returns a new instance of a Message with a given topic and envelope.
+func NewMessage(topic string, env actorkit.Envelope) Message {
+	return Message{
+		Topic:    topic,
+		Envelope: env,
+	}
+}
+
 // Marshaler exposes a method to turn an envelope into a byte slice.
 type Marshaler interface {
-	Marshal(envelope actorkit.Envelope) ([]byte, error)
+	Marshal(actorkit.Envelope) ([]byte, error)
 }
 
 // Unmarshaler exposes a method to turn an byte slice into a envelope.
@@ -80,7 +88,7 @@ func (p *PubSubFactoryImpl) NewSubscriber(topic string, id string, r Receiver) (
 // Publisher exposes a method  for the publishing of a provided message.
 type Publisher interface {
 	Close() error
-	Publish(Message) error
+	Publish(actorkit.Envelope) error
 }
 
 // PublisherFactory exposes a single method for the return of a

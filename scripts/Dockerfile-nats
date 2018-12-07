@@ -1,0 +1,7 @@
+FROM influx6/actorkit-base:1.0
+MAINTAINER Alexander Ewetumo <trinoxf@gmail.com>
+
+RUN mkdir /scripts
+ADD *.sh /scripts/
+
+

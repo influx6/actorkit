@@ -119,7 +119,7 @@ type PublisherHandler func(*PublisherFactory, string) (transit.Publisher, error)
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*SubscriptionFactory, string, transit.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*SubscriptionFactory, string, string, transit.Receiver) (actorkit.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
@@ -133,8 +133,8 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 			Publishers: func(topic string) (transit.Publisher, error) {
 				return publishers(pub, topic)
 			},
-			Subscribers: func(topic string, receiver transit.Receiver) (actorkit.Subscription, error) {
-				return subscribers(sub, topic, receiver)
+			Subscribers: func(topic string, id string, receiver transit.Receiver) (actorkit.Subscription, error) {
+				return subscribers(sub, topic, id, receiver)
 			},
 		}
 	}
@@ -293,31 +293,27 @@ func NewPublisher(ctx context.Context, topic string, sink *pubsub.Topic, config 
 
 // Publish attempts to publish giving message into provided topic publisher returning an
 // error for failed attempt.
-func (p *Publisher) Publish(msg transit.Message) error {
-	if msg.Topic != p.topic {
-		return errors.New("invalid message topic %q to publisher of topic %q", msg.Topic, p.topic)
-	}
-
+func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	errs := make(chan error, 1)
 	action := func() {
-		marshalled, err := p.m.Marshal(msg)
+		marshaled, err := p.m.Marshal(transit.Message{Topic: p.topic, Envelope: msg})
 		if err != nil {
 			perr := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.MarshalingError{Err: perr, Data: msg.Envelope})
+				p.log.Publish(transit.MarshalingError{Err: perr, Data: msg})
 			}
 			errs <- perr
 			return
 		}
 
-		result := p.sink.Publish(p.ctx, &marshalled)
+		result := p.sink.Publish(p.ctx, &marshaled)
 		<-result.Ready()
 
 		_, err2 := result.Get(p.ctx)
 		if err2 != nil {
 			perr2 := errors.Wrap(err2, "Failed to publish incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.PublishError{Err: perr2, Data: marshalled, Topic: msg.Topic})
+				p.log.Publish(transit.PublishError{Err: perr2, Data: marshaled, Topic: p.topic})
 			}
 
 			errs <- perr2
@@ -408,8 +404,8 @@ func NewSubscriptionFactory(ctx context.Context, config SubscriberConfig) (*Subs
 
 // Subscribe subscribes to a giving topic, if one exists then a new subscription with a ever incrementing id is assigned
 // to new subscription.
-func (sb *SubscriptionFactory) Subscribe(topic string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error, action func(error) Directive) (actorkit.Subscription, error) {
-	return sb.createSubscription(topic, config, receiver, action)
+func (sb *SubscriptionFactory) Subscribe(topic string, id string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error, action func(error) Directive) (actorkit.Subscription, error) {
+	return sb.createSubscription(topic, id, config, receiver, action)
 }
 
 // Wait blocks till all subscription and SubscriptionFactory is closed.

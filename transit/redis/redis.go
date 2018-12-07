@@ -251,28 +251,24 @@ func (p *Publisher) Close() error {
 
 // Publish attempts to publish giving message into provided topic publisher returning an
 // error for failed attempt.
-func (p *Publisher) Publish(msg transit.Message) error {
-	if msg.Topic != p.topic {
-		return errors.New("invalid message topic %q to publisher of topic %q", msg.Topic, p.topic)
-	}
-
+func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	errs := make(chan error, 1)
 	action := func() {
-		marshaled, err := p.m.Marshal(msg.Envelope)
+		marshaled, err := p.m.Marshal(msg)
 		if err != nil {
 			em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.MarshalingError{Err: em, Data: msg.Envelope})
+				p.log.Publish(transit.MarshalingError{Err: em, Data: msg})
 			}
 			errs <- em
 			return
 		}
 
-		status := p.sink.Publish(msg.Topic, marshaled)
+		status := p.sink.Publish(p.topic, marshaled)
 		if err := status.Err(); err != nil {
 			sem := errors.Wrap(err, "Failed to publish message")
 			if p.log != nil {
-				p.log.Publish(transit.PublishError{Err: sem, Data: marshaled, Topic: msg.Topic})
+				p.log.Publish(transit.PublishError{Err: sem, Data: marshaled, Topic: p.topic})
 			}
 
 			errs <- sem
