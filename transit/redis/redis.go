@@ -56,19 +56,20 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 // Publisher
 //*****************************************************************************
 
-// PublisherConfig provides a config struct for instantiating a Publisher type.
-type PublisherConfig struct {
-	URL       string
-	Options   pubsub.Options
-	Marshaler transit.Marshaler
-	Log       actorkit.LogEvent
+// Config provides a config struct for instantiating a Publisher type.
+type Config struct {
+	URL         string
+	Options     pubsub.Options
+	Marshaler   transit.Marshaler
+	Unmarshaler transit.Unmarshaler
+	Log         actorkit.LogEvent
 }
 
 // PublisherSubscriberFactory implements a Google pubsub Publisher factory which handles
 // creation of publishers for topic publishing and management.
 type PublisherSubscriberFactory struct {
 	id     xid.ID
-	config PublisherConfig
+	config Config
 	waiter sync.WaitGroup
 
 	ctx      context.Context
@@ -84,7 +85,7 @@ type PublisherSubscriberFactory struct {
 }
 
 // NewPublisherSubscriberFactory returns a new instance of publisher factory.
-func NewPublisherSubscriberFactory(ctx context.Context, config PublisherConfig) (*PublisherSubscriberFactory, error) {
+func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
 	var pb PublisherSubscriberFactory
 	pb.id = xid.New()
 	pb.config = config
@@ -137,6 +138,7 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 	sub.topic = topic
 	sub.client = pf.c
 	sub.receiver = receiver
+	sub.m = pf.config.Unmarshaler
 	sub.errs = make(chan error, 1)
 	sub.ctx, sub.canceler = context.WithCancel(sub.ctx)
 
