@@ -179,7 +179,7 @@ func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, r
 // messages for giving topic from the nats streaming provider. If the topic already has a subscriber then
 // a subscriber with a ever increasing _id is added and returned, the subscriber receives the giving
 // topc_id as durable name for it's subscription.
-func (pf *PublisherSubscriberFactory) Subscribe(topic string, receiver func(transit.Message) error, direction func(error) Directive, ops []pubsub.SubscriptionOption) (*Subscription, error) {
+func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver func(transit.Message) error, direction func(error) Directive, ops []pubsub.SubscriptionOption) (*Subscription, error) {
 	if sub, ok := pf.getSubscription(topic); ok {
 		return sub, nil
 	}
@@ -197,7 +197,13 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, receiver func(tran
 	sub.receiver = receiver
 	sub.direction = direction
 	sub.errs = make(chan error, 1)
-	sub.id = fmt.Sprintf(subIDFormat, topic, last)
+
+	if id == "" {
+		sub.id = fmt.Sprintf(subIDFormat, topic, last)
+	} else {
+		sub.id = id
+	}
+
 	sub.ctx, sub.canceler = context.WithCancel(sub.ctx)
 
 	if err := sub.init(); err != nil {

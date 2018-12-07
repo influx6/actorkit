@@ -123,7 +123,7 @@ type PublisherHandler func(string) (transit.Publisher, error)
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*ConsumerFactory, string, transit.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*ConsumerFactory, string, string, transit.Receiver) (actorkit.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
@@ -137,8 +137,8 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 			Publishers: func(topic string) (transit.Publisher, error) {
 				return publishers(topic)
 			},
-			Subscribers: func(topic string, receiver transit.Receiver) (actorkit.Subscription, error) {
-				return subscribers(sub, topic, receiver)
+			Subscribers: func(topic string, id string, receiver transit.Receiver) (actorkit.Subscription, error) {
+				return subscribers(sub, topic, id, receiver)
 			},
 		}
 	}
@@ -150,15 +150,15 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 
 // Config defines configuration fields for use with a ConsumerFactory.
 type Config struct {
-	Brokers         []string
-	ConsumersCount  int
-	AutoOffsetReset string
-	ConsumerGroup   string
-	NoConsumerGroup bool
-	Unmarshaler     Unmarshaler
-	Log             actorkit.LogEvent
-	PollingTime     time.Duration
-	Overrides       kafka.ConfigMap
+	Brokers              []string
+	ConsumersCount       int
+	AutoOffsetReset      string
+	NoConsumerGroup      bool
+	DefaultConsumerGroup string
+	Unmarshaler          Unmarshaler
+	Log                  actorkit.LogEvent
+	PollingTime          time.Duration
+	Overrides            kafka.ConfigMap
 }
 
 // ConsumerFactory implements a kafka subscriber provider which handles and manages
@@ -187,7 +187,7 @@ func NewConsumerFactory(config Config, unmarshaler Unmarshaler) *ConsumerFactory
 		config.AutoOffsetReset = "latest"
 	}
 
-	if config.ConsumerGroup == "" {
+	if config.DefaultConsumerGroup == "" {
 		config.NoConsumerGroup = true
 	}
 
@@ -209,12 +209,20 @@ func (ka *ConsumerFactory) Close() error {
 }
 
 // CreateConsumer return a new consumer
-func (ka *ConsumerFactory) CreateConsumer(topic string, receiver func(message transit.Message) error, director func(error) Directive) error {
+func (ka *ConsumerFactory) CreateConsumer(topic string, id string, receiver func(message transit.Message) error, director func(error) Directive) error {
 	if ka.hasConsumer(topic) {
 		return nil
 	}
 
-	config, err := ka.generateConfig()
+	var cid string
+
+	if id == "" {
+		cid = ka.config.DefaultConsumerGroup
+	} else {
+		cid = id
+	}
+
+	config, err := ka.generateConfig(cid)
 	if err != nil {
 		return err
 	}
@@ -249,7 +257,7 @@ func (ka *ConsumerFactory) hasConsumer(topic string) bool {
 	return ok
 }
 
-func (ka *ConsumerFactory) generateConfig() (*kafka.ConfigMap, error) {
+func (ka *ConsumerFactory) generateConfig(id string) (*kafka.ConfigMap, error) {
 	kconfig := &kafka.ConfigMap{
 		"debug":                ",",
 		"session.timeout.ms":   6000,
@@ -259,7 +267,7 @@ func (ka *ConsumerFactory) generateConfig() (*kafka.ConfigMap, error) {
 	}
 
 	if !ka.config.NoConsumerGroup {
-		kconfig.SetKey("group.id", ka.config.ConsumerGroup)
+		kconfig.SetKey("group.id", id)
 		kconfig.SetKey("enable.auto.commit", true)
 
 		// to achieve at-least-once delivery we store offsets after processing of the message

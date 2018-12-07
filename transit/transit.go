@@ -47,7 +47,7 @@ type PublisherHandler func(string) (Publisher, error)
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(string, Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(topic string, id string, r Receiver) (actorkit.Subscription, error)
 
 // PubSubFactoryImpl implements the PubSubFactory interface, allowing providing
 // custom generator functions which will returning appropriate Publishers and Subscribers
@@ -66,11 +66,11 @@ func (p *PubSubFactoryImpl) NewPublisher(topic string) (Publisher, error) {
 }
 
 // NewSubscriber returns a new Subscriber using the Subscribers handler function provided.
-func (p *PubSubFactoryImpl) NewSubscriber(topic string, r Receiver) (actorkit.Subscription, error) {
+func (p *PubSubFactoryImpl) NewSubscriber(topic string, id string, r Receiver) (actorkit.Subscription, error) {
 	if p.Publishers == nil {
 		return nil, errors.New("NewSubscriber not supported")
 	}
-	return p.Subscribers(topic, r)
+	return p.Subscribers(topic, id, r)
 }
 
 //*********************************************************
@@ -98,7 +98,7 @@ type Receiver func(Message) error
 
 // SubscriptionFactory exposes a given method for the creation of a subscription.
 type SubscriptionFactory interface {
-	NewSubscriber(string, Receiver) (actorkit.Subscription, error)
+	NewSubscriber(string, string, Receiver) (actorkit.Subscription, error)
 }
 
 //*********************************************************

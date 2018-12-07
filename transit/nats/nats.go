@@ -41,7 +41,7 @@ type PublisherHandler func(*PublisherSubscriberFactory, string) (transit.Publish
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*PublisherSubscriberFactory, string, transit.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*PublisherSubscriberFactory, string, string, transit.Receiver) (actorkit.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
@@ -55,8 +55,8 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 			Publishers: func(topic string) (transit.Publisher, error) {
 				return publishers(factory, topic)
 			},
-			Subscribers: func(topic string, receiver transit.Receiver) (actorkit.Subscription, error) {
-				return subscribers(factory, topic, receiver)
+			Subscribers: func(topic string, id string, receiver transit.Receiver) (actorkit.Subscription, error) {
+				return subscribers(factory, topic, id, receiver)
 			},
 		}
 	}
@@ -130,7 +130,9 @@ func (pf *PublisherSubscriberFactory) Close() error {
 // messages for giving topic from the NATS streaming provider. If the topic already has a subscriber then
 // a subscriber with a ever increasing _id is added and returned, the subscriber receives the giving
 // topic_id as durable name for it's subscription.
-func (pf *PublisherSubscriberFactory) Subscribe(topic string, receiver func(transit.Message) error, direction func(error) Directive) (*Subscription, error) {
+//
+// The id argument is optional and can be left empty.
+func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver func(transit.Message) error, direction func(error) Directive) (*Subscription, error) {
 	if sub, ok := pf.getSubscription(topic); ok {
 		return sub, nil
 	}
@@ -148,7 +150,13 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, receiver func(tran
 	sub.receiver = receiver
 	sub.direction = direction
 	sub.errs = make(chan error, 1)
-	sub.id = fmt.Sprintf(subIDFormat, topic, last)
+
+	if id == "" {
+		sub.id = fmt.Sprintf(subIDFormat, topic, last)
+	} else {
+		sub.id = id
+	}
+
 	sub.ctx, sub.canceler = context.WithCancel(sub.ctx)
 
 	if err := sub.init(); err != nil {

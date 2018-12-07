@@ -427,7 +427,7 @@ func (sb *SubscriptionFactory) Close() error {
 	return err
 }
 
-func (sb *SubscriptionFactory) createSubscription(topic string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error, direction func(error) Directive) (*Subscription, error) {
+func (sb *SubscriptionFactory) createSubscription(topic string, id string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error, direction func(error) Directive) (*Subscription, error) {
 	errs := make(chan error, 1)
 	subs := make(chan *Subscription, 1)
 
@@ -448,8 +448,14 @@ func (sb *SubscriptionFactory) createSubscription(topic string, config *pubsub.S
 		var newSub Subscription
 		newSub.subc = co
 		newSub.topic = topic
-		newSub.id = newSubID
-		newSub.Log = sb.config.Log
+
+		if id == "" {
+			newSub.id = newSubID
+		} else {
+			newSub.id = id
+		}
+
+		newSub.log = sb.config.Log
 		newSub.receiver = receiver
 		newSub.config = &sb.config
 		newSub.direction = direction
