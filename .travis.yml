@@ -19,6 +19,18 @@ before_install:
 # the whole Travis build is considered a failure).
 script:
 
+jobs:
+  include:
+    - stage: docker-tests-builds
+      script: make build
+    - stage: actorkit-tests
+      - script: make run-golang-test
+      - script: make run-golang-pubsub-test
+      - script: make run-redis-pubsub-test
+      - script: make run-kafka-pubsub-test
+      - script: make run-nats-pubsub-test
+      - script: make run-nats-streaming-pubsub-test
+
 # only execute the following instructions in
 # the case of a success (failing at this point
 # won't mark the build as a failure).
@@ -28,10 +40,6 @@ script:
 # page of your repository and then change the
 # environment in the settings pannel.
 after_success:
-- if [[ "$TRAVIS_BRANCH" == "master" ]]; then
-  docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD ;
-  make default;
-  fi
 
 # don't notify me when things fail
 notifications:
