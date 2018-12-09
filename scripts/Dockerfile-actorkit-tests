@@ -1,0 +1,8 @@
+FROM influx6/golang-1.11.2-base:0.1
+
+ENV GO111MODULE=on
+
+COPY . $GOPATH/github.com/gokit/actorkit
+WORKDIR $GOPATH/github.com/gokit/actorkit
+
+CMD "sh ./scripts/actorkit-tests.sh"

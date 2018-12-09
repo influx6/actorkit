@@ -1,16 +1,37 @@
-language: go
+language: minimal
 
-go:
-  - 1.9
-  - 1.8
-  - 1.7
+# make use of vm's
+sudo: 'required'
 
-before_script:
-after_script:
+# have the docker service set up (we'll
+# update it later)
+services:
+- 'docker'
+
+# prepare the machine before any code
+# installation scripts
+before_install:
+- './.travis/main.sh'
+
+# first execute the test suite.
+# after the test execution is done and didn't
+# fail, build the images (if this step fails
+# the whole Travis build is considered a failure).
 script:
 
-jobs:
- include:
-  - stage: test
-    script: go test -v ./...
+# only execute the following instructions in
+# the case of a success (failing at this point
+# won't mark the build as a failure).
+# To have `DOCKER_USERNAME` and `DOCKER_PASSWORD`
+# filled you need to either use `.travis`' cli
+# and then `.travis set ..` or go to the .travis
+# page of your repository and then change the
+# environment in the settings pannel.
+after_success:
+- if [[ "$TRAVIS_BRANCH" == "master" ]]; then
+  docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD ;
+  make default;
+  fi
 
+# don't notify me when things fail
+notifications:
