@@ -24,12 +24,12 @@ jobs:
     - stage: docker-tests-builds
       script: make build
     - stage: actorkit-tests
-      - script: make run-golang-test
-      - script: make run-golang-pubsub-test
-      - script: make run-redis-pubsub-test
-      - script: make run-kafka-pubsub-test
-      - script: make run-nats-pubsub-test
-      - script: make run-nats-streaming-pubsub-test
+      script: make run-golang-test
+    - script: make run-golang-pubsub-test
+    - script: make run-redis-pubsub-test
+    - script: make run-kafka-pubsub-test
+    - script: make run-nats-pubsub-test
+    - script: make run-nats-streaming-pubsub-test
 
 # only execute the following instructions in
 # the case of a success (failing at this point

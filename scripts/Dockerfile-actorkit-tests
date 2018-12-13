@@ -2,7 +2,7 @@ FROM influx6/golang-1.11.2-base:0.1
 
 ENV GO111MODULE=on
 
-RUN apk --no-cache add git gcc libc
+RUN apk --no-cache add git gcc
 
 COPY . $GOPATH/github.com/gokit/actorkit
 WORKDIR $GOPATH/github.com/gokit/actorkit
