@@ -1,4 +1,4 @@
-FROM influx6/redis-golang-1.11.2-base:0.1
+FROM influx6/redis-golang-1.11.2-debian-base:0.1
 
 ENV GO111MODULE=on
 
