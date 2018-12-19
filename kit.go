@@ -2,7 +2,6 @@ package actorkit
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/gokit/es"
@@ -122,12 +121,6 @@ type ActorRegistry interface {
 	GetAddr(string) (Actor, error)
 }
 
-// HashedProcessRegistry
-type HashedProcessRegistry struct {
-	hl     sync.RWMutex
-	actors map[string]Actor
-}
-
 //***********************************
 //  Actor
 //***********************************
@@ -167,7 +160,6 @@ type Actor interface {
 
 	Spawner
 	Discovery
-	DiscoveryChain
 
 	Running
 	Receiver
@@ -210,7 +202,6 @@ type Addr interface {
 	Descendants
 	Addressable
 	ProtocolAddr
-	DiscoveryChain
 	Escalatable
 	Namespace
 	AddressActor
@@ -470,6 +461,10 @@ type Prop struct {
 	// MessageInvoker defines the invoker called for updating metrics on status of incoming
 	// messages.
 	MessageInvoker MessageInvoker
+
+	// Discovery provides a overriding discovery service to be used for spawned actor
+	// instead of inheriting from parent, if parent has any.
+	Discovery DiscoveryService
 
 	// MailInvoker defines the invoker called for updating metrics on mailbox usage.
 	MailInvoker MailInvoker

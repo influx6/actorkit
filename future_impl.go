@@ -115,11 +115,6 @@ func (f *FutureImpl) Escalate(m interface{}) {
 	f.broadcast()
 }
 
-// AddDiscovery attempts to add giving discovery service to underline future.
-func (f *FutureImpl) AddDiscovery(service DiscoveryService) error {
-	return errors.New("not possible")
-}
-
 // AddressOf requests giving service from future's parent AddressOf method.
 func (f *FutureImpl) AddressOf(service string, ancestry bool) (Addr, error) {
 	return nil, errors.New("not possible")

@@ -25,6 +25,9 @@ var (
 
 	// ErrActorHasNoBehaviour is returned when an is to start with no attached behaviour.
 	ErrActorHasNoBehaviour = errors.New("Actor must be running")
+
+	// ErrActorHasNoDiscoveryService is returned when actor has no discovery server.
+	ErrActorHasNoDiscoveryService = errors.New("Actor does not support discovery")
 )
 
 //********************************************************
@@ -136,15 +139,6 @@ func UseProtocol(proc string) ActorOption {
 	}
 }
 
-// UseGlobalRegistry applies giving registry to be used by
-// generated actor for registry itself when started and unregister
-// itself when destroyed.
-func UseGlobalRegistry(registry ActorRegistry) ActorOption {
-	return func(impl *ActorImpl) {
-		impl.registry = registry
-	}
-}
-
 // UseSentinel sets giving Sentinel provider for a actor.
 func UseSentinel(sn Sentinel) ActorOption {
 	return func(impl *ActorImpl) {
@@ -196,6 +190,14 @@ func UseParent(a Actor) ActorOption {
 func UseSupervisor(s Supervisor) ActorOption {
 	return func(ac *ActorImpl) {
 		ac.supervisor = s
+	}
+}
+
+// UseDiscoveryService sets the discovery service provider to be used
+// by a giving actor.
+func UseDiscoveryService(s DiscoveryService) ActorOption {
+	return func(ac *ActorImpl) {
+		ac.discovery = s
 	}
 }
 
@@ -338,7 +340,6 @@ type ActorImpl struct {
 	parent      Actor
 	mails       Mailbox
 	tree        *ActorTree
-	registry    ActorRegistry
 	deadLockDur time.Duration
 	busyDur     time.Duration
 	events      *es.EventStream
@@ -379,6 +380,7 @@ type ActorImpl struct {
 	processable *SwitchImpl
 
 	supervisor Supervisor
+	discovery  DiscoveryService
 
 	proc     sync.WaitGroup
 	messages sync.WaitGroup
@@ -397,8 +399,6 @@ type ActorImpl struct {
 	gsub         *es.Subscription
 	sentinelSubs map[Addr]Subscription
 	subs         map[Actor]Subscription
-	chl          sync.RWMutex
-	chain        []DiscoveryService
 }
 
 // NewActorImpl returns a new instance of an ActorImpl assigned giving protocol and service name.
@@ -490,18 +490,6 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 		ac.gsub = ac.events.Subscribe(ac.gevents.Publish).WithPredicate(isSystemMessages)
 	}
 
-	// Add yourself into global registry.
-	if ac.registry != nil {
-		if err := ac.registry.AddActor(ac); err != nil {
-			ac.events.Publish(ActorRegistrationFailure{
-				Err:  err,
-				Addr: ac.accessAddr,
-			})
-		} else {
-			atomic.CompareAndSwapInt64(&ac.registered, 0, 1)
-		}
-	}
-
 	return ac
 }
 
@@ -567,14 +555,6 @@ func (ati *ActorImpl) Receive(a Addr, e Envelope) error {
 	return ati.mails.Push(a, e)
 }
 
-// AddDiscovery adds new Discovery service into actor's discovery chain.
-func (ati *ActorImpl) AddDiscovery(b DiscoveryService) error {
-	ati.chl.Lock()
-	ati.chain = append(ati.chain, b)
-	ati.chl.Unlock()
-	return nil
-}
-
 // Discover returns actor's Addr from this actor's
 // discovery chain, else passing up the service till it
 // reaches the actors root where no possible discovery can be done.
@@ -588,20 +568,18 @@ func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
 		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
-	ati.chl.RLock()
-	for _, disco := range ati.chain {
-		if addr, err := disco.Discover(service); err == nil {
-			ati.chl.RUnlock()
-			return addr, nil
-		}
-	}
-	ati.chl.RUnlock()
-
-	if ati.parent != nil && ancestral {
+	if ati.parent != nil && ati.discovery == nil && ancestral {
 		return ati.parent.Discover(service, ancestral)
 	}
 
-	return nil, errors.New("service %q not found")
+	addr, err := ati.discovery.Discover(service)
+	if err != nil {
+		if ati.parent != nil && ancestral {
+			return ati.parent.Discover(service, ancestral)
+		}
+		return nil, errors.WrapOnly(err)
+	}
+	return addr, nil
 }
 
 // Spawn spawns a new actor under this parents tree returning address of
@@ -614,7 +592,7 @@ func (ati *ActorImpl) Spawn(service string, rec Behaviour, prop Prop) (Addr, err
 	}
 
 	ops := make([]ActorOption, 0, 18)
-	ops = append(ops, UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec), UseGlobalRegistry(ati.registry))
+	ops = append(ops, UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
 
 	if prop.BusyDuration > 0 {
 		ops = append(ops, WaitBusyDuration(prop.BusyDuration))
@@ -622,6 +600,12 @@ func (ati *ActorImpl) Spawn(service string, rec Behaviour, prop Prop) (Addr, err
 
 	if prop.DeadLockDuration > 0 {
 		ops = append(ops, DeadLockTicker(prop.DeadLockDuration))
+	}
+
+	if prop.Discovery != nil {
+		ops = append(ops, UseDiscoveryService(prop.Discovery))
+	} else if ati.discovery != nil {
+		ops = append(ops, UseDiscoveryService(ati.discovery))
 	}
 
 	if prop.DeadLetters != nil {
@@ -986,20 +970,6 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 
 	ati.started.On()
 
-	// If we were not added at startup then attempt now into global registry.
-	if atomic.LoadInt64(&ati.registered) == 0 {
-		if ati.registry != nil {
-			if err := ati.registry.AddActor(ati); err != nil {
-				ati.events.Publish(ActorRegistrationFailure{
-					Err:  err,
-					Addr: ati.accessAddr,
-				})
-			}
-		} else {
-			atomic.CompareAndSwapInt64(&ati.registered, 0, 1)
-		}
-	}
-
 	return nil
 }
 
@@ -1220,20 +1190,6 @@ func (ati *ActorImpl) registerChild(ac Actor) {
 
 	// add actor subscription into map.
 	ati.subs[ac] = sub
-}
-
-func (ati *ActorImpl) unregisterSelf(ac Actor) {
-	if atomic.LoadInt64(&ati.registered) == 0 {
-		return
-	}
-
-	atomic.StoreInt64(&ati.registered, 0)
-	if err := ati.registry.RemoveActor(ati); err != nil {
-		ati.events.Publish(ActorUnregistrationFailure{
-			Err:  err,
-			Addr: ati.accessAddr,
-		})
-	}
 }
 
 func (ati *ActorImpl) unregisterChild(ac Actor) {

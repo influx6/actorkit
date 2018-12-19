@@ -452,15 +452,6 @@ func (a *AddrImpl) Spawn(service string, rec Behaviour, prop Prop) (Addr, error)
 	return a.actor.Spawn(service, rec, prop)
 }
 
-// AddDiscovery adds discovery service to giving underline actor if possible.
-// It returns an error if not possible or failed.
-func (a *AddrImpl) AddDiscovery(service DiscoveryService) error {
-	if a.deadletter {
-		return errors.New("not possible from a deadletter address")
-	}
-	return a.actor.AddDiscovery(service)
-}
-
 // AddressOf returns the address of giving actor matching giving service name.
 func (a *AddrImpl) AddressOf(service string, ancestral bool) (Addr, error) {
 	if a.deadletter {

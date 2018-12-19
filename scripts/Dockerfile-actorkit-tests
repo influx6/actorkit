@@ -1,10 +1,8 @@
-FROM influx6/golang-1.11.2-debian-base:0.1
+FROM influx6/golang-1.11.3-debian-base:0.1
 
 ENV GO111MODULE=on
+COPY . gokit/actorkit
+WORKDIR gokit/actorkit
+RUN make gomod
+CMD "make base_tests"
 
-RUN apk --no-cache add git gcc
-
-COPY . $GOPATH/github.com/gokit/actorkit
-WORKDIR $GOPATH/github.com/gokit/actorkit
-
-CMD "./scripts/actorkit-tests.sh"
