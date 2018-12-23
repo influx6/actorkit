@@ -1,6 +1,7 @@
 package actorkit
 
 import (
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -55,12 +56,8 @@ func (on *AllForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 		}
 
 		switch tm := err.(type) {
-		case ActorPanic:
-			panic(tm.Error())
-		case ActorRoutineError:
-			panic(tm.Error())
-		case ActorRoutinePanic:
-			panic(tm.Error())
+		case PanicEvent:
+			panic(fmt.Sprintf("%#q\n", tm))
 		default:
 			panic(err)
 		}
@@ -149,12 +146,8 @@ func (on *OneForOneSupervisor) Handle(err interface{}, targetAddr Addr, target A
 		}
 
 		switch tm := err.(type) {
-		case ActorPanic:
-			panic(tm.Error())
-		case ActorRoutineError:
-			panic(tm.Error())
-		case ActorRoutinePanic:
-			panic(tm.Error())
+		case PanicEvent:
+			panic(fmt.Sprintf("%#q\n", tm))
 		default:
 			panic(err)
 		}

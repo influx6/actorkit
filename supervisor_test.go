@@ -12,15 +12,16 @@ import (
 
 func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 	supervisor := actorkit.ExponentialBackOffRestartStrategy(10, 1*time.Second, nil)
-	system, err := actorkit.Ancestor("kit", "localhost")
+
+	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
-	child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+	child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 	assert.NoError(t, err)
 	assert.NotNil(t, child1)
 
-	child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+	child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 	assert.NoError(t, err)
 	assert.NotNil(t, child2)
 
@@ -30,11 +31,14 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 	var w sync.WaitGroup
 	w.Add(2)
 	sub := child1.Watch(func(i interface{}) {
-		switch i.(type) {
-		case actorkit.ActorRestartRequested:
-			w.Done()
-		case actorkit.ActorRestarted:
-			w.Done()
+		switch sm := i.(type) {
+		case actorkit.ActorSignal:
+			switch sm.Signal {
+			case actorkit.RESTARTING:
+				w.Done()
+			case actorkit.RESTARTED:
+				w.Done()
+			}
 		}
 	})
 
@@ -52,15 +56,15 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 
 func TestRestartSupervisor(t *testing.T) {
 	supervisor := &actorkit.RestartingSupervisor{}
-	system, err := actorkit.Ancestor("kit", "localhost")
+	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
-	child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+	child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 	assert.NoError(t, err)
 	assert.NotNil(t, child1)
 
-	child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+	child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 	assert.NoError(t, err)
 	assert.NotNil(t, child2)
 
@@ -70,11 +74,14 @@ func TestRestartSupervisor(t *testing.T) {
 	var w sync.WaitGroup
 	w.Add(2)
 	sub := child1.Watch(func(i interface{}) {
-		switch i.(type) {
-		case actorkit.ActorRestartRequested:
-			w.Done()
-		case actorkit.ActorRestarted:
-			w.Done()
+		switch sm := i.(type) {
+		case actorkit.ActorSignal:
+			switch sm.Signal {
+			case actorkit.RESTARTING:
+				w.Done()
+			case actorkit.RESTARTED:
+				w.Done()
+			}
 		}
 	})
 
@@ -97,24 +104,24 @@ func TestOneForOneSupervisor(t *testing.T) {
 		Max: 30,
 		PanicAction: func(i interface{}, addr actorkit.Addr, actor actorkit.Actor) {
 			assert.NotNil(t, i)
-			assert.IsType(t, actorkit.ActorRoutinePanic{}, i)
+			assert.IsType(t, actorkit.PanicEvent{}, i)
 		},
 		Decider: func(tm interface{}) actorkit.Directive {
 			return supervisingAction(tm)
 		},
 	}
 
-	system, err := actorkit.Ancestor("kit", "localhost")
+	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
 	t.Logf("When supervisor is told destroy")
 	{
-		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -124,11 +131,14 @@ func TestOneForOneSupervisor(t *testing.T) {
 		var w sync.WaitGroup
 		w.Add(2)
 		sub := child1.Watch(func(i interface{}) {
-			switch i.(type) {
-			case actorkit.ActorDestroyRequested:
-				w.Done()
-			case actorkit.ActorDestroyed:
-				w.Done()
+			switch sm := i.(type) {
+			case actorkit.ActorSignal:
+				switch sm.Signal {
+				case actorkit.DESTRUCTING:
+					w.Done()
+				case actorkit.DESTROYED:
+					w.Done()
+				}
 			}
 		})
 
@@ -147,11 +157,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told kill")
 	{
-		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -161,11 +171,14 @@ func TestOneForOneSupervisor(t *testing.T) {
 		var w sync.WaitGroup
 		w.Add(2)
 		sub := child1.Watch(func(i interface{}) {
-			switch i.(type) {
-			case actorkit.ActorKillRequested:
-				w.Done()
-			case actorkit.ActorKilled:
-				w.Done()
+			switch sm := i.(type) {
+			case actorkit.ActorSignal:
+				switch sm.Signal {
+				case actorkit.KILLING:
+					w.Done()
+				case actorkit.KILLED:
+					w.Done()
+				}
 			}
 		})
 
@@ -186,11 +199,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told stop")
 	{
-		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -200,11 +213,14 @@ func TestOneForOneSupervisor(t *testing.T) {
 		var w sync.WaitGroup
 		w.Add(2)
 		sub := child1.Watch(func(i interface{}) {
-			switch i.(type) {
-			case actorkit.ActorStopRequested:
-				w.Done()
-			case actorkit.ActorStopped:
-				w.Done()
+			switch sm := i.(type) {
+			case actorkit.ActorSignal:
+				switch sm.Signal {
+				case actorkit.STOPPING:
+					w.Done()
+				case actorkit.STOPPED:
+					w.Done()
+				}
 			}
 		})
 
@@ -225,11 +241,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told restart")
 	{
-		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -239,11 +255,14 @@ func TestOneForOneSupervisor(t *testing.T) {
 		var w sync.WaitGroup
 		w.Add(2)
 		sub := child1.Watch(func(i interface{}) {
-			switch i.(type) {
-			case actorkit.ActorRestartRequested:
-				w.Done()
-			case actorkit.ActorRestarted:
-				w.Done()
+			switch sm := i.(type) {
+			case actorkit.ActorSignal:
+				switch sm.Signal {
+				case actorkit.RESTARTING:
+					w.Done()
+				case actorkit.RESTARTED:
+					w.Done()
+				}
 			}
 		})
 
@@ -271,24 +290,24 @@ func TestAllForOneSupervisor(t *testing.T) {
 		Max: 30,
 		PanicAction: func(i interface{}, addr actorkit.Addr, actor actorkit.Actor) {
 			assert.NotNil(t, i)
-			assert.IsType(t, actorkit.ActorRoutinePanic{}, i)
+			assert.IsType(t, actorkit.PanicEvent{}, i)
 		},
 		Decider: func(tm interface{}) actorkit.Directive {
 			return supervisingAction(tm)
 		},
 	}
 
-	system, err := actorkit.Ancestor("kit", "localhost")
+	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
 	t.Logf("When supervisor is told destroy")
 	{
-		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -298,11 +317,14 @@ func TestAllForOneSupervisor(t *testing.T) {
 		var w sync.WaitGroup
 		w.Add(2)
 		sub := child1.Watch(func(i interface{}) {
-			switch i.(type) {
-			case actorkit.ActorDestroyRequested:
-				w.Done()
-			case actorkit.ActorDestroyed:
-				w.Done()
+			switch sm := i.(type) {
+			case actorkit.ActorSignal:
+				switch sm.Signal {
+				case actorkit.DESTRUCTING:
+					w.Done()
+				case actorkit.DESTROYED:
+					w.Done()
+				}
 			}
 		})
 
@@ -321,11 +343,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told kill")
 	{
-		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -335,11 +357,14 @@ func TestAllForOneSupervisor(t *testing.T) {
 		var w sync.WaitGroup
 		w.Add(2)
 		sub := child1.Watch(func(i interface{}) {
-			switch i.(type) {
-			case actorkit.ActorKillRequested:
-				w.Done()
-			case actorkit.ActorKilled:
-				w.Done()
+			switch sm := i.(type) {
+			case actorkit.ActorSignal:
+				switch sm.Signal {
+				case actorkit.KILLING:
+					w.Done()
+				case actorkit.KILLED:
+					w.Done()
+				}
 			}
 		})
 
@@ -360,11 +385,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told stop")
 	{
-		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -374,11 +399,14 @@ func TestAllForOneSupervisor(t *testing.T) {
 		var w sync.WaitGroup
 		w.Add(2)
 		sub := child1.Watch(func(i interface{}) {
-			switch i.(type) {
-			case actorkit.ActorStopRequested:
-				w.Done()
-			case actorkit.ActorStopped:
-				w.Done()
+			switch sm := i.(type) {
+			case actorkit.ActorSignal:
+				switch sm.Signal {
+				case actorkit.STOPPING:
+					w.Done()
+				case actorkit.STOPPED:
+					w.Done()
+				}
 			}
 		})
 
@@ -399,11 +427,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told restart")
 	{
-		child1, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", &basic{}, actorkit.Prop{})
+		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
@@ -413,11 +441,14 @@ func TestAllForOneSupervisor(t *testing.T) {
 		var w sync.WaitGroup
 		w.Add(2)
 		sub := child1.Watch(func(i interface{}) {
-			switch i.(type) {
-			case actorkit.ActorRestartRequested:
-				w.Done()
-			case actorkit.ActorRestarted:
-				w.Done()
+			switch sm := i.(type) {
+			case actorkit.ActorSignal:
+				switch sm.Signal {
+				case actorkit.RESTARTING:
+					w.Done()
+				case actorkit.RESTARTED:
+					w.Done()
+				}
 			}
 		})
 

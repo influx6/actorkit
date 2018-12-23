@@ -75,7 +75,7 @@ type Config struct {
 	Options     []pubsub.Option
 	Marshaler   transit.Marshaler
 	Unmarshaler transit.Unmarshaler
-	Log         actorkit.LogEvent
+	Log         actorkit.Logs
 	DefaultConn *nats.Conn
 }
 
@@ -294,7 +294,7 @@ type Publisher struct {
 	sink     pubsub.Conn
 	ctx      context.Context
 	m        transit.Marshaler
-	log      actorkit.LogEvent
+	log      actorkit.Logs
 }
 
 // NewPublisher returns a new instance of a Publisher.
@@ -327,7 +327,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 		if err != nil {
 			em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.MarshalingError{Err: em, Data: msg})
+				p.log.Emit(actorkit.ERROR, transit.MarshalingError{Err: em, Data: msg})
 			}
 			errs <- em
 			return
@@ -335,7 +335,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 
 		pubErr := p.sink.Publish(p.topic, marshaled)
 		if p.log != nil && pubErr != nil {
-			p.log.Publish(transit.PublishError{Err: errors.WrapOnly(pubErr), Data: marshaled, Topic: p.topic})
+			p.log.Emit(actorkit.ERROR, transit.PublishError{Err: errors.WrapOnly(pubErr), Data: marshaled, Topic: p.topic})
 		}
 		errs <- pubErr
 	}
@@ -376,7 +376,7 @@ type Subscription struct {
 	canceler  func()
 	ctx       context.Context
 	client    pubsub.Conn
-	log       actorkit.LogEvent
+	log       actorkit.Logs
 	ops       []pubsub.SubscriptionOption
 	m         transit.Unmarshaler
 	sub       pubsub.Subscription
@@ -403,13 +403,13 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 	decoded, err := s.m.Unmarshal(msg.Data)
 	if err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.UnmarshalingError{Err: errors.WrapOnly(err), Data: msg.Data, Topic: s.topic})
+			s.log.Emit(actorkit.ERROR, transit.UnmarshalingError{Err: errors.WrapOnly(err), Data: msg.Data, Topic: s.topic})
 		}
 		switch s.direction(err) {
 		case Ack:
 			if err := msg.Ack(); err != nil {
 				if s.log != nil {
-					s.log.Publish(transit.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
+					s.log.Emit(actorkit.ERROR, transit.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
 				}
 			}
 		case Nack:
@@ -419,13 +419,13 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 
 	if err := s.receiver(transit.Message{Topic: msg.Subject, Envelope: decoded}); err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.MessageHandlingError{Err: errors.WrapOnly(err), Data: msg.Data, Topic: msg.Subject})
+			s.log.Emit(actorkit.ERROR, transit.MessageHandlingError{Err: errors.WrapOnly(err), Data: msg.Data, Topic: msg.Subject})
 		}
 		switch s.direction(err) {
 		case Ack:
 			if err := msg.Ack(); err != nil {
 				if s.log != nil {
-					s.log.Publish(transit.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
+					s.log.Emit(actorkit.ERROR, transit.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
 				}
 			}
 		case Nack:
@@ -435,7 +435,7 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 
 	if err := msg.Ack(); err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
+			s.log.Emit(actorkit.ERROR, transit.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
 		}
 	}
 }
@@ -463,7 +463,7 @@ func (s *Subscription) run() {
 	<-s.ctx.Done()
 	if err := s.sub.Unsubscribe(); err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.DesubscriptionError{Err: errors.WrapOnly(err), Topic: s.topic})
+			s.log.Emit(actorkit.ERROR, transit.DesubscriptionError{Err: errors.WrapOnly(err), Topic: s.topic})
 		}
 	}
 }

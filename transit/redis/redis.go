@@ -62,7 +62,7 @@ type Config struct {
 	Options     pubsub.Options
 	Marshaler   transit.Marshaler
 	Unmarshaler transit.Unmarshaler
-	Log         actorkit.LogEvent
+	Log         actorkit.Logs
 }
 
 // PublisherSubscriberFactory implements a Google pubsub Publisher factory which handles
@@ -229,7 +229,7 @@ type Publisher struct {
 	sink     *pubsub.Client
 	ctx      context.Context
 	m        transit.Marshaler
-	log      actorkit.LogEvent
+	log      actorkit.Logs
 }
 
 // NewPublisher returns a new instance of a Publisher.
@@ -260,7 +260,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 		if err != nil {
 			em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.MarshalingError{Err: em, Data: msg})
+				p.log.Emit(actorkit.ERROR, transit.MarshalingError{Err: em, Data: msg})
 			}
 			errs <- em
 			return
@@ -270,7 +270,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 		if err := status.Err(); err != nil {
 			sem := errors.Wrap(err, "Failed to publish message")
 			if p.log != nil {
-				p.log.Publish(transit.PublishError{Err: sem, Data: marshaled, Topic: p.topic})
+				p.log.Emit(actorkit.ERROR, transit.PublishError{Err: sem, Data: marshaled, Topic: p.topic})
 			}
 
 			errs <- sem
@@ -316,7 +316,7 @@ type Subscription struct {
 	client   *pubsub.Client
 	sub      *pubsub.PubSub
 	ctx      context.Context
-	log      actorkit.LogEvent
+	log      actorkit.Logs
 	m        transit.Unmarshaler
 	receiver func(transit.Message) error
 }
@@ -342,14 +342,14 @@ func (s *Subscription) handle(msg *pubsub.Message) {
 	decoded, err := s.m.Unmarshal(payload)
 	if err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.UnmarshalingError{Err: errors.Wrap(err, "Failed to marshal message"), Data: payload})
+			s.log.Emit(actorkit.ERROR, transit.UnmarshalingError{Err: errors.Wrap(err, "Failed to marshal message"), Data: payload})
 		}
 		return
 	}
 
 	if err := s.receiver(transit.Message{Topic: msg.Channel, Envelope: decoded}); err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: payload, Topic: msg.Channel})
+			s.log.Emit(actorkit.ERROR, transit.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: payload, Topic: msg.Channel})
 		}
 	}
 }
@@ -366,7 +366,7 @@ func (s *Subscription) init() error {
 func (s *Subscription) stopSub() {
 	if err := s.sub.Unsubscribe(s.topic); err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.DesubscriptionError{Err: errors.WrapOnly(err), Topic: s.topic})
+			s.log.Emit(actorkit.ERROR, transit.DesubscriptionError{Err: errors.WrapOnly(err), Topic: s.topic})
 		}
 	}
 

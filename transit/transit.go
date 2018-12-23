@@ -120,8 +120,8 @@ type MarshalingError struct {
 	Data  interface{}
 }
 
-// Details implements the actorkit.LogItem interface.
-func (m MarshalingError) Details() string {
+// Message implements the actorkit.Logs interface.
+func (m MarshalingError) Message() string {
 	return m.Err.Error()
 }
 
@@ -133,8 +133,8 @@ type UnmarshalingError struct {
 	Data  interface{}
 }
 
-// Details implements the actorkit.LogItem interface.
-func (m UnmarshalingError) Details() string {
+// Message implements the actorkit.Logs interface.
+func (m UnmarshalingError) Message() string {
 	return m.Err.Error()
 }
 
@@ -144,8 +144,8 @@ type OpError struct {
 	Err   error
 }
 
-// Details implements the actorkit.LogItem interface.
-func (m OpError) Details() string {
+// Message implements the actorkit.Logs interface.
+func (m OpError) Message() string {
 	return m.Err.Error()
 }
 
@@ -156,8 +156,8 @@ type PublishError struct {
 	Data  interface{}
 }
 
-// Details implements the actorkit.LogItem interface.
-func (m PublishError) Details() string {
+// Message implements the actorkit.Logs interface.
+func (m PublishError) Message() string {
 	return m.Err.Error()
 }
 
@@ -168,8 +168,8 @@ type MessageHandlingError struct {
 	Data  interface{}
 }
 
-// Details implements the actorkit.LogItem interface.
-func (m MessageHandlingError) Details() string {
+// Message implements the actorkit.Logs interface.
+func (m MessageHandlingError) Message() string {
 	return m.Err.Error()
 }
 
@@ -179,8 +179,8 @@ type SubscriptionError struct {
 	Err   error
 }
 
-// Details implements the actorkit.LogItem interface.
-func (m SubscriptionError) Details() string {
+// Message implements the actorkit.Logs interface.
+func (m SubscriptionError) Message() string {
 	return m.Err.Error()
 }
 
@@ -190,7 +190,15 @@ type DesubscriptionError struct {
 	Err   error
 }
 
-// Details implements the actorkit.LogItem interface.
-func (m DesubscriptionError) Details() string {
+// Message implements the actorkit.Logs interface.
+func (m DesubscriptionError) Message() string {
 	return m.Err.Error()
+}
+
+// TextMessage defines a giving error string for use as a detail.
+type TextMessage string
+
+// Message implements the actorkit.Logs interface.
+func (m TextMessage) Message() string {
+	return string(m)
 }

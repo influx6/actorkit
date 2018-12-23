@@ -2,8 +2,6 @@ package actorkit
 
 import (
 	"time"
-
-	"github.com/gokit/es"
 )
 
 //***********************************
@@ -27,7 +25,7 @@ type SupervisorEvent struct {
 // EventSupervisingInvoker implements the SupervisorInvoker interface and simply
 // invokes events for all invocation received.
 type EventSupervisingInvoker struct {
-	Event *es.EventStream
+	Event EventStream
 }
 
 // InvokedStop emits event containing stopped details.

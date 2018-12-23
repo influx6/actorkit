@@ -10,13 +10,13 @@ import (
 )
 
 func TestAddrAddressFormat(t *testing.T) {
-	system, err := actorkit.Ancestor("kitkat", "10.10.10.10:2020")
+	system, err := actorkit.Ancestor("kitkat", "10.10.10.10:2020", actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
 	assert.Equal(t, "kitkat@10.10.10.10:2020/"+system.ID()+"/actor:access", system.Addr())
 
-	child, err := system.Spawn("runner", &basic{}, actorkit.Prop{})
+	child, err := system.Spawn("runner", actorkit.Prop{Behaviour: &basic{}})
 	assert.NoError(t, err)
 	assert.NotNil(t, child)
 
@@ -30,7 +30,7 @@ func TestDeadLetterAddr(t *testing.T) {
 
 	assert.True(t, strings.HasPrefix(addr.Addr(), "kit@localhost"), "should have prefix %q", addr.Addr())
 
-	_, err := addr.Spawn("wap", &basic{}, actorkit.Prop{})
+	_, err := addr.Spawn("wap", actorkit.Prop{Behaviour: &basic{}})
 	assert.Error(t, err)
 
 	_, err = addr.AddressOf("wap", true)

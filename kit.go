@@ -1,7 +1,6 @@
 package actorkit
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/gokit/es"
@@ -62,28 +61,54 @@ func (m Header) Has(n string) bool {
 // LogEvent
 //***************************************************************************
 
-// LogEvent is a new interesting approach towards logging which rather than
-// using predefined logging libraries instead uses pubsub approach to fire defined
-// types presenting different metrics to implementers.
-// Only a single argument is required, this i believe allows us more flexibility
-// than fiddling with a giving set of argument types and length standard.
-//
-// This type need shouldn't be used outside of this package and accompany subpackages,
-// you should never have the need to use the declared interface type but just implement
-// and supply to to any user of interface type within package.
-type LogEvent interface {
-	Publish(LogItem)
+// Level defines different level warnings for giving
+// log events.
+type Level uint
+
+// constants of log levels this package respect.
+// They are capitalize to ensure no naming conflict.
+const (
+	INFO Level = iota
+	DEBUG
+	WARN
+	ERROR
+	PANIC
+)
+
+// String implements the Stringer interface.
+func (l Level) String() string {
+	switch l {
+	case INFO:
+		return "INFO"
+	case ERROR:
+		return "ERROR"
+	case DEBUG:
+		return "DEBUG"
+	case WARN:
+		return "WARN"
+	case PANIC:
+		return "PANIC"
+	}
+	return "UNKNOWN"
 }
 
-// LogItem defines an interface which exposes a method for retrieving
+// Logs defines a acceptable logging interface which all elements and sub packages
+// will respect and use to deliver logs for different parts and ops, this frees
+// this package from specifying or locking a giving implementation and contaminating
+// import paths. Implement this and pass in to elements that provide for it.
+type Logs interface {
+	Emit(Level, LogEvent)
+}
+
+// LogEvent defines an interface which exposes a method for retrieving
 // log details for giving log item.
-type LogItem interface {
-	Details() string
+type LogEvent interface {
+	Message() string
 }
 
 //***************************************************************************
 // Envelope
-//***************************************************************************
+//*************************************** ************************************
 
 // Envelope defines a message to be delivered to a giving
 // target destination from another giving source with headers
@@ -103,22 +128,6 @@ func CreateEnvelope(sender Addr, header Header, data interface{}) Envelope {
 		Sender: sender,
 		Ref:    xid.New(),
 	}
-}
-
-//***********************************
-//  ActorRegistry
-//***********************************
-
-// ActorRegistry implementers implement a giving registry which allows
-// collating giving actors within a searchable entity for access and retrieval.
-//
-// Registries should be able to update themselves based on actor's state or
-// be automatically updated by said actors.
-type ActorRegistry interface {
-	AddActor(Actor) error
-	RemoveActor(Actor) error
-	GetID(string) (Actor, error)
-	GetAddr(string) (Actor, error)
 }
 
 //***********************************
@@ -207,6 +216,38 @@ type Addr interface {
 	AddressActor
 	AncestralAddr
 	AddressService
+}
+
+//***********************************
+//  Signals
+//***********************************
+
+// Signal represent a series of transitioning
+// state which an actor runs through, it also
+// provides a efficient means of checking actor's state.
+type Signal uint
+
+// constants of different actor states transition used for signaling purposes.
+const (
+	INACTIVE Signal = iota
+	STARTING
+	RUNNING
+	RESTARTING
+	RESTARTED
+	STOPPING
+	STOPPED
+	KILLING
+	KILLED
+	DESTRUCTING
+	DESTROYED
+	PANICED
+)
+
+// Signals defines a interesting interface which exposes a method
+// for the reception of a current state of an actor. Useful for
+// service discovery purposes and more.
+type Signals interface {
+	SignalState(Addr, Signal)
 }
 
 //***********************************
@@ -393,6 +434,21 @@ type Subscription interface {
 	Stop()
 }
 
+// Handler defines a function type which is to be passed
+// to a EventStream subscriber function.
+type Handler func(interface{})
+
+// Predicate defines a function for filtering
+// by returning true/false for a giving value.
+type Predicate func(interface{}) bool
+
+// EventStream defines an interface for
+type EventStream interface {
+	Reset()
+	Publish(interface{})
+	Subscribe(Handler, Predicate) Subscription
+}
+
 // Watchable defines a in interface that exposes methods to add
 // functions to be called on some status change of the implementing
 // instance.
@@ -413,31 +469,26 @@ type DeathWatch interface {
 // Prop defines underline actor operation which are used to
 // generate said handlers for an instantiated actor.
 type Prop struct {
-	// BusyDuration defines the acceptable wait time for an actor
-	// to allow for calls to giving state functions like Restart, Stop
-	// Kill, Destroy, as an actor could be busy handling a different state
-	// request.
-	BusyDuration time.Duration
 
-	// DeadLockDuration defines the custom duration to be used for the deadlock
-	// go-routine asleep issue, which may occur if all actor goroutines become idle.
-	// The default used is 5s, but if it brings performance costs, then this can be
-	// increased or decreased as desired for optimum performance.
-	DeadLockDuration time.Duration
+	// Behaviour defines the behaviour to be used for handling
+	// and processing incoming messages.
+	Behaviour Behaviour
 
 	// Event represent the local events coming from the
 	// actor. Usually good to isolate events for actor
 	// only and is what is bounded to by Actor.Watch.
-	Event *es.EventStream
-
-	// GlobalEvent represents the global event stream which
-	// should receive all local events for global watching
-	// by others.
-	GlobalEvent *es.EventStream
+	Event EventStream
 
 	// Mailbox is the actors's mailbox to be used for queuing
 	// incoming messages.
 	Mailbox Mailbox
+
+	// Signals is only ever accepted by a root actor who has
+	// no parent, but instead parent's pass down their own signal
+	// provider to their children/descendants. It provides a good
+	// and easy way of accepting signal indicators for a giving
+	// actor as it transitions between states.
+	Signals Signals
 
 	// Sentinel provides a advisor of behaviours to be performed
 	// for actors being watched by owner of this prop. This allows
@@ -476,7 +527,7 @@ type Prop struct {
 // Note: Children actors always get their global registry from their parents
 // so if your root actor has no registry, then the kids won't get access to any.
 type Spawner interface {
-	Spawn(service string, bh Behaviour, props Prop) (Addr, error)
+	Spawn(service string, props Prop) (Addr, error)
 }
 
 //***********************************
@@ -573,7 +624,7 @@ type Stat struct {
 }
 
 // Stats exposes a method which returns a giving
-// ActorState entity for it's implementer.
+// Signal entity for it's implementer.
 type Stats interface {
 	Stats() Stat
 }
@@ -879,7 +930,7 @@ type StateInvoker interface {
 	InvokedStopped(interface{})
 	InvokedKilled(interface{})
 	InvokedRestarted(interface{})
-	InvokedPanic(Addr, ActorPanic)
+	InvokedPanic(Addr, PanicEvent)
 }
 
 //***********************************
@@ -912,7 +963,7 @@ type Future interface {
 }
 
 //***********************************
-//  Actor System Message
+//  System Messages
 //***********************************
 
 // EscalatedError defines a type which represents a
@@ -939,16 +990,6 @@ func (e EscalatedError) Error() string {
 type SystemMessage interface {
 	SystemMessage()
 }
-
-// TerminatedActor is sent when an processor has already
-// being shutdown/stopped.
-type TerminatedActor struct {
-	ID   string
-	Addr string
-}
-
-// SystemMessage identifies giving type as a system message.
-func (TerminatedActor) SystemMessage() {}
 
 // FutureResolved indicates the resolution of a giving future.
 type FutureResolved struct {
@@ -982,212 +1023,50 @@ func (f *FutureRejected) Unwrap() error {
 // SystemMessage identifies giving type as a system message.
 func (FutureRejected) SystemMessage() {}
 
-// ActorStartRequested defines message sent to indicate starting request or in process
-// starting request by an actor.
-type ActorStartRequested struct {
-	ID   string
+// ActorSignal defines message sent to indicate a state transition signal for an actor.
+type ActorSignal struct {
+	// Addr of actor which signal corresponds to, usually the AccessOf produced address.
 	Addr Addr
-	Data interface{}
+
+	// Signal represents type of actor signal supported.
+	Signal Signal
+
+	// Optional payload attached to signal event.
+	Payload interface{}
 }
 
 // SystemMessage identifies giving type as a system message.
-func (ActorStartRequested) SystemMessage() {}
+func (ActorSignal) SystemMessage() {}
 
-// ActorRestartRequested indicates giving message sent by actor to
-// initiate stopping.
-type ActorRestartRequested struct {
-	ID   string
+// ActorFailureSignal defines message sent to indicate failure of transitioning to a signal state for an actor.
+type ActorFailureSignal struct {
+	// Addr of actor which signal corresponds to, usually the AccessOf produced address.
 	Addr Addr
+
+	// Err provides the attached error detailing failure for giving signal.
+	Err error
+
+	// Signal represents type of actor signal supported.
+	Signal Signal
+
+	// Optional payload attached to signal event.
+	Payload interface{}
 }
 
 // SystemMessage identifies giving type as a system message.
-func (ActorRestartRequested) SystemMessage() {}
+func (ActorFailureSignal) SystemMessage() {}
 
-// ActorKillRequested indicates giving message sent by actor to
-// initiate stopping.
-type ActorKillRequested struct {
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorKillRequested) SystemMessage() {}
-
-// ActorDestroyRequested indicates giving message sent by actor to
-// initiate destruction.
-type ActorDestroyRequested struct {
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorDestroyRequested) SystemMessage() {}
-
-// ActorStopRequested indicates giving message sent to actor to
-// initiate stopping.
-type ActorStopRequested struct {
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorStopRequested) SystemMessage() {}
-
-// ActorStarted is sent when an actor has begun it's operation or has
-// completely started.
-type ActorStarted struct {
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorStarted) SystemMessage() {}
-
-// ActorRestarted indicates giving message sent by actor after
-// restart.
-type ActorRestarted struct {
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorRestarted) SystemMessage() {}
-
-// ActorStopped is sent when an actor is in the process of shutdown or
-// has completely shutdown.
-type ActorStopped struct {
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorStopped) SystemMessage() {}
-
-// ActorKilled indicates giving message sent by actor to
-// initiate stopping.
-type ActorKilled struct {
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorKilled) SystemMessage() {}
-
-// ActorDestroyed is sent when an actor is absolutely stopped and is removed
-// totally from network. It's operation will be not allowed to run as it
-// as become un-existent.
-type ActorDestroyed struct {
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorDestroyed) SystemMessage() {}
-
-// ActorPanic is sent when an actor panics internally.
-type ActorPanic struct {
-	ID            string
-	Addr          Addr
-	CausedAddr    Addr
-	CausedMessage Envelope
-	Panic         interface{}
-	Stack         []byte
-}
-
-// Error returns giving error string for panic details.
-func (a *ActorPanic) Error() string {
-	return fmt.Sprintf(`ActorPanic:
-		Actor: %q
-		Address: %q
-		CausedAddr: %q
-		CauseEnvelope: %#v
-		Panic: %#v
-		Stack:
-		%s
-`, a.ID, a.Addr, a.CausedAddr.Addr(), a.CausedMessage, a.Panic, string(a.Stack))
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorPanic) SystemMessage() {}
-
-// ActorFailedStart indicates giving message sent by actor after
-// failed to start due to error.
-type ActorFailedStart struct {
-	Err  error
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorFailedStart) SystemMessage() {}
-
-// ActorFailedRestart indicates giving message sent by actor after
-// failed to restart due to error.
-type ActorFailedRestart struct {
-	Err  error
-	ID   string
-	Addr Addr
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorFailedRestart) SystemMessage() {}
-
-// ActorRoutineError is sent when a actor internal routine encountered an error
-// either during stop, kill, destruction commands.
-type ActorRoutineError struct {
-	ID   string
-	Addr Addr
-	Err  error
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorRoutineError) SystemMessage() {}
-
-// Error returns giving error string for panic details.
-func (a *ActorRoutineError) Error() string {
-	return fmt.Sprintf(`ActorRoutineError:
-		Actor: %q
-		Address: %q
-		Error: %+q
-`, a.ID, a.Addr, a.Err.Error())
-}
-
-// ActorUnregistrationFailure is sent when a actor fails to successfully register itself.
-type ActorUnregistrationFailure struct {
-	Addr Addr
-	Err  error
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorUnregistrationFailure) SystemMessage() {}
-
-// ActorRegistrationFailure is sent when a actor fails to successfully register itself.
-type ActorRegistrationFailure struct {
-	Addr Addr
-	Err  error
-}
-
-// SystemMessage identifies giving type as a system message.
-func (ActorRegistrationFailure) SystemMessage() {}
-
-// ActorRoutinePanic is sent when a actor internal routine panics.
-type ActorRoutinePanic struct {
-	ID    string
+// PanicEvent is sent when a actor internal routine panics due to message processor
+// or some other error.
+type PanicEvent struct {
 	Addr  Addr
+	ID    string
 	Panic interface{}
 	Stack []byte
+
+	CulpritAddr Addr
+	CulpritMsg  Envelope
 }
 
 // SystemMessage identifies giving type as a system message.
-func (ActorRoutinePanic) SystemMessage() {}
-
-// Error returns giving error string for panic details.
-func (a *ActorRoutinePanic) Error() string {
-	return fmt.Sprintf(`ActorRoutinePanic:
-		Actor: %q
-		Address: %q
-		Panic: %#v
-		Stack:
-		%s
-`, a.ID, a.Addr, a.Panic, string(a.Stack))
-}
+func (PanicEvent) SystemMessage() {}

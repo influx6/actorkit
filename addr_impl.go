@@ -444,12 +444,11 @@ func (a *AddrImpl) Children() []Addr {
 
 // Spawn creates a new actor based on giving service name by requesting all
 // discovery services registered to giving underline address actor.
-func (a *AddrImpl) Spawn(service string, rec Behaviour, prop Prop) (Addr, error) {
+func (a *AddrImpl) Spawn(service string, prop Prop) (Addr, error) {
 	if a.deadletter {
 		return nil, errors.New("not possible from a deadletter address")
 	}
-
-	return a.actor.Spawn(service, rec, prop)
+	return a.actor.Spawn(service, prop)
 }
 
 // AddressOf returns the address of giving actor matching giving service name.

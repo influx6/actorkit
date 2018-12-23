@@ -4,5 +4,5 @@ ENV GO111MODULE=on
 COPY . gokit/actorkit
 WORKDIR gokit/actorkit
 RUN make gomod
-ENTRYPOINT ["make base_tests"]
+ENTRYPOINT ["make", "base_tests"]
 

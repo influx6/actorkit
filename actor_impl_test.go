@@ -20,9 +20,7 @@ func TestActorImpl(t *testing.T) {
 	base := &basic{
 		Message: make(chan *actorkit.Envelope, 1),
 	}
-	am := actorkit.NewActorImpl(
-		actorkit.UseBehaviour(base),
-	)
+	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
 	assert.NoError(t, am.Start())
 	assert.True(t, am.Running())
@@ -36,7 +34,7 @@ func TestActorImpl(t *testing.T) {
 
 func TestActorImplMessaging(t *testing.T) {
 	base := &basic{Message: make(chan *actorkit.Envelope, 1)}
-	am := actorkit.NewActorImpl(actorkit.UseBehaviour(base))
+	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
 	assert.NoError(t, am.Start())
 	assert.True(t, am.Running())
@@ -54,7 +52,7 @@ func TestActorImplMessaging(t *testing.T) {
 }
 
 func TestActorChildMessaging(t *testing.T) {
-	system, err := actorkit.Ancestor("kit", "localhost")
+	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
@@ -62,7 +60,7 @@ func TestActorChildMessaging(t *testing.T) {
 		Message: make(chan *actorkit.Envelope, 1),
 	}
 
-	addr, err := system.Spawn("basic", base, actorkit.Prop{})
+	addr, err := system.Spawn("basic", actorkit.Prop{Behaviour: base})
 	assert.NoError(t, err)
 	assert.NotNil(t, addr)
 
@@ -82,11 +80,11 @@ func TestActorImplPanic(t *testing.T) {
 		Max: 30,
 		PanicAction: func(i interface{}, addr actorkit.Addr, actor actorkit.Actor) {
 			assert.NotNil(t, i)
-			assert.IsType(t, actorkit.ActorRoutinePanic{}, i)
+			assert.IsType(t, actorkit.PanicEvent{}, i)
 		},
 		Decider: func(tm interface{}) actorkit.Directive {
 			switch tm.(type) {
-			case actorkit.ActorPanic, actorkit.ActorRoutinePanic:
+			case actorkit.PanicEvent:
 				return actorkit.PanicDirective
 			default:
 				return actorkit.IgnoreDirective
@@ -94,7 +92,7 @@ func TestActorImplPanic(t *testing.T) {
 		},
 	}
 
-	am := actorkit.FromFunc(func(addr actorkit.Addr, envelope actorkit.Envelope) {
+	am := actorkit.FromFunc("ns", "br", func(addr actorkit.Addr, envelope actorkit.Envelope) {
 		panic("Error occured")
 	}, actorkit.UseSupervisor(supervisor))
 
@@ -112,19 +110,17 @@ func TestActorWithChildTreeStates(t *testing.T) {
 	base := &basic{
 		Message: make(chan *actorkit.Envelope, 1),
 	}
-	am := actorkit.NewActorImpl(
-		actorkit.UseBehaviour(base),
-	)
+	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
 	assert.NoError(t, am.Start())
 	assert.True(t, am.Running())
 
-	childAddr, err := am.Spawn("child", &basic{}, actorkit.Prop{})
+	childAddr, err := am.Spawn("child", actorkit.Prop{Behaviour: base})
 	assert.NoError(t, err)
 
 	assert.Len(t, am.Children(), 1)
 
-	grandChild, err := childAddr.Spawn("grand-child", &basic{}, actorkit.Prop{})
+	grandChild, err := childAddr.Spawn("grand-child", actorkit.Prop{Behaviour: base})
 	assert.NoError(t, err)
 
 	assert.Len(t, childAddr.Children(), 1)
@@ -146,14 +142,13 @@ func TestActorWithChildStates(t *testing.T) {
 	base := &basic{
 		Message: make(chan *actorkit.Envelope, 1),
 	}
-	am := actorkit.NewActorImpl(
-		actorkit.UseBehaviour(base),
-	)
+
+	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
 	assert.NoError(t, am.Start())
 	assert.True(t, am.Running())
 
-	childAddr, err := am.Spawn("child", &basic{}, actorkit.Prop{})
+	childAddr, err := am.Spawn("child", actorkit.Prop{Behaviour: &basic{}})
 	assert.NoError(t, err)
 
 	assert.NoError(t, am.Restart())

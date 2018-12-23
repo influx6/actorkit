@@ -8,10 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/gokit/actorkit"
+	"github.com/gokit/actorkit/mocks"
 )
 
 func TestFutureResolved(t *testing.T) {
-	addr := new(AddrImpl)
+	addr := &mocks.AddrImpl{}
 	newFuture := actorkit.NewFuture(addr)
 	assert.NoError(t, newFuture.Send("ready", eb))
 	assert.NoError(t, newFuture.Err())
@@ -19,7 +20,7 @@ func TestFutureResolved(t *testing.T) {
 }
 
 func TestFuturePipe(t *testing.T) {
-	addr := new(AddrImpl)
+	addr := &mocks.AddrImpl{}
 	newFuture := actorkit.NewFuture(addr)
 	newFuture2 := actorkit.NewFuture(addr)
 	newFuture3 := actorkit.NewFuture(addr)
@@ -39,14 +40,14 @@ func TestFuturePipe(t *testing.T) {
 }
 
 func TestFutureEscalate(t *testing.T) {
-	addr := new(AddrImpl)
+	addr := &mocks.AddrImpl{}
 	newFuture := actorkit.NewFuture(addr)
 	newFuture.Escalate("wake")
 	assert.Equal(t, newFuture.Err().Error(), actorkit.ErrFutureEscalatedFailure.Error())
 }
 
 func TestFutureTimeout(t *testing.T) {
-	addr := new(AddrImpl)
+	addr := &mocks.AddrImpl{}
 	newFuture := actorkit.TimedFuture(addr, 1*time.Second)
 	<-time.After(2 * time.Second)
 	assert.Equal(t, newFuture.Err().Error(), actorkit.ErrFutureTimeout.Error())

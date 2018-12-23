@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/gokit/actorkit/internal"
 
 	"github.com/gokit/actorkit"
 
@@ -28,6 +31,21 @@ const (
 	Ack Directive = iota
 	Nack
 )
+
+//*****************************************************************************
+// Events
+//*****************************************************************************
+
+// NATEvent defines a message type for delivery event logs in operations for nats.
+type NATEvent struct {
+	Header string
+	Data   interface{}
+}
+
+// Message returns a formatted message for the event.
+func (ne NATEvent) Message() string {
+	return fmt.Sprintf(ne.Header, ne.Data)
+}
 
 //*****************************************************************************
 // PubSubFactory
@@ -72,7 +90,14 @@ type Config struct {
 	Options     []pubsub.Option
 	Marshaler   transit.Marshaler
 	Unmarshaler transit.Unmarshaler
-	Log         actorkit.LogEvent
+	Log         actorkit.Logs
+}
+
+func (c *Config) init() error {
+	if c.Log == nil {
+		c.Log = &internal.TLog{}
+	}
+	return nil
 }
 
 // PublisherSubscriberFactory implements a Google pubsub Publisher factory which handles
@@ -96,6 +121,10 @@ type PublisherSubscriberFactory struct {
 
 // NewPublisherSubscriberFactory returns a new instance of publisher factory.
 func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
+	if err := config.init(); err != nil {
+		return nil, err
+	}
+
 	var pb PublisherSubscriberFactory
 	pb.id = xid.New()
 	pb.config = config
@@ -106,8 +135,11 @@ func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*Publish
 
 	client, err := pubsub.Connect(pb.config.URL, pb.config.Options...)
 	if err != nil {
-		return &pb, errors.Wrap(err, "Failed to create nats-streaming client")
+		return &pb, errors.Wrap(err, "Failed to create nats client")
 	}
+
+	config.Log.Emit(actorkit.INFO, NATEvent{Header: "Starting NATS client connection: %s", Data: client.ConnectedUrl()})
+	config.Log.Emit(actorkit.INFO, NATEvent{Header: "IsConnected: %t", Data: client.IsConnected()})
 
 	pb.c = client
 	return &pb, nil
@@ -159,8 +191,7 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 		sub.id = id
 	}
 
-	sub.ctx, sub.canceler = context.WithCancel(sub.ctx)
-
+	sub.ctx, sub.canceler = context.WithCancel(pf.ctx)
 	if err := sub.init(); err != nil {
 		return nil, err
 	}
@@ -188,7 +219,9 @@ func (pf *PublisherSubscriberFactory) Publisher(topic string) (*Publisher, error
 	pf.waiter.Add(1)
 	go func() {
 		defer pf.waiter.Done()
+		pf.config.Log.Emit(actorkit.INFO, NATEvent{Header: "Starting new topic publisher for topic: %q", Data: topic})
 		pub.run()
+		pf.config.Log.Emit(actorkit.INFO, NATEvent{Header: "Publisher ended for : %q", Data: topic})
 	}()
 
 	return pub, nil
@@ -239,9 +272,9 @@ type Publisher struct {
 	canceler func()
 	actions  chan func()
 	sink     *pubsub.Conn
+	log      actorkit.Logs
 	ctx      context.Context
 	m        transit.Marshaler
-	log      actorkit.LogEvent
 }
 
 // NewPublisher returns a new instance of a Publisher.
@@ -260,6 +293,7 @@ func NewPublisher(ctx context.Context, topic string, sink *pubsub.Conn, config *
 
 // Close closes giving subscriber.
 func (p *Publisher) Close() error {
+	p.log.Emit(actorkit.INFO, NATEvent{Header: "Closing publisher for %q", Data: p.topic})
 	p.canceler()
 	return nil
 }
@@ -269,39 +303,46 @@ func (p *Publisher) Close() error {
 func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	errs := make(chan error, 1)
 	action := func() {
+		fmt.Printf("Running action\n")
 		marshaled, err := p.m.Marshal(msg)
 		if err != nil {
 			em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.MarshalingError{Err: em, Data: msg})
+				p.log.Emit(actorkit.ERROR, transit.MarshalingError{Err: em, Data: msg})
 			}
 			errs <- em
 			return
 		}
 
+		fmt.Printf("Sending message: %+q\n", marshaled)
+
 		pubErr := p.sink.Publish(p.topic, marshaled)
 		if p.log != nil && pubErr != nil {
-			p.log.Publish(transit.PublishError{Err: errors.WrapOnly(pubErr), Data: marshaled, Topic: p.topic})
+			p.log.Emit(actorkit.ERROR, transit.PublishError{Err: errors.WrapOnly(pubErr), Data: marshaled, Topic: p.topic})
 		}
 		errs <- pubErr
 	}
 
 	select {
 	case p.actions <- action:
+		fmt.Printf("Sending action for execution \n")
 		return <-errs
-	default:
+	case <-time.After(10 * time.Millisecond):
 		return errors.New("message failed to be published")
 	}
 }
 
 // Run initializes publishing loop blocking till giving publisher is
-// stop/closed or faces an occured error.
+// stop/closed or faces an occurred error.
 func (p *Publisher) run() {
 	for {
 		select {
 		case <-p.ctx.Done():
+			p.log.Emit(actorkit.INFO, NATEvent{Header: "Publisher run is ended %q", Data: p.topic})
+			p.log.Emit(actorkit.INFO, NATEvent{Header: "Publisher run is ended %#v", Data: p.ctx.Err()})
 			return
 		case action := <-p.actions:
+			fmt.Printf("Running action\n")
 			action()
 		}
 	}
@@ -320,7 +361,7 @@ type Subscription struct {
 	canceler  func()
 	client    *pubsub.Conn
 	ctx       context.Context
-	log       actorkit.LogEvent
+	log       actorkit.Logs
 	m         transit.Unmarshaler
 	sub       *pubsub.Subscription
 	direction func(error) Directive
@@ -341,14 +382,14 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 	decoded, err := s.m.Unmarshal(msg.Data)
 	if err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.UnmarshalingError{Err: errors.WrapOnly(err), Data: msg.Data})
+			s.log.Emit(actorkit.ERROR, transit.UnmarshalingError{Err: errors.WrapOnly(err), Data: msg.Data})
 		}
 		return
 	}
 
 	if err := s.receiver(transit.Message{Topic: msg.Subject, Envelope: decoded}); err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.MessageHandlingError{Err: errors.WrapOnly(err), Data: msg.Data, Topic: msg.Subject})
+			s.log.Emit(actorkit.ERROR, transit.MessageHandlingError{Err: errors.WrapOnly(err), Data: msg.Data, Topic: msg.Subject})
 		}
 	}
 }
@@ -367,12 +408,12 @@ func (s *Subscription) run() {
 	<-s.ctx.Done()
 	if err := s.sub.Unsubscribe(); err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.DesubscriptionError{Err: errors.WrapOnly(err), Topic: s.topic})
+			s.log.Emit(actorkit.ERROR, transit.DesubscriptionError{Err: errors.WrapOnly(err), Topic: s.topic})
 		}
 	}
 	if err := s.sub.Drain(); err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.OpError{Err: errors.WrapOnly(err), Topic: s.topic})
+			s.log.Emit(actorkit.ERROR, transit.OpError{Err: errors.WrapOnly(err), Topic: s.topic})
 		}
 	}
 }

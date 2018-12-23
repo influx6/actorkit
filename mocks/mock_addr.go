@@ -1,4 +1,4 @@
-package actorkit_test
+package mocks
 
 import (
 	"time"
@@ -57,7 +57,7 @@ func (*AddrImpl) Service() string {
 	return "addr"
 }
 
-func (*AddrImpl) Spawn(service string, bh actorkit.Behaviour, ops actorkit.Prop) (actorkit.Addr, error) {
+func (*AddrImpl) Spawn(service string, ops actorkit.Prop) (actorkit.Addr, error) {
 	return &AddrImpl{}, nil
 }
 

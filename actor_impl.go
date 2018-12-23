@@ -53,8 +53,22 @@ func (bh *behaviourFunctioner) Action(addr Addr, env Envelope) {
 }
 
 //********************************************************
+// signal dummy
+//********************************************************
+
+var _ Signals = &signalDummy{}
+
+type signalDummy struct{}
+
+func (signalDummy) SignalState(_ Addr, _ Signal) {}
+
+//********************************************************
 // Actor Constructors
 //********************************************************
+
+// ActorOption defines a function which is runned against a pointer to a
+// Prop which will be used for generating a actor's underline behaviour.
+type ActorOption func(*Prop)
 
 // ActorSpawner defines a function interface which takes a giving set of
 // options returns a new instantiated Actor.
@@ -62,40 +76,65 @@ type ActorSpawner func(...ActorOption) Actor
 
 // FromPartial returns a ActorSpawner which will be used for spawning new Actor using
 // provided options both from the call to FromPartial and those passed to the returned function.
-func FromPartial(ops ...ActorOption) ActorSpawner {
+func FromPartial(namespace string, protocol string, ops ...ActorOption) ActorSpawner {
 	return func(more ...ActorOption) Actor {
-		ops = append(ops, more...)
-		return NewActorImpl(ops...)
+		var prop = new(Prop)
+		for _, op := range ops {
+			op(prop)
+		}
+		for _, op := range more {
+			op(prop)
+		}
+		return NewActorImpl(namespace, protocol, *prop)
 	}
 }
 
 // FromPartialFunc defines a giving function which can be supplied a function which will
 // be called with provided ActorOption to be used for generating new actors for
 // giving options.
-func FromPartialFunc(partial func(...ActorOption) Actor, pre ...ActorOption) func(...ActorOption) Actor {
-	return func(ops ...ActorOption) Actor {
-		pre = append(pre, ops...)
-		return partial(pre...)
+func FromPartialFunc(partial func(string, string, ...ActorOption) Actor, pre ...ActorOption) func(string, string, ...ActorOption) Actor {
+	return func(namespace string, protocol string, ops ...ActorOption) Actor {
+		var prop = new(Prop)
+		for _, op := range pre {
+			op(prop)
+		}
+		for _, op := range ops {
+			op(prop)
+		}
+		return partial(namespace, protocol, pre...)
 	}
 }
 
 // From returns a new spawned and not yet started Actor based on provided ActorOptions.
-func From(ops ...ActorOption) Actor {
-	return NewActorImpl(ops...)
+func From(namespace string, protocol string, ops ...ActorOption) Actor {
+	var prop = new(Prop)
+	for _, op := range ops {
+		op(prop)
+	}
+	return NewActorImpl(namespace, protocol, *prop)
 }
 
 // FromFunc returns a new actor based on provided function.
-func FromFunc(fn BehaviourFunc, ops ...ActorOption) Actor {
-	actor := NewActorImpl(ops...)
-	UseBehaviour(FromBehaviourFunc(fn))(actor)
+func FromFunc(namespace string, protocol string, fn BehaviourFunc, ops ...ActorOption) Actor {
+	var prop = new(Prop)
+	for _, op := range ops {
+		op(prop)
+	}
+	prop.Behaviour = FromBehaviourFunc(fn)
+	actor := NewActorImpl(namespace, protocol, *prop)
 	return actor
 }
 
 // Func returns a Actor generating function which uses provided BehaviourFunc.
-func Func(fn BehaviourFunc) func(...ActorOption) Actor {
-	return FromPartialFunc(func(options ...ActorOption) Actor {
-		actor := NewActorImpl(options...)
-		UseBehaviour(FromBehaviourFunc(fn))(actor)
+func Func(fn BehaviourFunc) func(string, string, ...ActorOption) Actor {
+	return FromPartialFunc(func(ns string, pr string, options ...ActorOption) Actor {
+		var prop = new(Prop)
+		for _, op := range options {
+			op(prop)
+		}
+
+		prop.Behaviour = FromBehaviourFunc(fn)
+		actor := NewActorImpl(ns, pr, *prop)
 		return actor
 	})
 }
@@ -111,207 +150,83 @@ func Func(fn BehaviourFunc) func(...ActorOption) Actor {
 //
 // Remember all child actors spawned from an ancestor always takes its protocol and
 // namespace.
-func Ancestor(protocol string, namespace string, ops ...ActorOption) (Addr, error) {
-	ops = append(ops, UseBehaviour(&DeadLetterBehaviour{}), UseProtocol(protocol), UseNamespace(namespace))
-	actor := NewActorImpl(ops...)
+func Ancestor(protocol string, namespace string, prop Prop) (Addr, error) {
+	if prop.Behaviour == nil {
+		prop.Behaviour = &DeadLetterBehaviour{}
+	}
+
+	actor := NewActorImpl(namespace, protocol, prop)
 	return AccessOf(actor), actor.Start()
 }
 
-//********************************************************
-// ActorOptions
-//********************************************************
-
-// ActorOption defines a function type which is used to set giving
-// field values for a ActorImpl instance
-type ActorOption func(*ActorImpl)
-
 // UseMailbox sets the mailbox to be used by the actor.
 func UseMailbox(m Mailbox) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.mails = m
+	return func(ac *Prop) {
+		ac.Mailbox = m
 	}
 }
 
-// UseProtocol sets giving protocol value for a actor.
-func UseProtocol(proc string) ActorOption {
-	return func(impl *ActorImpl) {
-		impl.protocol = proc
+// UseSignal applies giving signals to be used by
+// generated actor.
+func UseSignal(signal Signals) ActorOption {
+	return func(ac *Prop) {
+		ac.Signals = signal
 	}
 }
 
 // UseSentinel sets giving Sentinel provider for a actor.
 func UseSentinel(sn Sentinel) ActorOption {
-	return func(impl *ActorImpl) {
-		impl.sentinel = sn
+	return func(ac *Prop) {
+		ac.Sentinel = sn
 	}
 }
 
 // UseDeadLetter sets giving deadletter as processor for death mails.
 func UseDeadLetter(ml DeadLetter) ActorOption {
-	return func(impl *ActorImpl) {
-		impl.deathmails = ml
-	}
-}
-
-// UseNamespace sets giving namespace value for a actor.
-func UseNamespace(ns string) ActorOption {
-	return func(impl *ActorImpl) {
-		impl.namespace = ns
-	}
-}
-
-// DeadLockTicker sets the duration for giving anti-deadlock
-// ticker which is runned for every actor, to avoid all goroutines
-// sleeping error. Set within durable time, by default 5s is used.
-func DeadLockTicker(dur time.Duration) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.deadLockDur = dur
-	}
-}
-
-// WaitBusyDuration sets  giving duration to wait for a critical
-// call to Stop, Kill, Destroy a actor or it's children before
-// the actor returns a ErrActorBusyState error, due to a previously
-// busy state operation.
-func WaitBusyDuration(dur time.Duration) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.busyDur = dur
-	}
-}
-
-// UseParent sets the parent to be used by the actor.
-func UseParent(a Actor) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.parent = a
+	return func(ac *Prop) {
+		ac.DeadLetters = ml
 	}
 }
 
 // UseSupervisor sets the supervisor to be used by the actor.
 func UseSupervisor(s Supervisor) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.supervisor = s
-	}
-}
-
-// UseDiscoveryService sets the discovery service provider to be used
-// by a giving actor.
-func UseDiscoveryService(s DiscoveryService) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.discovery = s
+	return func(ac *Prop) {
+		ac.Supervisor = s
 	}
 }
 
 // UseEventStream sets the event stream to be used by the actor.
-func UseEventStream(es *es.EventStream) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.events = es
-	}
-}
-
-// UseGlobalEventStream provides giving actor with a global event stream
-// which will be used to connect to it's internal stream for all it's
-// system events to be wired into.
-func UseGlobalEventStream(es *es.EventStream) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.gevents = es
+func UseEventStream(es EventStream) ActorOption {
+	return func(ac *Prop) {
+		ac.Event = es
 	}
 }
 
 // UseMailInvoker sets the mail invoker to be used by the actor.
-func UseMailInvoker(st MailInvoker) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.mailInvoker = st
+func UseMailInvoker(mi MailInvoker) ActorOption {
+	return func(ac *Prop) {
+		ac.MailInvoker = mi
 	}
 }
 
 // UseBehaviour sets the behaviour to be used by a given actor.
-//
-// Important:
-//
-// When using this function, it will set giving receiver of an
-// actor to provided Behaviour and will also reset the values
-// for the ff:
-//
-//  1. PreStart and PostStart
-//  2. PreStop and PostStop
-//  3. PreKill and PostKill
-//  4. PreDestroy and PostDestroy
-//  5. PreRestart and PostRestart
-//
-// It also will set the actor's sentinel provider to the behaviour if
-// it implements the sentinel interface, unless a sentinel was previously
-// provided.
-//
 func UseBehaviour(bh Behaviour) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.receiver = bh
-
-		// if we implement Sentinel, then use if no sentinel was set.
-		if tm, ok := bh.(Sentinel); ok && ac.sentinel == nil {
-			ac.sentinel = tm
-		}
-
-		if tm, ok := bh.(PreStart); ok {
-			ac.preStart = tm
-		} else {
-			ac.preStart = nil
-		}
-
-		if tm, ok := bh.(PostStart); ok {
-			ac.postStart = tm
-		} else {
-			ac.postStart = nil
-		}
-
-		if tm, ok := bh.(PreDestroy); ok {
-			ac.preDestroy = tm
-		} else {
-			ac.preDestroy = nil
-		}
-
-		if tm, ok := bh.(PostDestroy); ok {
-			ac.postDestroy = tm
-		} else {
-			ac.postDestroy = nil
-		}
-
-		if tm, ok := bh.(PreRestart); ok {
-			ac.preRestart = tm
-		} else {
-			ac.preRestart = nil
-		}
-
-		if tm, ok := bh.(PostRestart); ok {
-			ac.postRestart = tm
-		} else {
-			ac.postRestart = nil
-		}
-
-		if tm, ok := bh.(PreStop); ok {
-			ac.preStop = tm
-		} else {
-			ac.preStop = nil
-		}
-
-		if tm, ok := bh.(PostStop); ok {
-			ac.postStop = tm
-		} else {
-			ac.postStop = nil
-		}
+	return func(ac *Prop) {
+		ac.Behaviour = bh
 	}
 }
 
 // UseStateInvoker sets the state invoker to be used by the actor.
 func UseStateInvoker(st StateInvoker) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.stateInvoker = st
+	return func(ac *Prop) {
+		ac.StateInvoker = st
 	}
 }
 
 // UseMessageInvoker sets the message invoker to be used by the actor.
 func UseMessageInvoker(st MessageInvoker) ActorOption {
-	return func(ac *ActorImpl) {
-		ac.messageInvoker = st
+	return func(ac *Prop) {
+		ac.MessageInvoker = st
 	}
 }
 
@@ -326,30 +241,29 @@ type actorSub struct {
 	Sub   Subscription
 }
 
-func isSystemMessages(ev interface{}) bool {
-	_, ok := ev.(SystemMessage)
-	return ok
-}
+// BusyDuration defines the acceptable wait time for an actor
+// to allow for calls to giving state functions like Restart, Stop
+// Kill, Destroy before timeout, as an actor could be busy handling a
+// different state transition request.
+//BusyDuration time.Duration
+
+// DeadLockDuration defines the custom duration to be used for the deadlock
+// go-routine asleep issue, which may occur if all actor goroutines become idle.
+// The default used is 5s, but if it brings performance costs, then this can be
+// increased or decreased as desired for optimum performance.
+//DeadLockDuration time.Duration
 
 // ActorImpl implements the Actor interface.
 type ActorImpl struct {
 	namespace   string
 	protocol    string
 	accessAddr  Addr
-	id          xid.ID
+	props       Prop
 	parent      Actor
-	mails       Mailbox
+	id          xid.ID
 	tree        *ActorTree
 	deadLockDur time.Duration
 	busyDur     time.Duration
-	events      *es.EventStream
-	gevents     *es.EventStream
-
-	sentinel       Sentinel
-	deathmails     DeadLetter
-	stateInvoker   StateInvoker
-	mailInvoker    MailInvoker
-	messageInvoker MessageInvoker
 
 	death               time.Time
 	created             time.Time
@@ -379,14 +293,10 @@ type ActorImpl struct {
 	destruction *SwitchImpl
 	processable *SwitchImpl
 
-	supervisor Supervisor
-	discovery  DiscoveryService
-
 	proc     sync.WaitGroup
 	messages sync.WaitGroup
 	routines sync.WaitGroup
 
-	receiver    Behaviour
 	preStop     PreStop
 	postStop    PostStop
 	preRestart  PreRestart
@@ -402,57 +312,97 @@ type ActorImpl struct {
 }
 
 // NewActorImpl returns a new instance of an ActorImpl assigned giving protocol and service name.
-func NewActorImpl(ops ...ActorOption) *ActorImpl {
+func NewActorImpl(namespace string, protocol string, props Prop) *ActorImpl {
+	if namespace == "" {
+		namespace = "localhost"
+	}
+
+	if protocol == "" {
+		protocol = "kit"
+	}
+
 	ac := &ActorImpl{}
-
-	// apply the options.
-	for _, op := range ops {
-		op(ac)
-	}
-
-	// set the namespace to localhost if not set.
-	if ac.namespace == "" {
-		ac.namespace = "localhost"
-	}
-
-	// set the protocol to kit if not set.
-	if ac.protocol == "" {
-		ac.protocol = "kit"
-	}
-
-	// use default deadlock timer.
-	if ac.deadLockDur <= 0 {
-		ac.deadLockDur = defaultDeadLockTicker
-	}
-
-	if ac.busyDur <= 0 {
-		ac.busyDur = defaultWaitDuration
-	}
+	ac.protocol = protocol
+	ac.namespace = namespace
+	ac.deadLockDur = defaultDeadLockTicker
+	ac.busyDur = defaultWaitDuration
 
 	// add event provider.
-	if ac.events == nil {
-		ac.events = es.New()
+	if props.Event == nil {
+		props.Event = NewEventer()
 	}
 
-	if ac.deathmails == nil {
-		ac.deathmails = eventDeathMails
+	if props.DeadLetters == nil {
+		props.DeadLetters = eventDeathMails
+	}
+
+	if props.Signals == nil {
+		props.Signals = signalDummy{}
+	}
+
+	if tm, ok := props.Behaviour.(PreStart); ok {
+		ac.preStart = tm
+	} else {
+		ac.preStart = nil
+	}
+
+	if tm, ok := props.Behaviour.(PostStart); ok {
+		ac.postStart = tm
+	} else {
+		ac.postStart = nil
+	}
+
+	if tm, ok := props.Behaviour.(PreDestroy); ok {
+		ac.preDestroy = tm
+	} else {
+		ac.preDestroy = nil
+	}
+
+	if tm, ok := props.Behaviour.(PostDestroy); ok {
+		ac.postDestroy = tm
+	} else {
+		ac.postDestroy = nil
+	}
+
+	if tm, ok := props.Behaviour.(PreRestart); ok {
+		ac.preRestart = tm
+	} else {
+		ac.preRestart = nil
+	}
+
+	if tm, ok := props.Behaviour.(PostRestart); ok {
+		ac.postRestart = tm
+	} else {
+		ac.postRestart = nil
+	}
+
+	if tm, ok := props.Behaviour.(PreStop); ok {
+		ac.preStop = tm
+	} else {
+		ac.preStop = nil
+	}
+
+	if tm, ok := props.Behaviour.(PostStop); ok {
+		ac.postStop = tm
+	} else {
+		ac.postStop = nil
 	}
 
 	// add unbouned mailbox.
-	if ac.mails == nil {
-		ac.mails = UnboundedBoxQueue(ac.mailInvoker)
+	if props.Mailbox == nil {
+		props.Mailbox = UnboundedBoxQueue(props.MailInvoker)
 	}
 
 	// if we have no set provider then use a one-for-one strategy.
-	if ac.supervisor == nil {
-		ac.supervisor = &OneForOneSupervisor{
+	if props.Supervisor == nil {
+		props.Supervisor = &OneForOneSupervisor{
 			Max: 30,
 			Invoker: &EventSupervisingInvoker{
-				Event: ac.events,
+				Event: ac.props.Event,
 			},
 			Decider: func(tm interface{}) Directive {
 				switch tm.(type) {
-				case ActorPanic, ActorRoutinePanic:
+				case PanicEvent:
 					return PanicDirective
 				default:
 					return RestartDirective
@@ -461,6 +411,7 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 		}
 	}
 
+	ac.props = props
 	ac.rmActor = make(chan Actor, 0)
 	ac.addActor = make(chan Actor, 0)
 
@@ -485,11 +436,6 @@ func NewActorImpl(ops ...ActorOption) *ActorImpl {
 
 	ac.processable.On()
 
-	// if global gevent is provided, connect it to local events for system Messages.
-	if ac.gevents != nil {
-		ac.gsub = ac.events.Subscribe(ac.gevents.Publish).WithPredicate(isSystemMessages)
-	}
-
 	return ac
 }
 
@@ -505,14 +451,14 @@ func (ati *ActorImpl) ID() string {
 
 // Mailbox returns actors underline mailbox.
 func (ati *ActorImpl) Mailbox() Mailbox {
-	return ati.mails
+	return ati.props.Mailbox
 }
 
 // Watch adds provided function as a subscriber to be called
 // on events published by actor, it returns a subscription which
 // can be used to end giving subscription.
 func (ati *ActorImpl) Watch(fn func(interface{})) Subscription {
-	return ati.events.Subscribe(fn)
+	return ati.props.Event.Subscribe(fn, nil)
 }
 
 // DeathWatch asks this actor sentinel to advice on behaviour or operation to
@@ -522,7 +468,7 @@ func (ati *ActorImpl) Watch(fn func(interface{})) Subscription {
 // If actor has no Sentinel then an error is returned.
 // Sentinels are required to advice on action for watched actors by watching actor.
 func (ati *ActorImpl) DeathWatch(addr Addr) error {
-	if ati.sentinel == nil {
+	if ati.props.Sentinel == nil {
 		return errors.New("Actor does not have a sentinel")
 	}
 
@@ -536,7 +482,7 @@ func (ati *ActorImpl) DeathWatch(addr Addr) error {
 
 // Publish publishes an event into the actor event notification system.
 func (ati *ActorImpl) Publish(message interface{}) {
-	ati.events.Publish(message)
+	ati.props.Event.Publish(message)
 }
 
 // Receive adds giving Envelope into actor's mailbox.
@@ -546,13 +492,13 @@ func (ati *ActorImpl) Receive(a Addr, e Envelope) error {
 		return errors.New("actor is stopped and hence can't handle message")
 	}
 
-	if ati.messageInvoker != nil {
-		ati.messageInvoker.InvokedRequest(a, e)
+	if ati.props.MessageInvoker != nil {
+		ati.props.MessageInvoker.InvokedRequest(a, e)
 	}
 
 	ati.messages.Add(1)
 
-	return ati.mails.Push(a, e)
+	return ati.props.Mailbox.Push(a, e)
 }
 
 // Discover returns actor's Addr from this actor's
@@ -568,11 +514,11 @@ func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
 		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
-	if ati.parent != nil && ati.discovery == nil && ancestral {
+	if ati.parent != nil && ati.props.Discovery == nil && ancestral {
 		return ati.parent.Discover(service, ancestral)
 	}
 
-	addr, err := ati.discovery.Discover(service)
+	addr, err := ati.props.Discovery.Discover(service)
 	if err != nil {
 		if ati.parent != nil && ancestral {
 			return ati.parent.Discover(service, ancestral)
@@ -586,65 +532,12 @@ func (ati *ActorImpl) Discover(service string, ancestral bool) (Addr, error) {
 // created actor.
 //
 // The method will return an error if Actor is not already running.
-func (ati *ActorImpl) Spawn(service string, rec Behaviour, prop Prop) (Addr, error) {
+func (ati *ActorImpl) Spawn(service string, prop Prop) (Addr, error) {
 	if !ati.started.IsOn() && !ati.starting.IsOn() {
 		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
-	ops := make([]ActorOption, 0, 18)
-	ops = append(ops, UseNamespace(ati.namespace), UseProtocol(ati.protocol), UseParent(ati), UseBehaviour(rec))
-
-	if prop.BusyDuration > 0 {
-		ops = append(ops, WaitBusyDuration(prop.BusyDuration))
-	}
-
-	if prop.DeadLockDuration > 0 {
-		ops = append(ops, DeadLockTicker(prop.DeadLockDuration))
-	}
-
-	if prop.Discovery != nil {
-		ops = append(ops, UseDiscoveryService(prop.Discovery))
-	} else if ati.discovery != nil {
-		ops = append(ops, UseDiscoveryService(ati.discovery))
-	}
-
-	if prop.DeadLetters != nil {
-		ops = append(ops, UseDeadLetter(prop.DeadLetters))
-	}
-
-	if prop.StateInvoker != nil {
-		ops = append(ops, UseStateInvoker(prop.StateInvoker))
-	}
-
-	if prop.MessageInvoker != nil {
-		ops = append(ops, UseMessageInvoker(prop.MessageInvoker))
-	}
-
-	if prop.Supervisor != nil {
-		ops = append(ops, UseSupervisor(prop.Supervisor))
-	}
-
-	if prop.MailInvoker != nil {
-		ops = append(ops, UseMailInvoker(prop.MailInvoker))
-	}
-
-	if prop.Mailbox != nil {
-		ops = append(ops, UseMailbox(prop.Mailbox))
-	}
-
-	if prop.GlobalEvent != nil {
-		ops = append(ops, UseGlobalEventStream(prop.GlobalEvent))
-	}
-
-	if prop.Event != nil {
-		ops = append(ops, UseEventStream(prop.Event))
-	}
-
-	if prop.Sentinel != nil {
-		ops = append(ops, UseSentinel(prop.Sentinel))
-	}
-
-	am := NewActorImpl(ops...)
+	am := NewActorImpl(ati.namespace, ati.protocol, prop)
 	if err := ati.manageChild(am); err != nil {
 		return nil, err
 	}
@@ -716,7 +609,7 @@ func (ati *ActorImpl) ProtocolAddrUUID() string {
 // to escalate to parent's supervisor or restart/stop or handle
 // giving actor as dictated by it's algorithm.
 func (ati *ActorImpl) Escalate(err interface{}, addr Addr) {
-	go ati.supervisor.Handle(err, addr, ati, ati.parent)
+	go ati.props.Supervisor.Handle(err, addr, ati, ati.parent)
 }
 
 // Ancestor returns the root parent of giving Actor ancestral tree.
@@ -902,7 +795,7 @@ func (ati *ActorImpl) DestroyChildren() error {
 //****************************************************************
 
 func (ati *ActorImpl) runSystem(restart bool) error {
-	if ati.receiver == nil {
+	if ati.props.Behaviour == nil {
 		return errors.WrapOnly(ErrActorHasNoBehaviour)
 	}
 
@@ -918,10 +811,12 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 	if restart {
 		atomic.AddInt64(&ati.restartedCount, 1)
 
-		ati.events.Publish(ActorRestartRequested{
-			ID:   ati.id.String(),
-			Addr: ati.accessAddr,
+		ati.props.Event.Publish(ActorSignal{
+			Signal: RESTARTING,
+			Addr:   ati.accessAddr,
 		})
+
+		ati.props.Signals.SignalState(ati.accessAddr, RESTARTING)
 
 		if ati.preRestart != nil {
 			if err := ati.preRestart.PreRestart(ati.accessAddr); err != nil {
@@ -930,10 +825,12 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 			}
 		}
 	} else {
-		ati.events.Publish(ActorStartRequested{
-			ID:   ati.id.String(),
-			Addr: ati.accessAddr,
+		ati.props.Event.Publish(ActorSignal{
+			Signal: STARTING,
+			Addr:   ati.accessAddr,
 		})
+
+		ati.props.Signals.SignalState(ati.accessAddr, STARTING)
 
 		if ati.preStart != nil {
 			if err := ati.preStart.PreStart(ati.accessAddr); err != nil {
@@ -950,9 +847,11 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 			}
 		}
 
-		ati.events.Publish(ActorRestarted{
-			Addr: ati.accessAddr,
-			ID:   ati.id.String(),
+		ati.props.Signals.SignalState(ati.accessAddr, RESTARTED)
+
+		ati.props.Event.Publish(ActorSignal{
+			Addr:   ati.accessAddr,
+			Signal: RESTARTED,
 		})
 	} else {
 		if ati.postStart != nil {
@@ -962,9 +861,11 @@ func (ati *ActorImpl) runSystem(restart bool) error {
 			}
 		}
 
-		ati.events.Publish(ActorStarted{
-			ID:   ati.id.String(),
-			Addr: ati.accessAddr,
+		ati.props.Signals.SignalState(ati.accessAddr, RUNNING)
+
+		ati.props.Event.Publish(ActorSignal{
+			Addr:   ati.accessAddr,
+			Signal: RUNNING,
 		})
 	}
 
@@ -979,22 +880,24 @@ func (ati *ActorImpl) initRoutines() {
 }
 
 func (ati *ActorImpl) exhaustMessages() {
-	for !ati.mails.IsEmpty() {
-		if nextAddr, next, err := ati.mails.Pop(); err == nil {
+	for !ati.props.Mailbox.IsEmpty() {
+		if nextAddr, next, err := ati.props.Mailbox.Pop(); err == nil {
 			ati.messages.Done()
 
 			dm := DeadMail{To: nextAddr, Message: next}
-			ati.deathmails.RecoverMail(dm)
+			ati.props.DeadLetters.RecoverMail(dm)
 		}
 	}
 }
 
 func (ati *ActorImpl) preDestroySystem() {
 	ati.destruction.On()
-	ati.events.Publish(ActorDestroyRequested{
-		Addr: ati.accessAddr,
-		ID:   ati.id.String(),
+	ati.props.Event.Publish(ActorSignal{
+		Addr:   ati.accessAddr,
+		Signal: DESTRUCTING,
 	})
+
+	ati.props.Signals.SignalState(ati.accessAddr, DESTRUCTING)
 
 	if ati.preDestroy != nil {
 		ati.preDestroy.PreDestroy(ati.accessAddr)
@@ -1019,31 +922,36 @@ func (ati *ActorImpl) postDestroySystem() {
 		ati.postDestroy.PostDestroy(ati.accessAddr)
 	}
 
-	ati.events.Publish(ActorDestroyed{
-		Addr: ati.accessAddr,
-		ID:   ati.id.String(),
+	ati.props.Signals.SignalState(ati.accessAddr, DESTROYED)
+
+	ati.props.Event.Publish(ActorSignal{
+		Addr:   ati.accessAddr,
+		Signal: DESTROYED,
 	})
 	ati.destruction.Off()
 }
 
 func (ati *ActorImpl) preKillSystem() {
-	ati.events.Publish(ActorKillRequested{
-		ID:   ati.id.String(),
-		Addr: ati.accessAddr,
+	ati.props.Signals.SignalState(ati.accessAddr, KILLING)
+	ati.props.Event.Publish(ActorSignal{
+		Signal: KILLING,
+		Addr:   ati.accessAddr,
 	})
 }
 
 func (ati *ActorImpl) postKillSystem() {
-	ati.events.Publish(ActorKilled{
-		ID:   ati.id.String(),
-		Addr: ati.accessAddr,
+	ati.props.Signals.SignalState(ati.accessAddr, KILLED)
+	ati.props.Event.Publish(ActorSignal{
+		Signal: KILLED,
+		Addr:   ati.accessAddr,
 	})
 }
 
 func (ati *ActorImpl) preStopSystem() {
-	ati.events.Publish(ActorStopRequested{
-		ID:   ati.id.String(),
-		Addr: ati.accessAddr,
+	ati.props.Signals.SignalState(ati.accessAddr, STOPPING)
+	ati.props.Event.Publish(ActorSignal{
+		Signal: STOPPING,
+		Addr:   ati.accessAddr,
 	})
 
 	if ati.preStop != nil {
@@ -1052,13 +960,14 @@ func (ati *ActorImpl) preStopSystem() {
 }
 
 func (ati *ActorImpl) postStopSystem() {
+	ati.props.Signals.SignalState(ati.accessAddr, STOPPED)
 	if ati.postStop != nil {
 		ati.postStop.PostStop(ati.accessAddr)
 	}
 
-	ati.events.Publish(ActorStopped{
-		ID:   ati.id.String(),
-		Addr: ati.accessAddr,
+	ati.props.Event.Publish(ActorSignal{
+		Signal: STOPPED,
+		Addr:   ati.accessAddr,
 	})
 
 	ati.started.Off()
@@ -1067,19 +976,12 @@ func (ati *ActorImpl) postStopSystem() {
 func (ati *ActorImpl) addSentinelWatch(addr Addr) {
 	sub := addr.Watch(func(ev interface{}) {
 		switch tm := ev.(type) {
-		case ActorDestroyed:
-			ati.sentinel.Advice(addr, tm)
-		case ActorRestarted:
-			ati.sentinel.Advice(addr, tm)
-		case ActorStopped:
-			ati.sentinel.Advice(addr, tm)
-		case ActorKilled:
-			ati.sentinel.Advice(addr, tm)
+		case ActorSignal:
+			ati.props.Sentinel.Advice(addr, tm)
 		default:
 			return
 		}
 	})
-
 	ati.sentinelSubs[addr] = sub
 }
 
@@ -1097,14 +999,14 @@ func (ati *ActorImpl) awaitMessageExhaustion() {
 func (ati *ActorImpl) stopMessageReception() {
 	ati.processable.Off()
 	ati.signal <- struct{}{}
-	ati.mails.Signal()
+	ati.props.Mailbox.Signal()
 
 	// TODO(influx6): Noticed a rare bug where the initial call to
 	// ati.mails.Signal() fails to signal end of giving mail check routine.
 	// hence am adding this into this as a temporary fix.
 	// Please remove once we figure how to fix this scheduling issue.
 	tm := time.AfterFunc(1*time.Second, func() {
-		ati.mails.Signal()
+		ati.props.Mailbox.Signal()
 	})
 
 	ati.routines.Wait()
@@ -1179,7 +1081,7 @@ func (ati *ActorImpl) exhaustSignalChan(signal chan chan error) {
 func (ati *ActorImpl) registerChild(ac Actor) {
 	sub := ac.Watch(func(event interface{}) {
 		switch event.(type) {
-		case ActorDestroyed:
+		case ActorSignal:
 			if ati.destruction.IsOn() {
 				return
 			}
@@ -1273,7 +1175,7 @@ func (ati *ActorImpl) manageLifeCycle() {
 			ati.destroyChildrenSystems()
 			ati.postStopSystem()
 			ati.postDestroySystem()
-			ati.events.Reset()
+			ati.props.Event.Reset()
 			res <- nil
 			return
 		case res := <-ati.destroyChildrenChan:
@@ -1295,14 +1197,14 @@ func (ati *ActorImpl) readMessages() {
 			coll := runtime.Stack(trace, false)
 			trace = trace[:coll]
 
-			event := ActorRoutinePanic{
+			event := PanicEvent{
 				Stack: trace,
 				Panic: err,
 				Addr:  ati.accessAddr,
 				ID:    ati.id.String(),
 			}
 
-			ati.events.Publish(event)
+			ati.props.Event.Publish(event)
 
 			ati.Escalate(event, ati.accessAddr)
 		}
@@ -1311,7 +1213,7 @@ func (ati *ActorImpl) readMessages() {
 	for {
 		// block until we have a message, internally
 		// we will be put to sleep till there is a message.
-		ati.mails.Wait()
+		ati.props.Mailbox.Wait()
 
 		// Make a check after signal of new message, if we
 		// are required to shutdown.
@@ -1321,7 +1223,7 @@ func (ati *ActorImpl) readMessages() {
 		default:
 		}
 
-		addr, msg, err := ati.mails.Pop()
+		addr, msg, err := ati.props.Mailbox.Pop()
 		if err != nil {
 			continue
 		}
@@ -1335,14 +1237,14 @@ func (ati *ActorImpl) process(a Addr, x Envelope) {
 	// decrease message wait counter.
 	ati.messages.Done()
 
-	if ati.messageInvoker != nil {
-		ati.messageInvoker.InvokedProcessing(a, x)
+	if ati.props.MessageInvoker != nil {
+		ati.props.MessageInvoker.InvokedProcessing(a, x)
 	}
 
-	ati.receiver.Action(a, x)
+	ati.props.Behaviour.Action(a, x)
 
-	if ati.messageInvoker != nil {
-		ati.messageInvoker.InvokedProcessed(a, x)
+	if ati.props.MessageInvoker != nil {
+		ati.props.MessageInvoker.InvokedProcessed(a, x)
 	}
 }
 

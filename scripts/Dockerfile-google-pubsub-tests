@@ -4,5 +4,5 @@ ENV GO111MODULE=on
 COPY . gokit/actorkit
 WORKDIR gokit/actorkit
 RUN make gomod
-CMD "make google_pubsub_tests"
 
+ENTRYPOINT ["make", "google_pubsub_tests"]

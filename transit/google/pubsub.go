@@ -149,7 +149,7 @@ type PublisherConfig struct {
 	ProjectID          string
 	CreateMissingTopic bool
 	Marshaler          Marshaler
-	Log                actorkit.LogEvent
+	Log                actorkit.Logs
 	ClientOptions      []option.ClientOption
 	PublishSettings    *pubsub.PublishSettings
 }
@@ -272,7 +272,7 @@ type Publisher struct {
 	actions  chan func()
 	sink     *pubsub.Topic
 	ctx      context.Context
-	log      actorkit.LogEvent
+	log      actorkit.Logs
 	canceler func()
 }
 
@@ -300,7 +300,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 		if err != nil {
 			perr := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.MarshalingError{Err: perr, Data: msg})
+				p.log.Emit(actorkit.ERROR, transit.MarshalingError{Err: perr, Data: msg})
 			}
 			errs <- perr
 			return
@@ -313,7 +313,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 		if err2 != nil {
 			perr2 := errors.Wrap(err2, "Failed to publish incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Publish(transit.PublishError{Err: perr2, Data: marshaled, Topic: p.topic})
+				p.log.Emit(actorkit.ERROR, transit.PublishError{Err: perr2, Data: marshaled, Topic: p.topic})
 			}
 
 			errs <- perr2
@@ -357,7 +357,7 @@ type SubscriberConfig struct {
 	ProjectID                 string
 	MaxOutStandingMessage     int
 	MaxOutStandingBytes       int
-	Log                       actorkit.LogEvent
+	Log                       actorkit.Logs
 	MaxExtension              time.Duration
 	Unmarshaler               Unmarshaler
 	ClientOptions             []option.ClientOption
@@ -520,7 +520,7 @@ type Subscription struct {
 	id        string
 	topic     string
 	canceler  func()
-	log       actorkit.LogEvent
+	log       actorkit.Logs
 	tx        *pubsub.Topic
 	client    *pubsub.Client
 	ctx       context.Context
@@ -599,7 +599,7 @@ func (s *Subscription) run() {
 		decoded, err := s.config.Unmarshaler.Unmarshal(message)
 		if err != nil {
 			if s.log != nil {
-				s.log.Publish(transit.UnmarshalingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
+				s.log.Emit(actorkit.ERROR, transit.UnmarshalingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
 			}
 			switch s.direction(err) {
 			case Ack:
@@ -612,7 +612,7 @@ func (s *Subscription) run() {
 
 		if err := s.receiver(decoded); err != nil {
 			if s.log != nil {
-				s.log.Publish(transit.MessageHandlingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
+				s.log.Emit(actorkit.ERROR, transit.MessageHandlingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
 			}
 			switch s.direction(err) {
 			case Ack:
@@ -626,7 +626,7 @@ func (s *Subscription) run() {
 		message.Ack()
 	}); err != nil {
 		if s.log != nil {
-			s.log.Publish(transit.OpError{Err: errors.WrapOnly(err), Topic: s.topic})
+			s.log.Emit(actorkit.ERROR, transit.OpError{Err: errors.WrapOnly(err), Topic: s.topic})
 		}
 	}
 }

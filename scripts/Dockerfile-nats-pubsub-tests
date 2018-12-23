@@ -6,3 +6,4 @@ WORKDIR gokit/actorkit
 RUN make gomod
 CMD "make nats_tests"
 
+ENTRYPOINT ["make", "nats_tests"]

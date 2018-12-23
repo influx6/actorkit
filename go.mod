@@ -11,6 +11,7 @@ require (
 	github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe
 	github.com/gokit/es v0.0.0-20181119091109-8d78b96ec2c1
 	github.com/gokit/xid v1.2.2
+	github.com/golang/mock v1.1.1
 	github.com/googleapis/gax-go v2.0.2+incompatible // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
 	github.com/hashicorp/go-msgpack v0.0.0-20150518234257-fa3f63826f7c // indirect

@@ -27,6 +27,8 @@ func testMessagePublishing(t *testing.T, pubsub transit.PublisherFactory) {
 	assert.NotNil(t, pub)
 
 	assert.NoError(t, pub.Publish(actorkit.CreateEnvelope(actorkit.DeadLetters(), actorkit.Header{}, "300")))
+
+	<-time.After(3 * time.Second)
 	assert.NoError(t, pub.Close())
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gokit/actorkit/internal"
+
 	"github.com/gokit/actorkit/transit/internal/encoders"
 	"github.com/stretchr/testify/assert"
 
@@ -17,6 +19,7 @@ import (
 func TestNATS(t *testing.T) {
 	natspub, err := nats.NewPublisherSubscriberFactory(context.Background(), nats.Config{
 		URL:         "localhost:4222",
+		Log:         &internal.TLog{},
 		Marshaler:   encoders.NoAddressMarshaler{},
 		Unmarshaler: encoders.NoAddressUnmarshaler{},
 	})

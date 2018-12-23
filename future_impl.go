@@ -121,7 +121,7 @@ func (f *FutureImpl) AddressOf(service string, ancestry bool) (Addr, error) {
 }
 
 // Spawn requests giving service and Receiver from future's parent Spawn method.
-func (f *FutureImpl) Spawn(service string, rr Behaviour, ops Prop) (Addr, error) {
+func (f *FutureImpl) Spawn(service string, ops Prop) (Addr, error) {
 	return nil, errors.New("not possible")
 }
 
