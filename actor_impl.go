@@ -321,6 +321,10 @@ func NewActorImpl(namespace string, protocol string, props Prop) *ActorImpl {
 		protocol = "kit"
 	}
 
+	if props.Behaviour == nil {
+		panic("Can have nil Behaviour")
+	}
+
 	ac := &ActorImpl{}
 	ac.protocol = protocol
 	ac.namespace = namespace
@@ -538,6 +542,8 @@ func (ati *ActorImpl) Spawn(service string, prop Prop) (Addr, error) {
 	}
 
 	am := NewActorImpl(ati.namespace, ati.protocol, prop)
+	am.parent = ati
+
 	if err := ati.manageChild(am); err != nil {
 		return nil, err
 	}
@@ -1080,8 +1086,11 @@ func (ati *ActorImpl) exhaustSignalChan(signal chan chan error) {
 
 func (ati *ActorImpl) registerChild(ac Actor) {
 	sub := ac.Watch(func(event interface{}) {
-		switch event.(type) {
+		switch tm := event.(type) {
 		case ActorSignal:
+			if tm.Signal != DESTROYED && tm.Signal != DESTRUCTING {
+				return
+			}
 			if ati.destruction.IsOn() {
 				return
 			}
