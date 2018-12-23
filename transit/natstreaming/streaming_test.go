@@ -16,8 +16,8 @@ import (
 
 func TestNATS(t *testing.T) {
 	natspub, err := streaming.NewPublisherSubscriberFactory(context.Background(), streaming.Config{
-		URL:         "",
-		ClusterID:   "",
+		URL:         "localhost:4222",
+		ClusterID:   "cluster",
 		Marshaler:   encoders.NoAddressMarshaler{},
 		Unmarshaler: encoders.NoAddressUnmarshaler{},
 	})

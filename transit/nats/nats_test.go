@@ -16,7 +16,7 @@ import (
 
 func TestNATS(t *testing.T) {
 	natspub, err := nats.NewPublisherSubscriberFactory(context.Background(), nats.Config{
-		URL:         "",
+		URL:         "localhost:4222",
 		Marshaler:   encoders.NoAddressMarshaler{},
 		Unmarshaler: encoders.NoAddressUnmarshaler{},
 	})
