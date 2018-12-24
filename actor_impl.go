@@ -898,12 +898,12 @@ func (ati *ActorImpl) exhaustMessages() {
 
 func (ati *ActorImpl) preDestroySystem() {
 	ati.destruction.On()
+
+	ati.props.Signals.SignalState(ati.accessAddr, DESTRUCTING)
 	ati.props.Event.Publish(ActorSignal{
 		Addr:   ati.accessAddr,
 		Signal: DESTRUCTING,
 	})
-
-	ati.props.Signals.SignalState(ati.accessAddr, DESTRUCTING)
 
 	if ati.preDestroy != nil {
 		ati.preDestroy.PreDestroy(ati.accessAddr)
@@ -924,16 +924,17 @@ func (ati *ActorImpl) preMidDestroySystem() {
 }
 
 func (ati *ActorImpl) postDestroySystem() {
+
 	if ati.postDestroy != nil {
 		ati.postDestroy.PostDestroy(ati.accessAddr)
 	}
-
-	ati.props.Signals.SignalState(ati.accessAddr, DESTROYED)
 
 	ati.props.Event.Publish(ActorSignal{
 		Addr:   ati.accessAddr,
 		Signal: DESTROYED,
 	})
+
+	ati.props.Signals.SignalState(ati.accessAddr, DESTROYED)
 	ati.destruction.Off()
 }
 

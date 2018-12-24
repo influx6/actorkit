@@ -243,6 +243,37 @@ const (
 	PANICED
 )
 
+// String returns a text version of state.
+func (s Signal) String() string {
+	switch s {
+	case INACTIVE:
+		return "INACTIVE"
+	case STARTING:
+		return "STARTING"
+	case RUNNING:
+		return "RUNNING"
+	case RESTARTING:
+		return "RESTARTING"
+	case RESTARTED:
+		return "RESTARTED"
+	case STOPPING:
+		return "STOPPING"
+	case STOPPED:
+		return "STOPPED"
+	case KILLING:
+		return "KILLING"
+	case KILLED:
+		return "KILLED"
+	case DESTRUCTING:
+		return "DESTRUCTING"
+	case DESTROYED:
+		return "DESTROYED"
+	case PANICED:
+		return "PANICED"
+	}
+	return "UNKNOWN"
+}
+
 // Signals defines a interesting interface which exposes a method
 // for the reception of a current state of an actor. Useful for
 // service discovery purposes and more.
@@ -469,6 +500,9 @@ type DeathWatch interface {
 // Prop defines underline actor operation which are used to
 // generate said handlers for an instantiated actor.
 type Prop struct {
+	// Log sets the logger to be used by actor for detailing
+	// operation logs of current state.
+	Logger Logs
 
 	// Behaviour defines the behaviour to be used for handling
 	// and processing incoming messages.

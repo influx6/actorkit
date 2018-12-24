@@ -2,6 +2,7 @@ package actorkit_test
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +34,8 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 	sub := child1.Watch(func(i interface{}) {
 		switch sm := i.(type) {
 		case actorkit.ActorSignal:
+
+			fmt.Printf("Signal: %+q\n", sm)
 			switch sm.Signal {
 			case actorkit.RESTARTING:
 				w.Done()
@@ -50,8 +53,10 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 	w.Wait()
 	sub.Stop()
 
+	fmt.Println("Destroying")
 	child1.Actor().Destroy()
 	child2.Actor().Destroy()
+	fmt.Println("Destroyed")
 }
 
 func TestRestartSupervisor(t *testing.T) {

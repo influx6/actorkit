@@ -7,13 +7,6 @@ import (
 	"github.com/gokit/actorkit"
 )
 
-// DrainLog implements the actorkit.Logs interface.
-type DrainLog struct{}
-
-// Emit does nothing with provided arguments, it implements
-// actorkit.Logs Emit method.
-func (DrainLog) Emit(_ actorkit.Level, _ actorkit.LogEvent) {}
-
 // TLog implements the actorkit.Logs interface, printing
 // out basic type and value contents with log.
 type TLog struct{}
