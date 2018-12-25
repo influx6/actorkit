@@ -58,6 +58,10 @@ func (m Header) Has(n string) bool {
 }
 
 //***************************************************************************
+//
+//***************************************************************************
+
+//***************************************************************************
 // LogEvent
 //***************************************************************************
 
@@ -98,6 +102,12 @@ func (l Level) String() string {
 // import paths. Implement this and pass in to elements that provide for it.
 type Logs interface {
 	Emit(Level, LogEvent)
+}
+
+// ContextLogs defines an interface that returns a Logs which exposes a method to return
+// a logger which contextualizes the provided actor as a base for it's logger.
+type ContextLogs interface {
+	Get(Actor) Logs
 }
 
 // LogEvent defines an interface which exposes a method for retrieving
@@ -160,17 +170,18 @@ type Actor interface {
 	Destroyable
 
 	Identity
+	Protocol
 	Namespace
 	Addressable
 	ProtocolAddr
 
+	State
 	Ancestry
 	Descendants
 
 	Spawner
 	Discovery
 
-	Running
 	Receiver
 	Escalator
 
@@ -201,18 +212,21 @@ type Actor interface {
 // actors in the case of clustering or distributing messaging through a proxy address.
 //
 type Addr interface {
-	Sender
 	Service
-	Spawner
+	Protocol
 	Identity
+	Namespace
+	Addressable
+	ProtocolAddr
+
+	State
+	Sender
+	Spawner
 	Futures
 	Watchable
 	DeathWatch
 	Descendants
-	Addressable
-	ProtocolAddr
 	Escalatable
-	Namespace
 	AddressActor
 	AncestralAddr
 	AddressService
@@ -241,6 +255,8 @@ const (
 	DESTRUCTING
 	DESTROYED
 	PANICED
+	REJECTED
+	RESOLVED
 )
 
 // String returns a text version of state.
@@ -258,6 +274,10 @@ func (s Signal) String() string {
 		return "RESTARTED"
 	case STOPPING:
 		return "STOPPING"
+	case RESOLVED:
+		return "RESOLVED"
+	case REJECTED:
+		return "REJECTED"
 	case STOPPED:
 		return "STOPPED"
 	case KILLING:
@@ -279,6 +299,11 @@ func (s Signal) String() string {
 // service discovery purposes and more.
 type Signals interface {
 	SignalState(Addr, Signal)
+}
+
+// State defines a function which returns the current state of it's implementer.
+type State interface {
+	State() Signal
 }
 
 //***********************************
@@ -315,10 +340,13 @@ func (em *EventDeathMail) RecoverMail(mail DeadMail) {
 //  Descendants
 //***********************************
 
-// Descendants exposes a single method which returns
-// addresses of all children address of implementer.
+// Descendants exposes methods which allow
+// interaction with children of a implementing
+// object.
 type Descendants interface {
 	Children() []Addr
+	GetAddr(addr string) (Addr, error)
+	GetChild(id string, subID ...string) (Addr, error)
 }
 
 //***********************************
@@ -391,6 +419,12 @@ type Addressable interface {
 // representing it's protocol address.
 type ProtocolAddr interface {
 	ProtocolAddr() string
+}
+
+// Protocol exposes a self named method to get a giving value for procol of
+// implementer.
+type Protocol interface {
+	Protocol() string
 }
 
 // Namespace exposes a self named method to get a giving value for namespace of
@@ -480,7 +514,7 @@ type EventStream interface {
 	Subscribe(Handler, Predicate) Subscription
 }
 
-// Watchable defines a in interface that exposes methods to add
+// Watchable defines a interface that exposes methods to add
 // functions to be called on some status change of the implementing
 // instance.
 type Watchable interface {
@@ -500,9 +534,14 @@ type DeathWatch interface {
 // Prop defines underline actor operation which are used to
 // generate said handlers for an instantiated actor.
 type Prop struct {
-	// Log sets the logger to be used by actor for detailing
-	// operation logs of current state.
-	Logger Logs
+	// ContextLog sets the context logger provider, which will be
+	// if set to create a Logger which will be used by the actor
+	// for logging, it's operations.
+	//
+	// It's expected child actors will inherit parent's Prop.ContextLogs
+	// if they are provided none for use in creating Logs instance in
+	// implementations.
+	ContextLogs ContextLogs
 
 	// Behaviour defines the behaviour to be used for handling
 	// and processing incoming messages.
@@ -627,16 +666,6 @@ type fnDiscovery struct {
 
 func (dn *fnDiscovery) Discover(service string) (Addr, error) {
 	return dn.Fn(dn.parent, service)
-}
-
-//***********************************
-//  Running
-//***********************************
-
-// Running defines an interface which exposes a method for
-// getting the running state of it's implementer.
-type Running interface {
-	Running() bool
 }
 
 //***********************************
@@ -777,8 +806,21 @@ type PostRestart interface {
 //***********************************
 
 // Sentinel exposes a method which handles necessarily logic
-// for a giving watched actor. It allows notifications about
-// said actor be handled and responded to.
+// for advising an action to be done for a watched actor.
+// It allows notifications about said actor be handled and
+// responded to.
+//
+// Whilst Sentinel and Signals seem similar, sentinel are
+// mainly for the purpose of taking actions against the
+// calls of when a Addr is asked to watch another address.
+// It allows you to provide a structure which sits to provide
+// a means of executing sets of behaviours for when a actor wishes
+// to work or act on a giving state of another actor which has no
+// parent and child relationship with it, which means such an actor
+// does not rely on it's supervisory strategy.
+//
+// Sentinels will generally be inherited by child actors from parents
+// if they do not provide their own, that is their general idea.
 type Sentinel interface {
 	Advice(Addr, SystemMessage)
 }
@@ -996,9 +1038,29 @@ type Future interface {
 	Result() Envelope
 }
 
-//***********************************
+//*******************************************************************
 //  System Messages
-//***********************************
+//*******************************************************************
+
+// Message defines a giving error string for use as a detail.
+type Message string
+
+// Message implements the actorkit.LogEvent interface.
+func (m Message) Message() string {
+	return string(m)
+}
+
+// OpMessage defines a giving default type for containing data related to
+// an operation detail.
+type OpMessage struct {
+	Detail string
+	Data   interface{}
+}
+
+// Message implements the LogEvent interface.
+func (m OpMessage) Message() string {
+	return m.Detail
+}
 
 // EscalatedError defines a type which represents a
 // escalated error and value.

@@ -21,7 +21,9 @@ var (
 	_ Future = &FutureImpl{}
 )
 
-// FutureImpl defines an implementation for the Future actor type.
+// FutureImpl defines an implementation the Future interface, it provides a type of address
+// which defers the resolution of a underline result into the future and can be passed around like
+// any address, where the result can be later retrieved using pipeTo feature.
 type FutureImpl struct {
 	id     xid.ID
 	parent Addr
@@ -161,9 +163,30 @@ func (f *FutureImpl) Ancestor() Addr {
 	return f.parent.Ancestor()
 }
 
+// State returns state of actor.
+func (f *FutureImpl) State() Signal {
+	if !f.resolved() {
+		return RUNNING
+	}
+	if f.fulfilled() {
+		return RESOLVED
+	}
+	return REJECTED
+}
+
 // Children returns an empty slice as futures can not have children actors.
 func (f *FutureImpl) Children() []Addr {
 	return nil
+}
+
+// GetAddr implements the Descendant interface but futures are not allowed to have children.
+func (f *FutureImpl) GetAddr(addr string) (Addr, error) {
+	return nil, errors.New("has no children")
+}
+
+// GetChild implements the Descendant interface but futures are not allowed to have children.
+func (f *FutureImpl) GetChild(id string, subID ...string) (Addr, error) {
+	return nil, errors.New("has no children")
 }
 
 // Service returns the "Future" as the service name of FutureImpl.
@@ -176,24 +199,25 @@ func (f *FutureImpl) ID() string {
 	return f.id.String()
 }
 
-// Addr returns s consistent address format representing a future which will always be
-// in the format:
-//
-//	ParentAddr/:future/FutureID
-//
-func (f *FutureImpl) Addr() string {
-	return f.parent.Addr() + "/:future/" + f.id.String()
-}
-
-// ProtocolAddr implements the ProtocolAddr interface. It
-// always returns
-func (f *FutureImpl) ProtocolAddr() string {
-	return "future@" + f.parent.Namespace()
-}
-
 // Namespace returns future's parent namespace value.
 func (f *FutureImpl) Namespace() string {
 	return f.parent.Namespace()
+}
+
+// Protocol returns future's parent's protocol value.
+func (f *FutureImpl) Protocol() string {
+	return f.parent.Protocol()
+}
+
+// Addr returns s consistent address format representing a future addr.
+func (f *FutureImpl) Addr() string {
+	return formatAddrService2(FormatAddrChild(f.parent.Addr(), f.ID()), f.Service())
+}
+
+// ProtocolAddr implements the ProtocolAddr interface. It
+// always returns future@parent_namespace/service.
+func (f *FutureImpl) ProtocolAddr() string {
+	return f.parent.ProtocolAddr()
 }
 
 // Wait blocks till the giving future is resolved and returns error if
@@ -284,6 +308,18 @@ func (f *FutureImpl) resolved() bool {
 	f.cw.Lock()
 	defer f.cw.Unlock()
 	return f.result != nil || f.err != nil
+}
+
+func (f *FutureImpl) rejected() bool {
+	f.cw.Lock()
+	defer f.cw.Unlock()
+	return f.result != nil && f.err != nil
+}
+
+func (f *FutureImpl) fulfilled() bool {
+	f.cw.Lock()
+	defer f.cw.Unlock()
+	return f.result != nil && f.err == nil
 }
 
 func (f *FutureImpl) broadcast() {

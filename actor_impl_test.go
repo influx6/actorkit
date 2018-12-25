@@ -23,13 +23,13 @@ func TestActorImpl(t *testing.T) {
 	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
 	assert.NoError(t, am.Start())
-	assert.True(t, am.Running())
+	assert.True(t, isRunning(am))
 
 	assert.NoError(t, am.Restart())
-	assert.True(t, am.Running())
+	assert.True(t, isRunning(am))
 
 	assert.NoError(t, am.Stop())
-	assert.False(t, am.Running())
+	assert.False(t, isRunning(am))
 }
 
 func TestActorImplMessaging(t *testing.T) {
@@ -37,13 +37,13 @@ func TestActorImplMessaging(t *testing.T) {
 	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
 	assert.NoError(t, am.Start())
-	assert.True(t, am.Running())
+	assert.True(t, isRunning(am))
 
 	addr := actorkit.AddressOf(am, "basic")
 	assert.NoError(t, addr.Send(2, nil))
 
 	assert.NoError(t, am.Stop())
-	assert.False(t, am.Running())
+	assert.False(t, isRunning(am))
 
 	assert.Len(t, base.Message, 1)
 	content := <-base.Message
@@ -67,7 +67,7 @@ func TestActorChildMessaging(t *testing.T) {
 	assert.NoError(t, addr.Send(2, nil))
 
 	assert.NoError(t, actorkit.Poison(system))
-	assert.False(t, system.Actor().Running())
+	assert.False(t, isRunning(system))
 
 	assert.Len(t, base.Message, 1)
 	content := <-base.Message
@@ -97,13 +97,13 @@ func TestActorImplPanic(t *testing.T) {
 	}, actorkit.UseSupervisor(supervisor))
 
 	assert.NoError(t, am.Start())
-	assert.True(t, am.Running())
+	assert.True(t, isRunning(am))
 
 	addr := actorkit.AddressOf(am, "basic")
 	assert.NoError(t, addr.Send(2, nil))
 
 	assert.NoError(t, am.Stop())
-	assert.False(t, am.Running())
+	assert.False(t, isRunning(am))
 }
 
 func TestActorWithChildTreeStates(t *testing.T) {
@@ -113,7 +113,7 @@ func TestActorWithChildTreeStates(t *testing.T) {
 	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
 	assert.NoError(t, am.Start())
-	assert.True(t, am.Running())
+	assert.True(t, isRunning(am))
 
 	childAddr, err := am.Spawn("child", actorkit.Prop{Behaviour: base})
 	assert.NoError(t, err)
@@ -126,10 +126,10 @@ func TestActorWithChildTreeStates(t *testing.T) {
 	assert.Len(t, childAddr.Children(), 1)
 
 	assert.NoError(t, am.Restart())
-	assert.True(t, am.Running())
+	assert.True(t, isRunning(am))
 
 	assert.NoError(t, am.Stop())
-	assert.False(t, am.Running())
+	assert.False(t, isRunning(am))
 
 	assert.True(t, childAddr.ID() != am.ID())
 	assert.Error(t, childAddr.Send("a", nil))
@@ -146,16 +146,16 @@ func TestActorWithChildStates(t *testing.T) {
 	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
 	assert.NoError(t, am.Start())
-	assert.True(t, am.Running())
+	assert.True(t, isRunning(am))
 
 	childAddr, err := am.Spawn("child", actorkit.Prop{Behaviour: &basic{}})
 	assert.NoError(t, err)
 
 	assert.NoError(t, am.Restart())
-	assert.True(t, am.Running())
+	assert.True(t, isRunning(am))
 
 	assert.NoError(t, am.Stop())
-	assert.False(t, am.Running())
+	assert.False(t, isRunning(am))
 
 	assert.True(t, childAddr.ID() != am.ID())
 	assert.Error(t, childAddr.Send("a", nil))

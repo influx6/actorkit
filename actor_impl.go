@@ -188,6 +188,13 @@ func UseDeadLetter(ml DeadLetter) ActorOption {
 	}
 }
 
+// UseContextLog sets the Logs to be used by the actor.
+func UseContextLog(cl ContextLogs) ActorOption {
+	return func(ac *Prop) {
+		ac.ContextLogs = cl
+	}
+}
+
 // UseSupervisor sets the supervisor to be used by the actor.
 func UseSupervisor(s Supervisor) ActorOption {
 	return func(ac *Prop) {
@@ -255,12 +262,14 @@ type actorSub struct {
 
 // ActorImpl implements the Actor interface.
 type ActorImpl struct {
-	namespace   string
-	protocol    string
 	accessAddr  Addr
 	props       Prop
 	parent      Actor
 	id          xid.ID
+	namespace   string
+	protocol    string
+	state       uint64
+	logger      Logs
 	tree        *ActorTree
 	deadLockDur time.Duration
 	busyDur     time.Duration
@@ -327,7 +336,9 @@ func NewActorImpl(namespace string, protocol string, props Prop) *ActorImpl {
 
 	ac := &ActorImpl{}
 	ac.protocol = protocol
+	ac.logger = &DrainLog{}
 	ac.namespace = namespace
+	ac.state = uint64(INACTIVE)
 	ac.deadLockDur = defaultDeadLockTicker
 	ac.busyDur = defaultWaitDuration
 
@@ -341,7 +352,7 @@ func NewActorImpl(namespace string, protocol string, props Prop) *ActorImpl {
 	}
 
 	if props.Signals == nil {
-		props.Signals = signalDummy{}
+		props.Signals = &signalDummy{}
 	}
 
 	if tm, ok := props.Behaviour.(PreStart); ok {
@@ -440,12 +451,28 @@ func NewActorImpl(namespace string, protocol string, props Prop) *ActorImpl {
 
 	ac.processable.On()
 
+	// if we have ContextLogs, get a logger for yourself.
+	if props.ContextLogs != nil {
+		ac.logger = props.ContextLogs.Get(ac)
+	}
+
 	return ac
 }
 
 // Wait implements the Waiter interface.
 func (ati *ActorImpl) Wait() {
 	ati.proc.Wait()
+}
+
+// State returns the current state of giving actor in a safe-concurrent
+// manner.
+func (ati *ActorImpl) State() Signal {
+	return Signal(atomic.LoadUint64(&ati.state))
+}
+
+// setState sets the new state for the actor.
+func (ati *ActorImpl) setState(ns Signal) {
+	atomic.StoreUint64(&ati.state, uint64(ns))
 }
 
 // ID returns associated string version of id.
@@ -456,6 +483,36 @@ func (ati *ActorImpl) ID() string {
 // Mailbox returns actors underline mailbox.
 func (ati *ActorImpl) Mailbox() Mailbox {
 	return ati.props.Mailbox
+}
+
+// GetAddr returns the child of this actor which has this address string version.
+//
+// This method is more specific and will not respect or handle a address which
+// the root ID is not this actor's identification ID. It heavily relies on walking
+// the address tree till it finds the target actor or there is found no matching actor
+//
+func (ati *ActorImpl) GetAddr(addr string) (Addr, error) {
+
+	return nil, nil
+}
+
+// GetChild returns the child of this actor which has this matching id.
+//
+// If the sub is provided, then the function will drill down the provided
+// target actor getting the child actor of that actor which matches the
+// next string ID till it finds the last target string ID or fails to
+// find it.
+func (ati *ActorImpl) GetChild(id string, subID ...string) (Addr, error) {
+	parent, err := ati.tree.GetActor(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(subID) == 0 {
+		return AccessOf(parent), nil
+	}
+
+	return parent.GetChild(subID[0], subID[1:]...)
 }
 
 // Watch adds provided function as a subscriber to be called
@@ -541,6 +598,34 @@ func (ati *ActorImpl) Spawn(service string, prop Prop) (Addr, error) {
 		return nil, errors.WrapOnly(ErrActorMustBeRunning)
 	}
 
+	if prop.ContextLogs == nil {
+		prop.ContextLogs = ati.props.ContextLogs
+	}
+
+	if ati.props.Signals != nil {
+		prop.Signals = ati.props.Signals
+	}
+
+	if prop.MessageInvoker == nil {
+		prop.MessageInvoker = ati.props.MessageInvoker
+	}
+
+	if prop.Sentinel == nil {
+		prop.Sentinel = ati.props.Sentinel
+	}
+
+	if prop.StateInvoker == nil {
+		prop.StateInvoker = ati.props.StateInvoker
+	}
+
+	if prop.MailInvoker == nil {
+		prop.MailInvoker = ati.props.MailInvoker
+	}
+
+	if prop.DeadLetters == nil {
+		prop.DeadLetters = ati.props.DeadLetters
+	}
+
 	am := NewActorImpl(ati.namespace, ati.protocol, prop)
 	am.parent = ati
 
@@ -581,18 +666,13 @@ func (ati *ActorImpl) Stats() Stat {
 //
 // In either case, the protocol of both ancestor and parent is maintained.
 // Namespace provides a field area which can define specific information that
-// is specific to giving protocol e.g ip v4/v6 address
+// is specific to giving protocol e.g ip v4/v6 address.
 //
 func (ati *ActorImpl) Addr() string {
 	if ati.parent == nil {
-		return ati.ProtocolAddrUUID()
+		return FormatAddr(ati.protocol, ati.namespace, ati.id.String())
 	}
-	return ati.parent.Addr() + "/" + ati.id.String()
-}
-
-// Namespace returns actor's namespace.
-func (ati *ActorImpl) Namespace() string {
-	return ati.namespace
+	return FormatAddrChild(ati.parent.Addr(), ati.id.String())
 }
 
 // ProtocolAddr returns the Actors.Protocol and Actors.Namespace
@@ -601,13 +681,17 @@ func (ati *ActorImpl) Namespace() string {
 //  Protocol@Namespace.
 //
 func (ati *ActorImpl) ProtocolAddr() string {
-	return ati.protocol + "@" + ati.namespace
+	return FormatNamespace(ati.protocol, ati.namespace)
 }
 
-// ProtocolAddrUUID returns the uuid address of actor in the following
-// format: ActorProtocolAddr():ActorUUID.
-func (ati *ActorImpl) ProtocolAddrUUID() string {
-	return ati.ProtocolAddr() + "/" + ati.id.String()
+// Protocol returns actor's protocol.
+func (ati *ActorImpl) Protocol() string {
+	return ati.protocol
+}
+
+// Namespace returns actor's namespace.
+func (ati *ActorImpl) Namespace() string {
+	return ati.namespace
 }
 
 // Escalate sends giving error that occur to actor's supervisor
@@ -644,11 +728,6 @@ func (ati *ActorImpl) Children() []Addr {
 		return true
 	})
 	return addrs
-}
-
-// Running returns true/false if giving actor is running.
-func (ati *ActorImpl) Running() bool {
-	return ati.started.IsOn()
 }
 
 // Start starts off or resumes giving actor operations for processing
@@ -786,11 +865,15 @@ func (ati *ActorImpl) DestroyChildren() error {
 		return nil
 	}
 
+	ati.logger.Emit(DEBUG, OpMessage{Detail: "Sending destruction signal"})
+
 	res := make(chan error, 1)
 	select {
 	case ati.destroyChildrenChan <- res:
+		ati.logger.Emit(DEBUG, OpMessage{Detail: "Awaiting destruction response"})
 		return <-res
 	case <-time.After(ati.busyDur):
+		ati.logger.Emit(ERROR, OpMessage{Detail: "Failed to deliver destruction signal", Data: ErrActorBusyState})
 		res <- errors.WrapOnly(ErrActorBusyState)
 	}
 	return <-res
@@ -801,9 +884,8 @@ func (ati *ActorImpl) DestroyChildren() error {
 //****************************************************************
 
 func (ati *ActorImpl) runSystem(restart bool) error {
-	if ati.props.Behaviour == nil {
-		return errors.WrapOnly(ErrActorHasNoBehaviour)
-	}
+	ati.setState(STARTING)
+	defer ati.setState(RUNNING)
 
 	ati.starting.On()
 	defer ati.starting.Off()
@@ -898,7 +980,7 @@ func (ati *ActorImpl) exhaustMessages() {
 
 func (ati *ActorImpl) preDestroySystem() {
 	ati.destruction.On()
-
+	ati.setState(DESTRUCTING)
 	ati.props.Signals.SignalState(ati.accessAddr, DESTRUCTING)
 	ati.props.Event.Publish(ActorSignal{
 		Addr:   ati.accessAddr,
@@ -936,9 +1018,11 @@ func (ati *ActorImpl) postDestroySystem() {
 
 	ati.props.Signals.SignalState(ati.accessAddr, DESTROYED)
 	ati.destruction.Off()
+	ati.setState(DESTROYED)
 }
 
 func (ati *ActorImpl) preKillSystem() {
+	ati.setState(KILLING)
 	ati.props.Signals.SignalState(ati.accessAddr, KILLING)
 	ati.props.Event.Publish(ActorSignal{
 		Signal: KILLING,
@@ -952,9 +1036,11 @@ func (ati *ActorImpl) postKillSystem() {
 		Signal: KILLED,
 		Addr:   ati.accessAddr,
 	})
+	ati.setState(KILLED)
 }
 
 func (ati *ActorImpl) preStopSystem() {
+	ati.setState(STOPPING)
 	ati.props.Signals.SignalState(ati.accessAddr, STOPPING)
 	ati.props.Event.Publish(ActorSignal{
 		Signal: STOPPING,
@@ -978,6 +1064,7 @@ func (ati *ActorImpl) postStopSystem() {
 	})
 
 	ati.started.Off()
+	ati.setState(STOPPED)
 }
 
 func (ati *ActorImpl) addSentinelWatch(addr Addr) {
@@ -1089,9 +1176,10 @@ func (ati *ActorImpl) registerChild(ac Actor) {
 	sub := ac.Watch(func(event interface{}) {
 		switch tm := event.(type) {
 		case ActorSignal:
-			if tm.Signal != DESTROYED && tm.Signal != DESTRUCTING {
+			if tm.Signal != DESTROYED {
 				return
 			}
+
 			if ati.destruction.IsOn() {
 				return
 			}
@@ -1141,57 +1229,106 @@ func (ati *ActorImpl) manageLifeCycle() {
 		case <-deadlockTicker.C:
 			// do nothing but also allow us avoid
 			// possible all goroutine sleep bug.
+			ati.logger.Emit(DEBUG, Message("Incurring deadlock safety skip"))
 		case addr := <-ati.sentinelChan:
+			ati.logger.Emit(DEBUG, Message("Initiating sentinel watch for addr"))
 			ati.addSentinelWatch(addr)
+			ati.logger.Emit(DEBUG, Message("Done adding sentinel watch"))
 		case actor := <-ati.addActor:
+			ati.logger.Emit(DEBUG, Message("Initiating register for actor child"))
 			ati.registerChild(actor)
+			ati.logger.Emit(DEBUG, Message("Done registering"))
 		case actor := <-ati.rmActor:
+			ati.logger.Emit(DEBUG, Message("Initiating unregister for actor child"))
 			ati.unregisterChild(actor)
+			ati.logger.Emit(DEBUG, Message("Done unregistering"))
 		case res := <-ati.stopChan:
+			ati.logger.Emit(DEBUG, Message("Initiating stop procedure for actor"))
 			atomic.AddInt64(&ati.stoppedCount, 1)
+			ati.logger.Emit(DEBUG, Message("Running pre-stop procedures"))
 			ati.preStopSystem()
+			ati.logger.Emit(DEBUG, Message("Awaiting pending messages total processing by actor"))
 			ati.awaitMessageExhaustion()
+			ati.logger.Emit(DEBUG, Message("Stopping message reception"))
 			ati.stopMessageReception()
+			ati.logger.Emit(DEBUG, Message("Requesting stop of actor's children"))
 			ati.stopChildrenSystems()
+			ati.logger.Emit(DEBUG, Message("Running post-stop procedures"))
 			ati.postStopSystem()
+			ati.logger.Emit(DEBUG, Message("Sending finished signal"))
 			res <- nil
+			ati.logger.Emit(DEBUG, Message("Done stopping"))
 			return
 		case res := <-ati.stopChildrenChan:
+			ati.logger.Emit(DEBUG, Message("Initiating stop procedure for actor's children"))
 			ati.stopChildrenSystems()
+			ati.logger.Emit(DEBUG, Message("Sending finished signal"))
 			res <- nil
+			ati.logger.Emit(DEBUG, Message("Done stopping children"))
 		case res := <-ati.killChan:
+			ati.logger.Emit(DEBUG, Message("Initiating kill procedure of actor"))
 			atomic.AddInt64(&ati.killedCount, 1)
+			ati.logger.Emit(DEBUG, Message("Running pre-kill procedure"))
 			ati.preKillSystem()
+			ati.logger.Emit(DEBUG, Message("Running pre-stop procedure"))
 			ati.preStopSystem()
+			ati.logger.Emit(DEBUG, Message("Stopping sentinel subscriptions"))
 			ati.stopSentinelSubscriptions()
+			ati.logger.Emit(DEBUG, Message("Stopping message reception"))
 			ati.stopMessageReception()
+			ati.logger.Emit(DEBUG, Message("Exhausting pending messages to death mailbox"))
 			ati.exhaustMessages()
+			ati.logger.Emit(DEBUG, Message("Requesting kill of actor's children"))
 			ati.killChildrenSystems()
+			ati.logger.Emit(DEBUG, Message("Running post-stop procedure"))
 			ati.postStopSystem()
+			ati.logger.Emit(DEBUG, Message("Running post-kill procedure"))
 			ati.postKillSystem()
+			ati.logger.Emit(DEBUG, Message("Sending finished signal"))
 			res <- nil
+			ati.logger.Emit(DEBUG, Message("Done killing"))
 			return
 		case res := <-ati.killChildrenChan:
+			ati.logger.Emit(DEBUG, Message("Requesting kill procedure for actor's children"))
 			ati.killChildrenSystems()
+			ati.logger.Emit(DEBUG, Message("Sending finished signal"))
 			res <- nil
+			ati.logger.Emit(DEBUG, Message("Done killing children"))
 		case res := <-ati.destroyChan:
+			ati.logger.Emit(DEBUG, Message("Initiating destruction of actor"))
 			ati.death = time.Now()
+			ati.logger.Emit(DEBUG, Message("Running pre-destruction procedure"))
 			ati.preDestroySystem()
+			ati.logger.Emit(DEBUG, Message("Running pre-mid-destruction procedure"))
 			ati.preMidDestroySystem()
+			ati.logger.Emit(DEBUG, Message("Stopping sentinel subscriptions"))
 			ati.stopSentinelSubscriptions()
+			ati.logger.Emit(DEBUG, Message("Running pre-stop procedure"))
 			ati.preStopSystem()
+			ati.logger.Emit(DEBUG, Message("Stopping message reception"))
 			ati.stopMessageReception()
+			ati.logger.Emit(DEBUG, Message("Exhausting pending messages to death mailbox"))
 			ati.exhaustMessages()
+			ati.logger.Emit(DEBUG, Message("Requesting destruction of actor's's children"))
 			ati.destroyChildrenSystems()
+			ati.logger.Emit(DEBUG, Message("Running post-stop procedure"))
 			ati.postStopSystem()
+			ati.logger.Emit(DEBUG, Message("Running post-destroy procedure"))
 			ati.postDestroySystem()
+			ati.logger.Emit(DEBUG, Message("Resetting event subscription queue"))
 			ati.props.Event.Reset()
+			ati.logger.Emit(DEBUG, Message("Sending finished signal"))
 			res <- nil
+			ati.logger.Emit(DEBUG, Message("Done destructing"))
 			return
 		case res := <-ati.destroyChildrenChan:
+			ati.logger.Emit(DEBUG, Message("Running mid-destruction procedure"))
 			ati.preMidDestroySystem()
+			ati.logger.Emit(DEBUG, Message("Requesting destruction of actor children"))
 			ati.destroyChildrenSystems()
+			ati.logger.Emit(DEBUG, Message("Sending finished signal"))
 			res <- nil
+			ati.logger.Emit(DEBUG, Message("Done destructing"))
 		}
 	}
 }
@@ -1215,10 +1352,11 @@ func (ati *ActorImpl) readMessages() {
 			}
 
 			ati.props.Event.Publish(event)
-
 			ati.Escalate(event, ati.accessAddr)
 		}
 	}()
+
+	//ticker := time.NewTicker(1 * time.Second)
 
 	for {
 		// block until we have a message, internally
@@ -1229,8 +1367,10 @@ func (ati *ActorImpl) readMessages() {
 		// are required to shutdown.
 		select {
 		case <-ati.signal:
+			ati.logger.Emit(DEBUG, Message("Received message stop signal"))
 			return
 		default:
+			ati.logger.Emit(DEBUG, Message("Reading new message from mailbox"))
 		}
 
 		addr, msg, err := ati.props.Mailbox.Pop()
@@ -1331,7 +1471,7 @@ func (at *ActorTree) HasActor(id string) bool {
 	return false
 }
 
-// GetActorByAddr returns giving actor from tree using requested id.
+// GetAddr returns a actor from tree using requested id.
 func (at *ActorTree) GetAddr(addr string) (Actor, error) {
 	at.ml.RLock()
 	defer at.ml.RUnlock()

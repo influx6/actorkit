@@ -194,11 +194,3 @@ type DesubscriptionError struct {
 func (m DesubscriptionError) Message() string {
 	return m.Err.Error()
 }
-
-// TextMessage defines a giving error string for use as a detail.
-type TextMessage string
-
-// Message implements the actorkit.Logs interface.
-func (m TextMessage) Message() string {
-	return string(m)
-}

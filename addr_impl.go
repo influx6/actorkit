@@ -7,7 +7,11 @@ import (
 )
 
 const (
-	defaultSize = 16
+	defaultSize    = 16
+	kitProtocol    = "kit"
+	accessName     = "access"
+	kitNamespace   = "localhost"
+	deadLetterName = "deadletter"
 )
 
 //*********************************************
@@ -371,7 +375,7 @@ type AddrImpl struct {
 // expected to be used when desiring a default address for an
 // actor.
 func AccessOf(actor Actor) *AddrImpl {
-	return AddressOf(actor, "actor:access")
+	return AddressOf(actor, accessName)
 }
 
 // DeadLetters returns a new instance of AddrImpl which directly delivers
@@ -379,7 +383,7 @@ func AccessOf(actor Actor) *AddrImpl {
 func DeadLetters() *AddrImpl {
 	var addr AddrImpl
 	addr.deadletter = true
-	addr.service = "deadletters"
+	addr.service = deadLetterName
 	return &addr
 }
 
@@ -401,7 +405,7 @@ func (a *AddrImpl) Parent() Addr {
 	}
 
 	if parent := a.actor.Parent(); parent != nil && parent != a.actor {
-		return AddressOf(parent, "access")
+		return AddressOf(parent, accessName)
 	}
 	return a
 }
@@ -429,9 +433,29 @@ func (a *AddrImpl) Ancestor() Addr {
 	}
 
 	if parent := a.actor.Ancestor(); parent != nil && parent != a.actor {
-		return AddressOf(parent, "access")
+		return AddressOf(parent, accessName)
 	}
 	return a
+}
+
+// GetAddr calls the underline actor's GetAddr implementation for
+// accessing children of actors through the provided addr string which
+// must have it's initial ID match this address ID.
+func (a *AddrImpl) GetAddr(addr string) (Addr, error) {
+	if a.deadletter {
+		return nil, errors.New("has no children")
+	}
+	return a.actor.GetAddr(addr)
+}
+
+// GetChild calls the underline actor's GetChild implementation for
+// accessing children of actors through it's id and sub ids for the
+// descendant of the retrieved actor matching the id value.
+func (a *AddrImpl) GetChild(id string, subID ...string) (Addr, error) {
+	if a.deadletter {
+		return nil, errors.New("has no children")
+	}
+	return a.actor.GetChild(id, subID...)
 }
 
 // Children returns address of all children actors of this address actor.
@@ -495,12 +519,12 @@ func (a *AddrImpl) SendWithHeader(data interface{}, h Header, sender Addr) error
 	return a.actor.Receive(a, CreateEnvelope(sender, h, data))
 }
 
-// Running returns true/false if actor is running.
-func (a *AddrImpl) Running() bool {
+// State returns state of actor.
+func (a *AddrImpl) State() Signal {
 	if a.deadletter {
-		return true
+		return RUNNING
 	}
-	return a.actor.Running()
+	return a.actor.State()
 }
 
 // Kill sends a kill signal to the underline process to stop all operations and to close immediately.
@@ -584,24 +608,32 @@ func (a *AddrImpl) Service() string {
 //
 func (a *AddrImpl) Addr() string {
 	if a.deadletter {
-		return "kit@localhost/" + a.ID() + "/" + a.service
+		return formatAddrService2(FormatAddr(kitProtocol, kitNamespace, a.ID()), a.service)
 	}
-	return a.actor.Addr() + "/" + a.service
+	return formatAddrService2(a.actor.Addr(), a.service)
 }
 
 // ProtocolAddr returns the Actors.ProtocolAddr() and Addr.ServiceName
 // values in the format: Protocol@Namespace/Service.
 func (a *AddrImpl) ProtocolAddr() string {
 	if a.deadletter {
-		return "kit@localhost/deadletter"
+		return FormatNamespace(kitProtocol, kitNamespace)
 	}
-	return a.actor.ProtocolAddr() + "/" + a.service
+	return a.actor.ProtocolAddr()
+}
+
+// Protocol returns address actor protocol.
+func (a *AddrImpl) Protocol() string {
+	if a.deadletter {
+		return kitProtocol
+	}
+	return a.actor.Protocol()
 }
 
 // Namespace returns address actor namespace.
 func (a *AddrImpl) Namespace() string {
 	if a.deadletter {
-		return "localhost"
+		return kitNamespace
 	}
 	return a.actor.Namespace()
 }

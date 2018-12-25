@@ -14,7 +14,7 @@ func TestAddrAddressFormat(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
-	assert.Equal(t, "kitkat@10.10.10.10:2020/"+system.ID()+"/actor:access", system.Addr())
+	assert.Equal(t, "kitkat@10.10.10.10:2020/"+system.ID()+"/access", system.Addr())
 
 	child, err := system.Spawn("runner", actorkit.Prop{Behaviour: &basic{}})
 	assert.NoError(t, err)

@@ -2,10 +2,11 @@ package actorkit_test
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gokit/actorkit/internal"
 
 	"github.com/gokit/actorkit"
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,11 @@ import (
 func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 	supervisor := actorkit.ExponentialBackOffRestartStrategy(10, 1*time.Second, nil)
 
-	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
+	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{
+		ContextLogs: actorkit.NewContextLogFn(func(actor actorkit.Actor) actorkit.Logs {
+			return &internal.TLog{}
+		}),
+	})
 	assert.NoError(t, err)
 	assert.NotNil(t, system)
 
@@ -26,8 +31,8 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, child2)
 
-	assert.True(t, child1.Actor().Running())
-	assert.True(t, child2.Actor().Running())
+	assert.True(t, isRunning(child1), "currently in %+q", child1.State())
+	assert.True(t, isRunning(child2), "currently in %+q", child2.State())
 
 	var w sync.WaitGroup
 	w.Add(2)
@@ -35,7 +40,6 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 		switch sm := i.(type) {
 		case actorkit.ActorSignal:
 
-			fmt.Printf("Signal: %+q\n", sm)
 			switch sm.Signal {
 			case actorkit.RESTARTING:
 				w.Done()
@@ -47,16 +51,14 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 
 	supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-	assert.True(t, child1.Actor().Running())
-	assert.True(t, child2.Actor().Running())
+	assert.True(t, isRunning(child1), "currently in %+q", child1.State())
+	assert.True(t, isRunning(child2), "currently in %+q", child2.State())
 
 	w.Wait()
 	sub.Stop()
 
-	fmt.Println("Destroying")
 	child1.Actor().Destroy()
 	child2.Actor().Destroy()
-	fmt.Println("Destroyed")
 }
 
 func TestRestartSupervisor(t *testing.T) {
@@ -73,8 +75,8 @@ func TestRestartSupervisor(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, child2)
 
-	assert.True(t, child1.Actor().Running())
-	assert.True(t, child2.Actor().Running())
+	assert.True(t, isRunning(child1))
+	assert.True(t, isRunning(child2))
 
 	var w sync.WaitGroup
 	w.Add(2)
@@ -92,8 +94,8 @@ func TestRestartSupervisor(t *testing.T) {
 
 	supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-	assert.True(t, child1.Actor().Running())
-	assert.True(t, child2.Actor().Running())
+	assert.True(t, isRunning(child1))
+	assert.True(t, isRunning(child2))
 
 	w.Wait()
 	sub.Stop()
@@ -130,8 +132,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -153,8 +155,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.False(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -170,8 +172,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -193,8 +195,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.False(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -212,8 +214,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -235,8 +237,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.False(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -254,8 +256,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -277,8 +279,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -316,8 +318,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -339,8 +341,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, child1.Actor().Running())
-		assert.False(t, child2.Actor().Running())
+		assert.False(t, isRunning(child1))
+		assert.False(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -356,8 +358,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -379,8 +381,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, child1.Actor().Running())
-		assert.False(t, child2.Actor().Running())
+		assert.False(t, isRunning(child1))
+		assert.False(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -398,8 +400,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -421,8 +423,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, child1.Actor().Running())
-		assert.False(t, child2.Actor().Running())
+		assert.False(t, isRunning(child1))
+		assert.False(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -440,8 +442,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, child2)
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -463,8 +465,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.True(t, child1.Actor().Running())
-		assert.True(t, child2.Actor().Running())
+		assert.True(t, isRunning(child1))
+		assert.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
