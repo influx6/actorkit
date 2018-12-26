@@ -268,7 +268,7 @@ type ActorImpl struct {
 	id          xid.ID
 	namespace   string
 	protocol    string
-	state       uint64
+	state       uint32
 	logger      Logs
 	tree        *ActorTree
 	deadLockDur time.Duration
@@ -338,7 +338,7 @@ func NewActorImpl(namespace string, protocol string, props Prop) *ActorImpl {
 	ac.protocol = protocol
 	ac.logger = &DrainLog{}
 	ac.namespace = namespace
-	ac.state = uint64(INACTIVE)
+	ac.state = uint32(INACTIVE)
 	ac.deadLockDur = defaultDeadLockTicker
 	ac.busyDur = defaultWaitDuration
 
@@ -467,12 +467,16 @@ func (ati *ActorImpl) Wait() {
 // State returns the current state of giving actor in a safe-concurrent
 // manner.
 func (ati *ActorImpl) State() Signal {
-	return Signal(atomic.LoadUint64(&ati.state))
+	return Signal(atomic.LoadUint32(&ati.state))
 }
 
 // setState sets the new state for the actor.
 func (ati *ActorImpl) setState(ns Signal) {
-	atomic.StoreUint64(&ati.state, uint64(ns))
+	atomic.StoreUint32(&ati.state, uint32(ns))
+}
+
+func (ati *ActorImpl) resetState() {
+	atomic.StoreUint32(&ati.state, 0)
 }
 
 // ID returns associated string version of id.

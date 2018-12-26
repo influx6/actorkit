@@ -67,12 +67,12 @@ func (m Header) Has(n string) bool {
 
 // Level defines different level warnings for giving
 // log events.
-type Level uint
+type Level uint8
 
 // constants of log levels this package respect.
 // They are capitalize to ensure no naming conflict.
 const (
-	INFO Level = iota
+	INFO Level = 1 << iota
 	DEBUG
 	WARN
 	ERROR
@@ -239,11 +239,11 @@ type Addr interface {
 // Signal represent a series of transitioning
 // state which an actor runs through, it also
 // provides a efficient means of checking actor's state.
-type Signal uint
+type Signal uint32
 
 // constants of different actor states transition used for signaling purposes.
 const (
-	INACTIVE Signal = iota
+	INACTIVE Signal = 1 << iota
 	STARTING
 	RUNNING
 	RESTARTING

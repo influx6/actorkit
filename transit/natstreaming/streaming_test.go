@@ -7,7 +7,7 @@ import (
 	"github.com/gokit/actorkit/transit/internal/encoders"
 	"github.com/stretchr/testify/assert"
 
-	streaming "github.com/gokit/actorkit/natstreaming"
+	streaming "github.com/gokit/actorkit/transit/natstreaming"
 
 	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/transit"
