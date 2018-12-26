@@ -17,31 +17,6 @@ import (
 	pubsub "github.com/nats-io/go-nats-streaming"
 )
 
-// Directive defines a int type for representing
-// a giving action to be performed due to an error.
-type Directive int
-
-// set of possible directives.
-const (
-	Ack Directive = iota
-	Nack
-)
-
-//*****************************************************************************
-// Events
-//*****************************************************************************
-
-// NATEvent defines a message type for delivery event logs in operations for nats.
-type NATEvent struct {
-	Header string
-	Data   interface{}
-}
-
-// Message returns a formatted message for the event.
-func (ne NATEvent) Message() string {
-	return ne.Header
-}
-
 //*****************************************************************************
 // PubSubFactory
 //*****************************************************************************
@@ -151,12 +126,14 @@ func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*Publish
 
 	ops = append(ops, pb.config.Options...)
 
-	config.Log.Emit(actorkit.DEBUG, NATEvent{Header: "Initiating NATS Streaming client connection: %s", Data: config.URL})
+	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsg("Initiating NATS Streaming client connection").String("url", pb.config.URL).Write())
 	client, err := pubsub.Connect(pb.config.ClusterID, pb.id.String(), ops...)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create nats-streaming client")
 	}
-	config.Log.Emit(actorkit.DEBUG, NATEvent{Header: "Requesting NATS Streaming client connection status: %t", Data: client.NatsConn().IsConnected()})
+	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsg("Requesting NATS Streaming client connection status").
+		Bool("isConnected", client.NatsConn().IsConnected()).
+		String("url", pb.config.URL).Write())
 
 	pb.c = client
 	return &pb, nil
@@ -178,7 +155,7 @@ func (pf *PublisherSubscriberFactory) Close() error {
 // messages for giving topic from the nats streaming provider. If the topic already has a subscriber then
 // a subscriber with a ever increasing _id is added and returned if a user defined group id is not set,
 // the subscriber receives the giving id as it's queue group name for it's subscription.
-func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, receiver func(pubsubs.Message) error, direction func(error) Directive, ops []pubsub.SubscriptionOption) (*Subscription, error) {
+func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, receiver pubsubs.Receiver, ops []pubsub.SubscriptionOption) (*Subscription, error) {
 	if sub, ok := pf.getSubscription(topic); ok {
 		return sub, nil
 	}
@@ -201,7 +178,6 @@ func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, r
 	sub.client = pf.c
 	sub.log = pf.config.Log
 	sub.receiver = receiver
-	sub.direction = direction
 	sub.m = pf.config.Unmarshaler
 	sub.errs = make(chan error, 1)
 	sub.id = fmt.Sprintf(pubsubs.SubscriberTopicFormat, pf.config.ProjectID, topic, grp)
@@ -223,7 +199,7 @@ func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, r
 // messages for giving topic from the nats streaming provider. If the topic already has a subscriber then
 // a subscriber with a ever increasing _id is added and returned if a user defined group id is not set,
 // the subscriber receives the giving topic_id as durable name for it's subscription if supported.
-func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver func(pubsubs.Message) error, direction func(error) Directive, ops []pubsub.SubscriptionOption) (*Subscription, error) {
+func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver, ops []pubsub.SubscriptionOption) (*Subscription, error) {
 	if sub, ok := pf.getSubscription(topic); ok {
 		return sub, nil
 	}
@@ -243,7 +219,6 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 	sub.topic = topic
 	sub.client = pf.c
 	sub.receiver = receiver
-	sub.direction = direction
 	sub.errs = make(chan error, 1)
 	sub.m = pf.config.Unmarshaler
 	sub.id = fmt.Sprintf(pubsubs.SubscriberTopicFormat, pf.config.ProjectID, topic, id)
@@ -420,7 +395,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 }
 
 // Run initializes publishing loop blocking till giving publisher is
-// stop/closed or faces an occured error.
+// stop/closed or faces an occurred error.
 func (p *Publisher) run() {
 	defer func() {
 		p.factory.rmPublisher(p)
@@ -446,20 +421,19 @@ func (p *Publisher) run() {
 // Subscription implements a subscriber of a giving topic which is being subscribe to
 // for. It implements the actorkit.Subscription interface.
 type Subscription struct {
-	id        string
-	topic     string
-	group     string
-	queue     bool
-	errs      chan error
-	canceler  func()
-	ctx       context.Context
-	client    pubsub.Conn
-	log       actorkit.Logs
-	ops       []pubsub.SubscriptionOption
-	m         pubsubs.Unmarshaler
-	sub       pubsub.Subscription
-	direction func(error) Directive
-	receiver  func(pubsubs.Message) error
+	id       string
+	topic    string
+	group    string
+	queue    bool
+	errs     chan error
+	canceler func()
+	ctx      context.Context
+	client   pubsub.Conn
+	log      actorkit.Logs
+	ops      []pubsub.SubscriptionOption
+	m        pubsubs.Unmarshaler
+	sub      pubsub.Subscription
+	receiver pubsubs.Receiver
 }
 
 // ID returns the giving durable name for giving subscription.
@@ -482,36 +456,25 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 	if err != nil {
 		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
 			String("topic", s.topic).Write())
-
-		switch s.direction(err) {
-		case Ack:
-			if err := msg.Ack(); err != nil {
-				s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
-					String("subject", msg.Subject).String("topic", s.topic).Write())
-			}
-		case Nack:
-		}
 		return
 	}
 
-	if err := s.receiver(pubsubs.Message{Topic: msg.Subject, Envelope: decoded}); err != nil {
+	action, err := s.receiver(pubsubs.Message{Topic: msg.Subject, Envelope: decoded})
+	if err != nil {
 		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
 			String("subject", msg.Subject).String("topic", s.topic).Write())
-
-		switch s.direction(err) {
-		case Ack:
-			if err := msg.Ack(); err != nil {
-				s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
-					String("subject", msg.Subject).String("topic", s.topic).Write())
-			}
-		case Nack:
-		}
-		return
 	}
 
-	if err := msg.Ack(); err != nil {
-		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
-			String("subject", msg.Subject).String("topic", s.topic).Write())
+	switch action {
+	case pubsubs.ACK:
+		if err := msg.Ack(); err != nil {
+			s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
+				String("subject", msg.Subject).String("topic", s.topic).Write())
+		}
+	case pubsubs.NACK:
+		return
+	default:
+		return
 	}
 }
 

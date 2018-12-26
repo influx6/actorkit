@@ -42,9 +42,9 @@ func testMessagePublishingAndSubscription(t *testing.T, pubsub pubsubs.PubSubFac
 	assert.NotNil(t, pub)
 
 	rec := make(chan pubsubs.Message, 1)
-	sub, err := pubsub.NewSubscriber("rats", "my-group", func(message pubsubs.Message) error {
+	sub, err := pubsub.NewSubscriber("rats", "my-group", func(message pubsubs.Message) (pubsubs.Action, error) {
 		rec <- message
-		return nil
+		return pubsubs.ACK, nil
 	})
 
 	assert.NoError(t, err)

@@ -111,8 +111,25 @@ type PublisherFactory interface {
 //  SubscriptionFactory
 //*********************************************************
 
+// Action defines a giving response to be provided by the processing of
+// a message by a Receiver function type.
+type Action uint8
+
+// constants of action types
+const (
+	// ACK is for acknowledging a message received.
+	ACK Action = 1 << iota
+
+	// NACK is to not acknowledge or reject a message received.
+	NACK
+
+	// NOPN is to request a severe action as dictated by the implementation
+	// detail as a action to a giving response/request.
+	NOPN
+)
+
 // Receiver defines a function type to be used for processing of an incoming message.
-type Receiver func(Message) error
+type Receiver func(Message) (Action, error)
 
 // SubscriptionFactory exposes a given method for the creation of a subscription.
 type SubscriptionFactory interface {

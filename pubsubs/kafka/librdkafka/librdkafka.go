@@ -1,4 +1,7 @@
-package kafka
+// Package librdkafka implements a kafka-pubsub provider ontop of the confluent kafka-go library which heavily relies on
+// cgo and the c librdkafka library. It's less performant that compared to the pure go version samsara, implemented by
+// shopify but still is very able.
+package librdkafka
 
 import (
 	"runtime"
@@ -210,7 +213,7 @@ func (ka *ConsumerFactory) Close() error {
 
 // CreateConsumer return a new consumer for a giving topic to be used for kafka.
 // The provided id value if not empty will be used as the group.id.
-func (ka *ConsumerFactory) CreateConsumer(topic string, id string, receiver func(message pubsubs.Message) error, director func(error) Directive) (*Consumer, error) {
+func (ka *ConsumerFactory) CreateConsumer(topic string, id string, receiver pubsubs.Receiver) (*Consumer, error) {
 	var cid string
 	if id == "" {
 		cid = ka.config.DefaultConsumerGroup
@@ -223,7 +226,7 @@ func (ka *ConsumerFactory) CreateConsumer(topic string, id string, receiver func
 		return nil, err
 	}
 
-	consumer, err := NewConsumer(&ka.config, config, topic, ka.config.PollingTime, ka.config.Unmarshaler, receiver, director)
+	consumer, err := NewConsumer(&ka.config, config, topic, ka.config.PollingTime, ka.config.Unmarshaler, receiver)
 	if err != nil {
 		return nil, err
 	}
@@ -304,12 +307,11 @@ type Consumer struct {
 	log         actorkit.Logs
 	polling     time.Duration
 	consumer    *kafka.Consumer
-	directive   func(error) Directive
-	receiver    func(message pubsubs.Message) error
+	receiver    pubsubs.Receiver
 }
 
 // NewConsumer returns a new instance of a Consumer.
-func NewConsumer(co *Config, config *kafka.ConfigMap, topic string, polling time.Duration, unmarshaler Unmarshaler, receiver func(message pubsubs.Message) error, director func(error) Directive) (*Consumer, error) {
+func NewConsumer(co *Config, config *kafka.ConfigMap, topic string, polling time.Duration, unmarshaler Unmarshaler, receiver pubsubs.Receiver) (*Consumer, error) {
 	kconsumer, err := kafka.NewConsumer(config)
 	if err != nil {
 		return nil, err
@@ -321,7 +323,6 @@ func NewConsumer(co *Config, config *kafka.ConfigMap, topic string, polling time
 		log:         co.Log,
 		polling:     polling,
 		consumer:    kconsumer,
-		directive:   director,
 		receiver:    receiver,
 		unmarshaler: unmarshaler,
 		closer:      make(chan struct{}, 0),
@@ -392,7 +393,7 @@ func (c *Consumer) run(closer chan struct{}) {
 
 func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 	if msg.TopicPartition.Error != nil {
-		return c.handleError(msg.TopicPartition.Error, msg)
+		return c.handleError(msg.TopicPartition.Error, pubsubs.NACK, msg)
 	}
 
 	rec, err := c.unmarshaler.Unmarshal(msg)
@@ -400,14 +401,13 @@ func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 		if c.log != nil {
 			c.log.Emit(actorkit.ERROR, pubsubs.UnmarshalingError{Err: errors.Wrap(err, "Failed to marshal message"), Data: msg.Value})
 		}
-		return c.handleError(err, msg)
+		return err
 	}
 
-	if err := c.receiver(rec); err != nil {
-		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, pubsubs.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: msg.Value, Topic: c.topic})
-		}
-		return c.handleError(err, msg)
+	action, err := c.receiver(rec)
+	if err != nil {
+		c.log.Emit(actorkit.ERROR, pubsubs.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: msg.Value, Topic: c.topic})
+		return c.handleError(err, action, msg)
 	}
 
 	if _, err := c.consumer.StoreOffsets([]kafka.TopicPartition{msg.TopicPartition}); err != nil {
@@ -420,14 +420,17 @@ func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 	return nil
 }
 
-func (c *Consumer) handleError(err error, msg *kafka.Message) error {
-	switch c.directive(err) {
-	case Rollback:
+func (c *Consumer) handleError(err error, action pubsubs.Action, msg *kafka.Message) error {
+	switch action {
+	case pubsubs.ACK:
+		return nil
+	case pubsubs.NACK:
 		return c.rollback(msg)
-	case Close:
+	case pubsubs.NOPN:
 		return err
+	default:
+		return nil
 	}
-	return nil
 }
 
 func (c *Consumer) rollback(msg *kafka.Message) error {

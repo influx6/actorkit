@@ -1,4 +1,4 @@
-package kafka_test
+package librdkafka_test
 
 import (
 	"testing"
@@ -8,7 +8,7 @@ import (
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/actorkit/pubsubs/internal/benches"
 	"github.com/gokit/actorkit/pubsubs/internal/encoders"
-	"github.com/gokit/actorkit/pubsubs/kafka"
+	kafka "github.com/gokit/actorkit/pubsubs/kafka/librdkafka"
 )
 
 func TestKafka(t *testing.T) {
@@ -23,9 +23,7 @@ func TestKafka(t *testing.T) {
 	factory := kafka.PubSubFactory(func(factory *kafka.PublisherFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.NewPublisher(topic, coKafka.ConfigMap{})
 	}, func(factory *kafka.ConsumerFactory, topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
-		return factory.CreateConsumer(topic, id, receiver, func(e error) kafka.Directive {
-			return kafka.Rollback
-		})
+		return factory.CreateConsumer(topic, id, receiver)
 	})(publishers, subscribers)
 
 	benches.PubSubFactoryTestSuite(t, factory)
