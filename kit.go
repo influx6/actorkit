@@ -58,65 +58,6 @@ func (m Header) Has(n string) bool {
 }
 
 //***************************************************************************
-//
-//***************************************************************************
-
-//***************************************************************************
-// LogEvent
-//***************************************************************************
-
-// Level defines different level warnings for giving
-// log events.
-type Level uint8
-
-// constants of log levels this package respect.
-// They are capitalize to ensure no naming conflict.
-const (
-	INFO Level = 1 << iota
-	DEBUG
-	WARN
-	ERROR
-	PANIC
-)
-
-// String implements the Stringer interface.
-func (l Level) String() string {
-	switch l {
-	case INFO:
-		return "INFO"
-	case ERROR:
-		return "ERROR"
-	case DEBUG:
-		return "DEBUG"
-	case WARN:
-		return "WARN"
-	case PANIC:
-		return "PANIC"
-	}
-	return "UNKNOWN"
-}
-
-// Logs defines a acceptable logging interface which all elements and sub packages
-// will respect and use to deliver logs for different parts and ops, this frees
-// this package from specifying or locking a giving implementation and contaminating
-// import paths. Implement this and pass in to elements that provide for it.
-type Logs interface {
-	Emit(Level, LogEvent)
-}
-
-// ContextLogs defines an interface that returns a Logs which exposes a method to return
-// a logger which contextualizes the provided actor as a base for it's logger.
-type ContextLogs interface {
-	Get(Actor) Logs
-}
-
-// LogEvent defines an interface which exposes a method for retrieving
-// log details for giving log item.
-type LogEvent interface {
-	Message() string
-}
-
-//***************************************************************************
 // Envelope
 //*************************************** ************************************
 

@@ -1,9 +1,19 @@
-package transit
+package pubsubs
 
 import (
-	"errors"
-
 	"github.com/gokit/actorkit"
+	"github.com/gokit/errors"
+)
+
+// SubscriberTopicFormat defines the expected format for a subscriber group name, queue name can be formulated.
+const SubscriberTopicFormat = "/project/%s/topics/%s/subscriber/%s"
+
+var (
+	// ErrSubscriptionFailed is returned for failed subscription to topic.
+	ErrSubscriptionFailed = errors.New("failed to subscribe to topic")
+
+	// ErrPublishingFailed is returned for failed publishing of message.
+	ErrPublishingFailed = errors.New("failed to publish message to channel/topic")
 )
 
 // Message defines a type which embodies a topic to be published to and the associated

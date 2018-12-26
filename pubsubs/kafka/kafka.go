@@ -11,7 +11,7 @@ import (
 	"github.com/gokit/xid"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	"github.com/gokit/actorkit/transit"
+	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/errors"
 )
 
@@ -24,29 +24,29 @@ var (
 	_ Unmarshaler = &KAUnmarshaler{}
 )
 
-// Marshaler defines a interface exposing method to transform a transit.Message
+// Marshaler defines a interface exposing method to transform a pubsubs.Message
 // into a kafka message.
 type Marshaler interface {
-	Marshal(message transit.Message) (kafka.Message, error)
+	Marshal(message pubsubs.Message) (kafka.Message, error)
 }
 
 // Unmarshaler defines an interface who's implementer exposes said method to
-// transform a kafka message into a transit Message.
+// transform a kafka message into a pubsubs Message.
 type Unmarshaler interface {
-	Unmarshal(*kafka.Message) (transit.Message, error)
+	Unmarshal(*kafka.Message) (pubsubs.Message, error)
 }
 
 // KAMarshaler implements the Marshaler interface.
 type KAMarshaler struct {
-	Envelope transit.Marshaler
+	Envelope pubsubs.Marshaler
 
 	// Partitioner takes giving message returning appropriate
 	// partition name to be used for kafka message.
-	Partitioner func(transit.Message) string
+	Partitioner func(pubsubs.Message) string
 }
 
 // Marshal implements the Marshaler interface.
-func (kc *KAMarshaler) Marshal(message transit.Message) (kafka.Message, error) {
+func (kc *KAMarshaler) Marshal(message pubsubs.Message) (kafka.Message, error) {
 	if message.Envelope.Has(kafkaIDName) {
 		return kafka.Message{}, errors.New("key %q can not be used as it internally used for kafka message tracking", kafkaIDName)
 	}
@@ -81,12 +81,12 @@ func (kc *KAMarshaler) Marshal(message transit.Message) (kafka.Message, error) {
 
 // KAUnmarshaler implements the Unmarshaler interface.
 type KAUnmarshaler struct {
-	Envelope transit.Unmarshaler
+	Envelope pubsubs.Unmarshaler
 }
 
 // Unmarshal implements the Unmarshaler interface.
-func (kc *KAUnmarshaler) Unmarshal(message *kafka.Message) (transit.Message, error) {
-	var msg transit.Message
+func (kc *KAUnmarshaler) Unmarshal(message *kafka.Message) (pubsubs.Message, error) {
+	var msg pubsubs.Message
 	msg.Topic = *message.TopicPartition.Topic
 
 	var err error
@@ -118,26 +118,26 @@ func (kc *KAUnmarshaler) Unmarshal(message *kafka.Message) (transit.Message, err
 // PublisherHandler defines a function type which takes a giving PublisherFactory
 // and a given topic, returning a new publisher with all related underline specific
 // details added and instantiated.
-type PublisherHandler func(*PublisherFactory, string) (transit.Publisher, error)
+type PublisherHandler func(*PublisherFactory, string) (pubsubs.Publisher, error)
 
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*ConsumerFactory, string, string, transit.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*ConsumerFactory, string, string, pubsubs.Receiver) (actorkit.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
-type PubSubFactoryGenerator func(*PublisherFactory, *ConsumerFactory) transit.PubSubFactory
+type PubSubFactoryGenerator func(*PublisherFactory, *ConsumerFactory) pubsubs.PubSubFactory
 
-// PubSubFactory provides a partial function for the generation of a transit.PubSubFactory
+// PubSubFactory provides a partial function for the generation of a pubsubs.PubSubFactory
 // using the PubSubFactorGenerator function.
 func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
-	return func(pub *PublisherFactory, sub *ConsumerFactory) transit.PubSubFactory {
-		return &transit.PubSubFactoryImpl{
-			Publishers: func(topic string) (transit.Publisher, error) {
+	return func(pub *PublisherFactory, sub *ConsumerFactory) pubsubs.PubSubFactory {
+		return &pubsubs.PubSubFactoryImpl{
+			Publishers: func(topic string) (pubsubs.Publisher, error) {
 				return publishers(pub, topic)
 			},
-			Subscribers: func(topic string, id string, receiver transit.Receiver) (actorkit.Subscription, error) {
+			Subscribers: func(topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
 				return subscribers(sub, topic, id, receiver)
 			},
 		}
@@ -210,7 +210,7 @@ func (ka *ConsumerFactory) Close() error {
 
 // CreateConsumer return a new consumer for a giving topic to be used for kafka.
 // The provided id value if not empty will be used as the group.id.
-func (ka *ConsumerFactory) CreateConsumer(topic string, id string, receiver func(message transit.Message) error, director func(error) Directive) (*Consumer, error) {
+func (ka *ConsumerFactory) CreateConsumer(topic string, id string, receiver func(message pubsubs.Message) error, director func(error) Directive) (*Consumer, error) {
 	var cid string
 	if id == "" {
 		cid = ka.config.DefaultConsumerGroup
@@ -305,11 +305,11 @@ type Consumer struct {
 	polling     time.Duration
 	consumer    *kafka.Consumer
 	directive   func(error) Directive
-	receiver    func(message transit.Message) error
+	receiver    func(message pubsubs.Message) error
 }
 
 // NewConsumer returns a new instance of a Consumer.
-func NewConsumer(co *Config, config *kafka.ConfigMap, topic string, polling time.Duration, unmarshaler Unmarshaler, receiver func(message transit.Message) error, director func(error) Directive) (*Consumer, error) {
+func NewConsumer(co *Config, config *kafka.ConfigMap, topic string, polling time.Duration, unmarshaler Unmarshaler, receiver func(message pubsubs.Message) error, director func(error) Directive) (*Consumer, error) {
 	kconsumer, err := kafka.NewConsumer(config)
 	if err != nil {
 		return nil, err
@@ -334,7 +334,7 @@ func (c *Consumer) Consume(kill chan struct{}, errs chan error) {
 	if err := c.consumer.Subscribe(c.topic, nil); err != nil {
 		em := errors.Wrap(err, "Failed to subscribe to topic %q", c.topic)
 		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, transit.SubscriptionError{Err: em, Topic: c.topic})
+			c.log.Emit(actorkit.ERROR, pubsubs.SubscriptionError{Err: em, Topic: c.topic})
 		}
 		errs <- em
 		return
@@ -355,7 +355,7 @@ func (c *Consumer) close() {
 	if err := c.consumer.Close(); err != nil {
 		em := errors.Wrap(err, "Failed to close subscriber for topic %q", c.topic)
 		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, transit.OpError{Err: em, Topic: c.topic})
+			c.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: em, Topic: c.topic})
 		}
 	}
 }
@@ -398,21 +398,21 @@ func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 	rec, err := c.unmarshaler.Unmarshal(msg)
 	if err != nil {
 		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, transit.UnmarshalingError{Err: errors.Wrap(err, "Failed to marshal message"), Data: msg.Value})
+			c.log.Emit(actorkit.ERROR, pubsubs.UnmarshalingError{Err: errors.Wrap(err, "Failed to marshal message"), Data: msg.Value})
 		}
 		return c.handleError(err, msg)
 	}
 
 	if err := c.receiver(rec); err != nil {
 		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, transit.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: msg.Value, Topic: c.topic})
+			c.log.Emit(actorkit.ERROR, pubsubs.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: msg.Value, Topic: c.topic})
 		}
 		return c.handleError(err, msg)
 	}
 
 	if _, err := c.consumer.StoreOffsets([]kafka.TopicPartition{msg.TopicPartition}); err != nil {
 		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, transit.OpError{Err: errors.Wrap(err, "Failed to set new message offset for topic partition %q", c.topic), Topic: c.topic})
+			c.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: errors.Wrap(err, "Failed to set new message offset for topic partition %q", c.topic), Topic: c.topic})
 		}
 		return err
 	}
@@ -434,7 +434,7 @@ func (c *Consumer) rollback(msg *kafka.Message) error {
 	if err := c.consumer.Seek(msg.TopicPartition, 1000*60); err != nil {
 		sem := errors.Wrap(err, "Failed to rollback message")
 		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, transit.OpError{Err: sem, Topic: c.topic})
+			c.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: sem, Topic: c.topic})
 		}
 		return sem
 	}
@@ -529,11 +529,11 @@ func (ka *Publisher) Close() error {
 
 // Publish sends giving message envelope  to given topic.
 func (ka *Publisher) Publish(msg actorkit.Envelope) error {
-	encoded, err := ka.marshaler.Marshal(transit.Message{Topic: ka.topic, Envelope: msg})
+	encoded, err := ka.marshaler.Marshal(pubsubs.Message{Topic: ka.topic, Envelope: msg})
 	if err != nil {
 		em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 		if ka.log != nil {
-			ka.log.Emit(actorkit.ERROR, transit.MarshalingError{Err: em, Data: msg})
+			ka.log.Emit(actorkit.ERROR, pubsubs.MarshalingError{Err: em, Data: msg})
 		}
 		return err
 	}
@@ -542,7 +542,7 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 	if err := ka.producer.Produce(&encoded, res); err != nil {
 		em := errors.Wrap(err, "failed to send mesage to producer")
 		if ka.log != nil {
-			ka.log.Emit(actorkit.ERROR, transit.PublishError{Err: em, Data: encoded, Topic: ka.topic})
+			ka.log.Emit(actorkit.ERROR, pubsubs.PublishError{Err: em, Data: encoded, Topic: ka.topic})
 		}
 		return em
 	}
@@ -552,7 +552,7 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 	if ok {
 		em := errors.New("failed to receive *Kafka.Message as event response")
 		if ka.log != nil {
-			ka.log.Emit(actorkit.ERROR, transit.PublishError{Err: em, Data: encoded, Topic: ka.topic})
+			ka.log.Emit(actorkit.ERROR, pubsubs.PublishError{Err: em, Data: encoded, Topic: ka.topic})
 		}
 		return em
 	}
@@ -560,7 +560,7 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 	if kmessage.TopicPartition.Error != nil {
 		em := errors.Wrap(kmessage.TopicPartition.Error, "failed to deliver message to kafka topic")
 		if ka.log != nil {
-			ka.log.Emit(actorkit.ERROR, transit.PublishError{Err: em, Data: encoded, Topic: ka.topic})
+			ka.log.Emit(actorkit.ERROR, pubsubs.PublishError{Err: em, Data: encoded, Topic: ka.topic})
 		}
 		return em
 	}

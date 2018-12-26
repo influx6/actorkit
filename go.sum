@@ -25,6 +25,8 @@ github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe h1:ialcZn3JZvJOHViYYi
 github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe/go.mod h1:EeKi4sLTXeZQF2QKAgJ1wipxoQixyEVLPJaama/Q4tw=
 github.com/gokit/es v0.0.0-20181119091109-8d78b96ec2c1 h1:+VDULs6ijCQWkOqHALEshqkvP5VWwkuWSv1bQ7tIXXU=
 github.com/gokit/es v0.0.0-20181119091109-8d78b96ec2c1/go.mod h1:3f6IH7olKgOkrbGNSgNm00Xyg2ltlMEAam213HgkxHI=
+github.com/gokit/es v0.0.0-20181225110440-a554c1c8305f h1:Rqw2zYDNJkTlZmqWrQJmBNKYD3C5A9rtmQobXFqpdik=
+github.com/gokit/es v0.0.0-20181225110440-a554c1c8305f/go.mod h1:3f6IH7olKgOkrbGNSgNm00Xyg2ltlMEAam213HgkxHI=
 github.com/gokit/xid v1.2.2 h1:F/WWbn9+tOOXM1Fi6/D+VJNaY4vY1BjwPW2apD3kHjc=
 github.com/gokit/xid v1.2.2/go.mod h1:Uzq+MT5Jix7O/f+fugfoXLUcm2K3hr4nlM+mQDPvIMQ=
 github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b h1:VKtxabqXZkF25pY9ekfRL6a582T4P37/31XEstQ5p58=

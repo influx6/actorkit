@@ -5,10 +5,10 @@ import (
 
 	coKafka "github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/gokit/actorkit"
-	"github.com/gokit/actorkit/transit"
-	"github.com/gokit/actorkit/transit/internal/benches"
-	"github.com/gokit/actorkit/transit/internal/encoders"
-	"github.com/gokit/actorkit/transit/kafka"
+	"github.com/gokit/actorkit/pubsubs"
+	"github.com/gokit/actorkit/pubsubs/internal/benches"
+	"github.com/gokit/actorkit/pubsubs/internal/encoders"
+	"github.com/gokit/actorkit/pubsubs/kafka"
 )
 
 func TestKafka(t *testing.T) {
@@ -20,9 +20,9 @@ func TestKafka(t *testing.T) {
 		Brokers: []string{},
 	}, &kafka.KAUnmarshaler{Envelope: encoders.NoAddressUnmarshaler{}})
 
-	factory := kafka.PubSubFactory(func(factory *kafka.PublisherFactory, topic string) (transit.Publisher, error) {
+	factory := kafka.PubSubFactory(func(factory *kafka.PublisherFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.NewPublisher(topic, coKafka.ConfigMap{})
-	}, func(factory *kafka.ConsumerFactory, topic string, id string, receiver transit.Receiver) (actorkit.Subscription, error) {
+	}, func(factory *kafka.ConsumerFactory, topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
 		return factory.CreateConsumer(topic, id, receiver, func(e error) kafka.Directive {
 			return kafka.Rollback
 		})

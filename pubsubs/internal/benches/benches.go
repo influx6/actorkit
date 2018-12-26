@@ -8,37 +8,36 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/gokit/actorkit/transit"
+	"github.com/gokit/actorkit/pubsubs"
 )
 
 //**************************************************************************
 // Tests Publishers and Subscribers
 //**************************************************************************
 
-// PubSubFactoryTestSuite verifies the giving behaviour of a giving provider of a transit.PubSubFactories.
-func PubSubFactoryTestSuite(t *testing.T, pubsub transit.PubSubFactory) {
+// PubSubFactoryTestSuite verifies the giving behaviour of a giving provider of a pubsubs.PubSubFactories.
+func PubSubFactoryTestSuite(t *testing.T, pubsub pubsubs.PubSubFactory) {
 	testMessagePublishing(t, pubsub)
 	testMessagePublishingAndSubscription(t, pubsub)
 }
 
-func testMessagePublishing(t *testing.T, pubsub transit.PublisherFactory) {
+func testMessagePublishing(t *testing.T, pubsub pubsubs.PublisherFactory) {
 	pub, err := pubsub.NewPublisher("rats")
 	assert.NoError(t, err)
 	assert.NotNil(t, pub)
 
 	assert.NoError(t, pub.Publish(actorkit.CreateEnvelope(actorkit.DeadLetters(), actorkit.Header{}, "300")))
 
-	<-time.After(3 * time.Second)
 	assert.NoError(t, pub.Close())
 }
 
-func testMessagePublishingAndSubscription(t *testing.T, pubsub transit.PubSubFactory) {
+func testMessagePublishingAndSubscription(t *testing.T, pubsub pubsubs.PubSubFactory) {
 	pub, err := pubsub.NewPublisher("rats")
 	assert.NoError(t, err)
 	assert.NotNil(t, pub)
 
-	rec := make(chan transit.Message, 1)
-	sub, err := pubsub.NewSubscriber("rats", "my-group", func(message transit.Message) error {
+	rec := make(chan pubsubs.Message, 1)
+	sub, err := pubsub.NewSubscriber("rats", "my-group", func(message pubsubs.Message) error {
 		rec <- message
 		return nil
 	})

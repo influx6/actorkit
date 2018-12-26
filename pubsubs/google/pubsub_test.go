@@ -8,10 +8,10 @@ import (
 
 	gpubsub "cloud.google.com/go/pubsub"
 	"github.com/gokit/actorkit"
-	"github.com/gokit/actorkit/transit"
-	"github.com/gokit/actorkit/transit/google"
-	"github.com/gokit/actorkit/transit/internal/benches"
-	"github.com/gokit/actorkit/transit/internal/encoders"
+	"github.com/gokit/actorkit/pubsubs"
+	"github.com/gokit/actorkit/pubsubs/google"
+	"github.com/gokit/actorkit/pubsubs/internal/benches"
+	"github.com/gokit/actorkit/pubsubs/internal/encoders"
 )
 
 func TestKafka(t *testing.T) {
@@ -36,9 +36,9 @@ func TestKafka(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, subscribers)
 
-	factory := google.PubSubFactory(func(factory *google.PublisherFactory, topic string) (transit.Publisher, error) {
+	factory := google.PubSubFactory(func(factory *google.PublisherFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.Publisher(topic, &gpubsub.PublishSettings{})
-	}, func(factory *google.SubscriptionFactory, topic string, id string, receiver transit.Receiver) (actorkit.Subscription, error) {
+	}, func(factory *google.SubscriptionFactory, topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
 		return factory.Subscribe(topic, id, &gpubsub.SubscriptionConfig{}, receiver, func(_ error) google.Directive {
 			return google.Nack
 		})

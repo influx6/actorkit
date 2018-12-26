@@ -3,6 +3,8 @@ package encoders
 import (
 	"encoding/json"
 
+	"github.com/gokit/xid"
+
 	"github.com/gokit/actorkit"
 )
 
@@ -14,13 +16,13 @@ type Encodable struct {
 	Attr   map[string]string
 }
 
-// NoAddressMarshaler implements the transit.Marshaler which encodes envelopes into byte slices
+// NoAddressMarshaler implements the pubsubs.Marshaler which encodes envelopes into byte slices
 // without care for the actotkit.Addr fields within encodoed version.
 //
 // Only to be used in tests.
 type NoAddressMarshaler struct{}
 
-// Marshal implements the transit.Marshaler interface.
+// Marshal implements the pubsubs.Marshaler interface.
 func (NoAddressMarshaler) Marshal(msg actorkit.Envelope) ([]byte, error) {
 	return json.Marshal(Encodable{
 		Sender: msg.Sender.Addr(),
@@ -30,13 +32,13 @@ func (NoAddressMarshaler) Marshal(msg actorkit.Envelope) ([]byte, error) {
 	})
 }
 
-// NoAddressUnmarshaler implements the transit.Unmarshaler which decodes envelopes byte slices
+// NoAddressUnmarshaler implements the pubsubs.Unmarshaler which decodes envelopes byte slices
 // into actorkit.Envelopes without care for the actotkit.Addr fields within encoded version.
 //
 // Only to be used in tests.
 type NoAddressUnmarshaler struct{}
 
-// Unmarshal implements the transit.Unmarshaler interface.
+// Unmarshal implements the pubsubs.Unmarshaler interface.
 func (NoAddressUnmarshaler) Unmarshal(data []byte) (actorkit.Envelope, error) {
 	var msg actorkit.Envelope
 
@@ -44,6 +46,16 @@ func (NoAddressUnmarshaler) Unmarshal(data []byte) (actorkit.Envelope, error) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return msg, err
 	}
+
+	id, err := xid.FromString(decoded.Ref)
+	if err != nil {
+		return msg, err
+	}
+
+	msg.Ref = id
+	msg.Data = decoded.Data
+	msg.Header = decoded.Attr
+	msg.Sender = actorkit.DeadLetters()
 
 	return msg, nil
 }

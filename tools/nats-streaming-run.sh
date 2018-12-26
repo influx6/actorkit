@@ -1,4 +1,3 @@
 #!/usr/bin/env bash
 
-nohup bash -c "./bin/nats-streaming/nats-streaming-server -m 8222 &"
-sleep 5
+bash -c "./bin/nats-streaming/nats-streaming-server -DV -m 8222 -cid cluster_server"

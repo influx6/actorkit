@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-bash -c "./bin/gnatsd/gnatsd -m 8222"
+bash -c "./bin/gnatsd/gnatsd -DV -m 8222"

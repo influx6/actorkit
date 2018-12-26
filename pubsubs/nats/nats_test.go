@@ -6,14 +6,14 @@ import (
 
 	"github.com/gokit/actorkit/internal"
 
-	"github.com/gokit/actorkit/transit/internal/encoders"
+	"github.com/gokit/actorkit/pubsubs/internal/encoders"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/gokit/actorkit/transit/nats"
+	"github.com/gokit/actorkit/pubsubs/nats"
 
 	"github.com/gokit/actorkit"
-	"github.com/gokit/actorkit/transit"
-	"github.com/gokit/actorkit/transit/internal/benches"
+	"github.com/gokit/actorkit/pubsubs"
+	"github.com/gokit/actorkit/pubsubs/internal/benches"
 )
 
 func TestNATS(t *testing.T) {
@@ -24,12 +24,14 @@ func TestNATS(t *testing.T) {
 		Unmarshaler: encoders.NoAddressUnmarshaler{},
 	})
 
+	defer natspub.Close()
+
 	assert.NoError(t, err)
 	assert.NotNil(t, natspub)
 
-	factory := nats.PubSubFactory(func(factory *nats.PublisherSubscriberFactory, topic string) (transit.Publisher, error) {
+	factory := nats.PubSubFactory(func(factory *nats.PublisherSubscriberFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.Publisher(topic)
-	}, func(factory *nats.PublisherSubscriberFactory, topic string, id string, receiver transit.Receiver) (actorkit.Subscription, error) {
+	}, func(factory *nats.PublisherSubscriberFactory, topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
 		return factory.Subscribe(topic, id, receiver, func(_ error) nats.Directive {
 			return nats.Nack
 		})

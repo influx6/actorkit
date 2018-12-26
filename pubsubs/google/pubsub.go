@@ -10,7 +10,7 @@ import (
 	"github.com/gokit/actorkit"
 
 	"cloud.google.com/go/pubsub"
-	"github.com/gokit/actorkit/transit"
+	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/errors"
 	"google.golang.org/api/option"
 )
@@ -36,19 +36,19 @@ const (
 	Nack
 )
 
-// Marshaler defines a interface exposing method to transform a transit.Message
+// Marshaler defines a interface exposing method to transform a pubsubs.Message
 // into a kafka message.
 type Marshaler interface {
-	Marshal(message transit.Message) (pubsub.Message, error)
+	Marshal(message pubsubs.Message) (pubsub.Message, error)
 }
 
 // PubSubMarshaler implements the Marshaler interface.
 type PubSubMarshaler struct {
-	Marshaler transit.Marshaler
+	Marshaler pubsubs.Marshaler
 }
 
 // Marshal marshals giving message into a pubsub message.
-func (ps PubSubMarshaler) Marshal(msg transit.Message) (pubsub.Message, error) {
+func (ps PubSubMarshaler) Marshal(msg pubsubs.Message) (pubsub.Message, error) {
 	var res pubsub.Message
 	if msg.Envelope.Has(pubsubIDName) {
 		return res, errors.New("key %q is reserved for internal use only", pubsubIDName)
@@ -79,19 +79,19 @@ func (ps PubSubMarshaler) Marshal(msg transit.Message) (pubsub.Message, error) {
 }
 
 // Unmarshaler defines an interface who's implementer exposes said method to
-// transform a kafka message into a transit Message.
+// transform a kafka message into a pubsubs Message.
 type Unmarshaler interface {
-	Unmarshal(*pubsub.Message) (transit.Message, error)
+	Unmarshal(*pubsub.Message) (pubsubs.Message, error)
 }
 
 // PubSubUnmarshaler implements the Unmarshaler interface.
 type PubSubUnmarshaler struct {
-	Unmarshaler transit.Unmarshaler
+	Unmarshaler pubsubs.Unmarshaler
 }
 
-// Unmarshal transforms giving pubsub.Message into a transit.Message type.
-func (ps *PubSubUnmarshaler) Unmarshal(msg *pubsub.Message) (transit.Message, error) {
-	var decoded transit.Message
+// Unmarshal transforms giving pubsub.Message into a pubsubs.Message type.
+func (ps *PubSubUnmarshaler) Unmarshal(msg *pubsub.Message) (pubsubs.Message, error) {
+	var decoded pubsubs.Message
 	if _, ok := msg.Attributes[pubsubIDName]; ok {
 		return decoded, errors.New("message is not a actorkit encoded type")
 	}
@@ -114,26 +114,26 @@ func (ps *PubSubUnmarshaler) Unmarshal(msg *pubsub.Message) (transit.Message, er
 // PublisherHandler defines a function type which takes a giving PublisherFactory
 // and a given topic, returning a new publisher with all related underline specific
 // details added and instantiated.
-type PublisherHandler func(*PublisherFactory, string) (transit.Publisher, error)
+type PublisherHandler func(*PublisherFactory, string) (pubsubs.Publisher, error)
 
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*SubscriptionFactory, string, string, transit.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*SubscriptionFactory, string, string, pubsubs.Receiver) (actorkit.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
-type PubSubFactoryGenerator func(pub *PublisherFactory, sub *SubscriptionFactory) transit.PubSubFactory
+type PubSubFactoryGenerator func(pub *PublisherFactory, sub *SubscriptionFactory) pubsubs.PubSubFactory
 
-// PubSubFactory provides a partial function for the generation of a transit.PubSubFactory
+// PubSubFactory provides a partial function for the generation of a pubsubs.PubSubFactory
 // using the PubSubFactorGenerator function.
 func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
-	return func(pub *PublisherFactory, sub *SubscriptionFactory) transit.PubSubFactory {
-		return &transit.PubSubFactoryImpl{
-			Publishers: func(topic string) (transit.Publisher, error) {
+	return func(pub *PublisherFactory, sub *SubscriptionFactory) pubsubs.PubSubFactory {
+		return &pubsubs.PubSubFactoryImpl{
+			Publishers: func(topic string) (pubsubs.Publisher, error) {
 				return publishers(pub, topic)
 			},
-			Subscribers: func(topic string, id string, receiver transit.Receiver) (actorkit.Subscription, error) {
+			Subscribers: func(topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
 				return subscribers(sub, topic, id, receiver)
 			},
 		}
@@ -296,11 +296,11 @@ func NewPublisher(ctx context.Context, topic string, sink *pubsub.Topic, config 
 func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	errs := make(chan error, 1)
 	action := func() {
-		marshaled, err := p.m.Marshal(transit.Message{Topic: p.topic, Envelope: msg})
+		marshaled, err := p.m.Marshal(pubsubs.Message{Topic: p.topic, Envelope: msg})
 		if err != nil {
 			perr := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Emit(actorkit.ERROR, transit.MarshalingError{Err: perr, Data: msg})
+				p.log.Emit(actorkit.ERROR, pubsubs.MarshalingError{Err: perr, Data: msg})
 			}
 			errs <- perr
 			return
@@ -313,7 +313,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 		if err2 != nil {
 			perr2 := errors.Wrap(err2, "Failed to publish incoming message: %%v", msg)
 			if p.log != nil {
-				p.log.Emit(actorkit.ERROR, transit.PublishError{Err: perr2, Data: marshaled, Topic: p.topic})
+				p.log.Emit(actorkit.ERROR, pubsubs.PublishError{Err: perr2, Data: marshaled, Topic: p.topic})
 			}
 
 			errs <- perr2
@@ -404,7 +404,7 @@ func NewSubscriptionFactory(ctx context.Context, config SubscriberConfig) (*Subs
 
 // Subscribe subscribes to a giving topic, if one exists then a new subscription with a ever incrementing id is assigned
 // to new subscription.
-func (sb *SubscriptionFactory) Subscribe(topic string, id string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error, action func(error) Directive) (actorkit.Subscription, error) {
+func (sb *SubscriptionFactory) Subscribe(topic string, id string, config *pubsub.SubscriptionConfig, receiver func(pubsubs.Message) error, action func(error) Directive) (actorkit.Subscription, error) {
 	return sb.createSubscription(topic, id, config, receiver, action)
 }
 
@@ -423,7 +423,7 @@ func (sb *SubscriptionFactory) Close() error {
 	return err
 }
 
-func (sb *SubscriptionFactory) createSubscription(topic string, id string, config *pubsub.SubscriptionConfig, receiver func(transit.Message) error, direction func(error) Directive) (*Subscription, error) {
+func (sb *SubscriptionFactory) createSubscription(topic string, id string, config *pubsub.SubscriptionConfig, receiver func(pubsubs.Message) error, direction func(error) Directive) (*Subscription, error) {
 	errs := make(chan error, 1)
 	subs := make(chan *Subscription, 1)
 
@@ -528,7 +528,7 @@ type Subscription struct {
 	sub       *pubsub.Subscription
 	direction func(error) Directive
 	subc      pubsub.SubscriptionConfig
-	receiver  func(transit.Message) error
+	receiver  func(pubsubs.Message) error
 }
 
 // Stop ends giving subscription and it's operation in listening to given topic.
@@ -599,7 +599,7 @@ func (s *Subscription) run() {
 		decoded, err := s.config.Unmarshaler.Unmarshal(message)
 		if err != nil {
 			if s.log != nil {
-				s.log.Emit(actorkit.ERROR, transit.UnmarshalingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
+				s.log.Emit(actorkit.ERROR, pubsubs.UnmarshalingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
 			}
 			switch s.direction(err) {
 			case Ack:
@@ -612,7 +612,7 @@ func (s *Subscription) run() {
 
 		if err := s.receiver(decoded); err != nil {
 			if s.log != nil {
-				s.log.Emit(actorkit.ERROR, transit.MessageHandlingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
+				s.log.Emit(actorkit.ERROR, pubsubs.MessageHandlingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
 			}
 			switch s.direction(err) {
 			case Ack:
@@ -626,7 +626,7 @@ func (s *Subscription) run() {
 		message.Ack()
 	}); err != nil {
 		if s.log != nil {
-			s.log.Emit(actorkit.ERROR, transit.OpError{Err: errors.WrapOnly(err), Topic: s.topic})
+			s.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: errors.WrapOnly(err), Topic: s.topic})
 		}
 	}
 }
