@@ -9,14 +9,14 @@ import (
 
 func TestGetLogEvent(t *testing.T) {
 	t.Run("basic fields", func(t *testing.T) {
-		event := actorkit.GetLogEvent("My log")
+		event := actorkit.LogMsg("My log")
 		event.String("name", "thunder")
 		event.Int("id", 234)
 		assert.Equal(t, "{\"message\": \"My log\", \"name\": \"thunder\", \"id\": 234}", event.Write().Message())
 	})
 
 	t.Run("with JSON fields", func(t *testing.T) {
-		event := actorkit.GetLogEvent("My log")
+		event := actorkit.LogMsg("My log")
 		event.String("name", "thunder")
 		event.Int("id", 234)
 		event.ObjectJSON("data", map[string]interface{}{"id": 23})
@@ -24,7 +24,7 @@ func TestGetLogEvent(t *testing.T) {
 	})
 
 	t.Run("with Entry fields", func(t *testing.T) {
-		event := actorkit.GetLogEvent("My log")
+		event := actorkit.LogMsg("My log")
 		event.String("name", "thunder")
 		event.Int("id", 234)
 		event.Object("data", func(event actorkit.LogEvent) {
@@ -34,7 +34,7 @@ func TestGetLogEvent(t *testing.T) {
 	})
 
 	t.Run("with bytes fields", func(t *testing.T) {
-		event := actorkit.GetLogEvent("My log")
+		event := actorkit.LogMsg("My log")
 		event.String("name", "thunder")
 		event.Int("id", 234)
 		event.Bytes("data", []byte("{\"id\": 23}"))
@@ -42,14 +42,14 @@ func TestGetLogEvent(t *testing.T) {
 	})
 
 	t.Run("using context fields", func(t *testing.T) {
-		event := actorkit.GetLogEventWithContext("My log", "data", nil)
+		event := actorkit.LogMsgWithContext("My log", "data", nil)
 		event.String("name", "thunder")
 		event.Int("id", 234)
 		assert.Equal(t, "{\"message\": \"My log\", \"data\": {\"name\": \"thunder\", \"id\": 234}}", event.Write().Message())
 	})
 
 	t.Run("using context fields with hook", func(t *testing.T) {
-		event := actorkit.GetLogEventWithContext("My log", "data", func(event actorkit.LogEvent) {
+		event := actorkit.LogMsgWithContext("My log", "data", func(event actorkit.LogEvent) {
 			event.Bool("w", true)
 		})
 
@@ -68,7 +68,7 @@ func BenchmarkGetLogEvent(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := b.N; i > 0; i-- {
-			event := actorkit.GetLogEvent("My log")
+			event := actorkit.LogMsg("My log")
 			event.String("name", "thunder")
 			event.Int("id", 234)
 			event.Write()
@@ -80,7 +80,7 @@ func BenchmarkGetLogEvent(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := b.N; i > 0; i-- {
-			event := actorkit.GetLogEvent("My log")
+			event := actorkit.LogMsg("My log")
 			event.String("name", "thunder")
 			event.Int("id", 234)
 			event.ObjectJSON("data", map[string]interface{}{"id": 23})
@@ -93,7 +93,7 @@ func BenchmarkGetLogEvent(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := b.N; i > 0; i-- {
-			event := actorkit.GetLogEvent("My log")
+			event := actorkit.LogMsg("My log")
 			event.String("name", "thunder")
 			event.Int("id", 234)
 			event.Object("data", func(event actorkit.LogEvent) {
@@ -108,7 +108,7 @@ func BenchmarkGetLogEvent(b *testing.B) {
 		b.ReportAllocs()
 
 		for i := b.N; i > 0; i-- {
-			event := actorkit.GetLogEvent("My log")
+			event := actorkit.LogMsg("My log")
 			event.String("name", "thunder")
 			event.Int("id", 234)
 			event.Bytes("data", []byte("{\"id\": 23}"))

@@ -245,6 +245,7 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 	sub.receiver = receiver
 	sub.direction = direction
 	sub.errs = make(chan error, 1)
+	sub.m = pf.config.Unmarshaler
 	sub.id = fmt.Sprintf(pubsubs.SubscriberTopicFormat, pf.config.ProjectID, topic, id)
 
 	sub.ctx, sub.canceler = context.WithCancel(pf.ctx)
@@ -366,6 +367,7 @@ func NewPublisher(ctx context.Context, factory *PublisherSubscriberFactory, topi
 // Close closes giving subscriber.
 func (p *Publisher) Close() error {
 	p.canceler()
+	p.waiter.Wait()
 	return nil
 }
 
@@ -379,31 +381,41 @@ func (p *Publisher) Wait() {
 func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	errs := make(chan error, 1)
 	action := func() {
-		p.log.Emit(actorkit.DEBUG, NATEvent{Header: "Publishing new msg to topic %q", Data: p.topic})
+		p.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Marshaling message to topic", "context", nil).
+			String("topic", p.topic).Write())
+
 		marshaled, err := p.m.Marshal(msg)
 		if err != nil {
 			err = errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
-			p.log.Emit(actorkit.ERROR, pubsubs.MarshalingError{Err: err, Data: msg})
+			p.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
+				String("topic", p.topic).Write())
 			errs <- err
 			return
 		}
 
-		p.log.Emit(actorkit.DEBUG, NATEvent{Header: fmt.Sprintf("Delivery message %+q to topic %q", marshaled, p.topic), Data: marshaled})
+		p.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Delivering message to topic", "context", nil).
+			String("topic", p.topic).QBytes("data", marshaled).Write())
+
 		pubErr := p.sink.Publish(p.topic, marshaled)
 		if p.log != nil && pubErr != nil {
-			p.log.Emit(actorkit.ERROR, pubsubs.PublishError{Err: errors.WrapOnly(pubErr), Data: marshaled, Topic: p.topic})
+			p.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(pubErr.Error(), "context", nil).
+				String("topic", p.topic).Write())
 		}
+
 		errs <- pubErr
-		p.log.Emit(actorkit.DEBUG, NATEvent{Header: "Published new msg to topic %q", Data: p.topic})
+		if pubErr == nil {
+			p.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Published message to topic", "context", nil).
+				String("topic", p.topic).Write())
+		}
 	}
 
 	select {
 	case p.actions <- action:
 		return <-errs
 	case <-time.After(p.cfg.MessageDeliveryTimeout):
-		err := errors.Wrap(pubsubs.ErrPublishingFailed, "Topic %q", p.topic)
-		p.log.Emit(actorkit.DEBUG, NATEvent{Header: "Failed to deliver message to topic %q", Data: p.topic})
-		return err
+		p.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext("Failed to deliver message to topic", "context", nil).
+			String("topic", p.topic).Write())
+		return errors.Wrap(pubsubs.ErrPublishingFailed, "Topic %q", p.topic)
 	}
 }
 
@@ -418,7 +430,8 @@ func (p *Publisher) run() {
 	for {
 		select {
 		case <-p.ctx.Done():
-			p.log.Emit(actorkit.DEBUG, NATEvent{Header: "Publisher routine for %q is closing", Data: p.topic})
+			p.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Publisher routine is closing", "context", nil).
+				String("topic", p.topic).Write())
 			return
 		case action := <-p.actions:
 			action()
@@ -467,15 +480,14 @@ func (s *Subscription) Stop() {
 func (s *Subscription) handle(msg *pubsub.Msg) {
 	decoded, err := s.m.Unmarshal(msg.Data)
 	if err != nil {
-		if s.log != nil {
-			s.log.Emit(actorkit.ERROR, pubsubs.UnmarshalingError{Err: errors.WrapOnly(err), Data: msg.Data, Topic: s.topic})
-		}
+		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
+			String("topic", s.topic).Write())
+
 		switch s.direction(err) {
 		case Ack:
 			if err := msg.Ack(); err != nil {
-				if s.log != nil {
-					s.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
-				}
+				s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
+					String("subject", msg.Subject).String("topic", s.topic).Write())
 			}
 		case Nack:
 		}
@@ -483,15 +495,14 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 	}
 
 	if err := s.receiver(pubsubs.Message{Topic: msg.Subject, Envelope: decoded}); err != nil {
-		if s.log != nil {
-			s.log.Emit(actorkit.ERROR, pubsubs.MessageHandlingError{Err: errors.WrapOnly(err), Data: msg.Data, Topic: msg.Subject})
-		}
+		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
+			String("subject", msg.Subject).String("topic", s.topic).Write())
+
 		switch s.direction(err) {
 		case Ack:
 			if err := msg.Ack(); err != nil {
-				if s.log != nil {
-					s.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
-				}
+				s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
+					String("subject", msg.Subject).String("topic", s.topic).Write())
 			}
 		case Nack:
 		}
@@ -499,9 +510,8 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 	}
 
 	if err := msg.Ack(); err != nil {
-		if s.log != nil {
-			s.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: errors.Wrap(err, "Failed to acknowledge message for topic %q: %#v", s.topic, msg), Topic: s.topic})
-		}
+		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
+			String("subject", msg.Subject).String("topic", s.topic).Write())
 	}
 }
 
@@ -527,8 +537,7 @@ func (s *Subscription) init() error {
 func (s *Subscription) run() {
 	<-s.ctx.Done()
 	if err := s.sub.Unsubscribe(); err != nil {
-		if s.log != nil {
-			s.log.Emit(actorkit.ERROR, pubsubs.DesubscriptionError{Err: errors.WrapOnly(err), Topic: s.topic})
-		}
+		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
+			String("topic", s.topic).Write())
 	}
 }

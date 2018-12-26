@@ -123,15 +123,16 @@ type LogEvent interface {
 	Bool(string, bool) LogEvent
 	Int64(string, int64) LogEvent
 	Bytes(string, []byte) LogEvent
+	QBytes(string, []byte) LogEvent
 	String(string, string) LogEvent
 	Float64(string, float64) LogEvent
 	Object(string, func(LogEvent)) LogEvent
 	ObjectJSON(string, interface{}) LogEvent
 }
 
-// GetLogEvent requests allocation for a LogEvent from the internal pool returning a LogEvent for use
+// LogMsg requests allocation for a LogEvent from the internal pool returning a LogEvent for use
 // which must be have it's Write() method called once done.
-func GetLogEvent(message string) LogEvent {
+func LogMsg(message string) LogEvent {
 	event := logEventPool.Get().(*logEventImpl)
 	event.reset()
 	event.addQuotedString("message", message)
@@ -139,13 +140,13 @@ func GetLogEvent(message string) LogEvent {
 	return event
 }
 
-// GetLogEventWithContext requests allocation for a LogEvent from the internal pool returning a LogEvent
+// LogMsgWithContext requests allocation for a LogEvent from the internal pool returning a LogEvent
 // for use. It packs the field into a internal map with the key for that map set to the value of ctx.
 // which must be have it's Write() method called once done.
 //
 // If a hook is provided then the hook is used to add field key-value pairs to the root of the
 // returned json.
-func GetLogEventWithContext(message string, ctx string, hook func(LogEvent)) LogEvent {
+func LogMsgWithContext(message string, ctx string, hook func(LogEvent)) LogEvent {
 	event := logEventPool.Get().(*logEventImpl)
 	event.reset()
 	event.onRelease = func(s string) string {
@@ -190,6 +191,14 @@ func (l *logEventImpl) String(name string, value string) LogEvent {
 // if you do not use this correctly.
 func (l *logEventImpl) Bytes(name string, value []byte) LogEvent {
 	l.addBytes(name, value)
+	l.endEntry()
+	return l
+}
+
+// QBytes adds a field name with bytes value. The byte is expected to be
+// will be wrapped with quotation.
+func (l *logEventImpl) QBytes(name string, value []byte) LogEvent {
+	l.addQuotedBytes(name, value)
 	l.endEntry()
 	return l
 }
@@ -334,6 +343,21 @@ func (l *logEventImpl) addString(k string, v string) {
 	l.content = append(l.content, colon...)
 	l.content = append(l.content, space...)
 	l.content = append(l.content, v...)
+}
+
+func (l *logEventImpl) addQuotedBytes(k string, v []byte) {
+	if l.released() {
+		panic("Re-using released logEventImpl")
+	}
+
+	l.content = append(l.content, doubleQuote...)
+	l.content = append(l.content, k...)
+	l.content = append(l.content, doubleQuote...)
+	l.content = append(l.content, colon...)
+	l.content = append(l.content, space...)
+	l.content = append(l.content, doubleQuote...)
+	l.content = append(l.content, v...)
+	l.content = append(l.content, doubleQuote...)
 }
 
 func (l *logEventImpl) addBytes(k string, v []byte) {

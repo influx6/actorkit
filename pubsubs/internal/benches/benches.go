@@ -17,8 +17,13 @@ import (
 
 // PubSubFactoryTestSuite verifies the giving behaviour of a giving provider of a pubsubs.PubSubFactories.
 func PubSubFactoryTestSuite(t *testing.T, pubsub pubsubs.PubSubFactory) {
-	testMessagePublishing(t, pubsub)
-	testMessagePublishingAndSubscription(t, pubsub)
+	t.Run("Publish Message Only", func(t *testing.T) {
+		testMessagePublishing(t, pubsub)
+	})
+
+	t.Run("Publish and Subscribe", func(t *testing.T) {
+		testMessagePublishingAndSubscription(t, pubsub)
+	})
 }
 
 func testMessagePublishing(t *testing.T, pubsub pubsubs.PublisherFactory) {
