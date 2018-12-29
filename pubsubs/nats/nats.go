@@ -74,7 +74,7 @@ type Config struct {
 	Log                    actorkit.Logs
 }
 
-func (c *Config) init() error {
+func (c *Config) init() {
 	if c.MessageDeliveryTimeout <= 0 {
 		c.MessageDeliveryTimeout = 1 * time.Second
 	}
@@ -82,9 +82,8 @@ func (c *Config) init() error {
 		c.Log = &actorkit.DrainLog{}
 	}
 	if c.ProjectID == "" {
-		c.ProjectID = "actorkit"
+		c.ProjectID = actorkit.PackageName
 	}
-	return nil
 }
 
 // PublisherSubscriberFactory implements a Google pubsub Publisher factory which handles
@@ -108,9 +107,7 @@ type PublisherSubscriberFactory struct {
 
 // NewPublisherSubscriberFactory returns a new instance of publisher factory.
 func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
-	if err := config.init(); err != nil {
-		return nil, errors.Wrap(err, "failed to initialize Config instance")
-	}
+	config.init()
 
 	var pb PublisherSubscriberFactory
 	pb.id = xid.New()
@@ -120,12 +117,12 @@ func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*Publish
 	pb.subs = map[string]*Subscription{}
 	pb.ctx, pb.canceler = context.WithCancel(ctx)
 
-	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Initiating GNATS client connection", "context", nil).String("url", config.URL).Write())
+	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Initiating GNATS client connection", "context", nil).String("url", config.URL))
 	client, err := pubsub.Connect(pb.config.URL, pb.config.Options...)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create nats client")
 	}
-	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Checking GNATS client connection status", "context", nil).Bool("connected", client.IsConnected()).String("url", config.URL).Write())
+	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Checking GNATS client connection status", "context", nil).Bool("connected", client.IsConnected()).String("url", config.URL))
 
 	pb.c = client
 	return &pb, nil
@@ -176,7 +173,7 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 	sub.direction = direction
 	sub.m = pf.config.Unmarshaler
 	sub.errs = make(chan error, 1)
-	sub.id = fmt.Sprintf(pubsubs.SubscriberTopicFormat, pf.config.ProjectID, topic, id)
+	sub.id = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "nats", pf.config.ProjectID, topic, id)
 
 	sub.ctx, sub.canceler = context.WithCancel(pf.ctx)
 	if err := sub.init(); err != nil {
@@ -292,6 +289,7 @@ func NewPublisher(ctx context.Context, factory *PublisherSubscriberFactory, topi
 	return pm
 }
 
+// Wait blocks till the publisher has being closed.
 func (p *Publisher) Wait() {
 	p.waiter.Wait()
 }
@@ -299,7 +297,7 @@ func (p *Publisher) Wait() {
 // Close closes giving subscriber.
 func (p *Publisher) Close() error {
 	p.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Closing publisher", "context", nil).
-		String("topic", p.topic).Write())
+		String("topic", p.topic))
 	p.canceler()
 	p.waiter.Wait()
 	return nil
@@ -311,18 +309,18 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	errs := make(chan error, 1)
 	action := func() {
 		p.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Publishing message to topic", "context", nil).
-			String("topic", p.topic).Write())
+			String("topic", p.topic))
 
 		marshaled, err := p.m.Marshal(msg)
 		if err != nil {
 			err = errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
-			p.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).Write())
+			p.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil))
 			errs <- err
 			return
 		}
 
 		p.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Delivery message to topic", "context", nil).
-			String("topic", p.topic).QBytes("data", marshaled).Write())
+			String("topic", p.topic).QBytes("data", marshaled))
 
 		pubErr := p.sink.Publish(p.topic, marshaled)
 		if p.log != nil && pubErr != nil {
@@ -333,7 +331,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 
 		errs <- nil
 		p.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Published new msg to topic", "context", nil).
-			String("topic", p.topic).Write())
+			String("topic", p.topic))
 	}
 
 	select {
@@ -342,7 +340,7 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	case <-time.After(p.cfg.MessageDeliveryTimeout):
 		err := errors.Wrap(pubsubs.ErrPublishingFailed, "Topic %q", p.topic)
 		p.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext("Failed to deliver message to topic", "context", nil).
-			String("topic", p.topic).Write())
+			String("topic", p.topic))
 		return err
 	}
 }
@@ -359,7 +357,7 @@ func (p *Publisher) run() {
 		select {
 		case <-p.ctx.Done():
 			p.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Publisher routine is closing", "context", nil).
-				String("topic", p.topic).Write())
+				String("topic", p.topic))
 			return
 		case action := <-p.actions:
 			action()
@@ -401,13 +399,13 @@ func (s *Subscription) handle(msg *pubsub.Msg) {
 	decoded, err := s.m.Unmarshal(msg.Data)
 	if err != nil {
 		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
-			String("topic", s.topic).Write())
+			String("topic", s.topic))
 		return
 	}
 
 	if _, err := s.receiver(pubsubs.Message{Topic: msg.Subject, Envelope: decoded}); err != nil {
 		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
-			String("subject", msg.Subject).String("topic", s.topic).Write())
+			String("subject", msg.Subject).String("topic", s.topic))
 	}
 }
 
@@ -425,12 +423,12 @@ func (s *Subscription) run() {
 	<-s.ctx.Done()
 	if err := s.sub.Unsubscribe(); err != nil {
 		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
-			String("topic", s.topic).Write())
+			String("topic", s.topic))
 	}
 	if err := s.sub.Drain(); err != nil {
 		if s.log != nil {
 			s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
-				String("topic", s.topic).Write())
+				String("topic", s.topic))
 		}
 	}
 }

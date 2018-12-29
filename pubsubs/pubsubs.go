@@ -6,9 +6,10 @@ import (
 )
 
 // SubscriberTopicFormat defines the expected format for a subscriber group name, queue name can be formulated.
-const SubscriberTopicFormat = "/project/%s/topics/%s/subscriber/%s"
+const SubscriberTopicFormat = "/pubsub/%s/project/%s/topics/%s/subscriber/%s"
 
 var (
+
 	// ErrSubscriptionFailed is returned for failed subscription to topic.
 	ErrSubscriptionFailed = errors.New("failed to subscribe to topic")
 

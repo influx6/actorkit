@@ -10,6 +10,10 @@ import (
 
 const (
 	stackSize = 1 << 16
+
+	// PackageName defines the name for the package used in relationship
+	// for messages or different types.
+	PackageName = "actorkit"
 )
 
 var (

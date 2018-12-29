@@ -4,6 +4,8 @@
 package librdkafka
 
 import (
+	"context"
+	"fmt"
 	"runtime"
 	"strings"
 	"sync"
@@ -19,12 +21,12 @@ import (
 )
 
 const (
-	kafkaIDName = "_actorkit_kafka_uid"
+	idParam = "kafkaMessageID"
 )
 
 var (
-	_ Marshaler   = &KAMarshaler{}
-	_ Unmarshaler = &KAUnmarshaler{}
+	_ Marshaler   = &MarshalerWrapper{}
+	_ Unmarshaler = &UnmarshalerWrapper{}
 )
 
 // Marshaler defines a interface exposing method to transform a pubsubs.Message
@@ -39,8 +41,8 @@ type Unmarshaler interface {
 	Unmarshal(*kafka.Message) (pubsubs.Message, error)
 }
 
-// KAMarshaler implements the Marshaler interface.
-type KAMarshaler struct {
+// MarshalerWrapper implements the Marshaler interface.
+type MarshalerWrapper struct {
 	Envelope pubsubs.Marshaler
 
 	// Partitioner takes giving message returning appropriate
@@ -49,18 +51,14 @@ type KAMarshaler struct {
 }
 
 // Marshal implements the Marshaler interface.
-func (kc *KAMarshaler) Marshal(message pubsubs.Message) (kafka.Message, error) {
-	if message.Envelope.Has(kafkaIDName) {
-		return kafka.Message{}, errors.New("key %q can not be used as it internally used for kafka message tracking", kafkaIDName)
-	}
-
+func (kc MarshalerWrapper) Marshal(message pubsubs.Message) (kafka.Message, error) {
 	envelopeBytes, err := kc.Envelope.Marshal(message.Envelope)
 	if err != nil {
 		return kafka.Message{}, err
 	}
 
 	attrs := make([]kafka.Header, 0, len(message.Envelope.Header)+1)
-	attrs = append(attrs, kafka.Header{Key: kafkaIDName, Value: message.Envelope.Ref.Bytes()})
+	attrs = append(attrs, kafka.Header{Key: idParam, Value: message.Envelope.Ref.Bytes()})
 
 	for k, v := range message.Envelope.Header {
 		attrs = append(attrs, kafka.Header{Key: k, Value: []byte(v)})
@@ -82,13 +80,13 @@ func (kc *KAMarshaler) Marshal(message pubsubs.Message) (kafka.Message, error) {
 	}, nil
 }
 
-// KAUnmarshaler implements the Unmarshaler interface.
-type KAUnmarshaler struct {
+// UnmarshalerWrapper implements the Unmarshaler interface.
+type UnmarshalerWrapper struct {
 	Envelope pubsubs.Unmarshaler
 }
 
 // Unmarshal implements the Unmarshaler interface.
-func (kc *KAUnmarshaler) Unmarshal(message *kafka.Message) (pubsubs.Message, error) {
+func (kc UnmarshalerWrapper) Unmarshal(message *kafka.Message) (pubsubs.Message, error) {
 	var msg pubsubs.Message
 	msg.Topic = *message.TopicPartition.Topic
 
@@ -100,9 +98,9 @@ func (kc *KAUnmarshaler) Unmarshal(message *kafka.Message) (pubsubs.Message, err
 	// confirm header id matches envelope id
 	for _, v := range message.Headers {
 		switch v.Key {
-		case kafkaIDName:
+		case idParam:
 			if string(v.Value) != msg.Envelope.Ref.String() {
-				return msg, errors.New("Kafka ID does not matched unmarshalled envelope data")
+				return msg, errors.New("Kafka message ID does not matched envelope data")
 			}
 		default:
 			if !msg.Envelope.Has(v.Key) {
@@ -118,30 +116,30 @@ func (kc *KAUnmarshaler) Unmarshal(message *kafka.Message) (pubsubs.Message, err
 // PubSubFactory
 //*****************************************************************************
 
-// PublisherHandler defines a function type which takes a giving PublisherFactory
+// PublisherHandler defines a function type which takes a giving PublisherConsumerFactory
 // and a given topic, returning a new publisher with all related underline specific
 // details added and instantiated.
-type PublisherHandler func(*PublisherFactory, string) (pubsubs.Publisher, error)
+type PublisherHandler func(*PublisherConsumerFactory, string) (pubsubs.Publisher, error)
 
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*ConsumerFactory, string, string, pubsubs.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*PublisherConsumerFactory, string, string, pubsubs.Receiver) (actorkit.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
-type PubSubFactoryGenerator func(*PublisherFactory, *ConsumerFactory) pubsubs.PubSubFactory
+type PubSubFactoryGenerator func(*PublisherConsumerFactory) pubsubs.PubSubFactory
 
-// PubSubFactory provides a partial function for the generation of a pubsubs.PubSubFactory
+// PubSubFactory provides a partial function for the generation of a pubsub.PubSubFactory
 // using the PubSubFactorGenerator function.
 func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
-	return func(pub *PublisherFactory, sub *ConsumerFactory) pubsubs.PubSubFactory {
+	return func(pbs *PublisherConsumerFactory) pubsubs.PubSubFactory {
 		return &pubsubs.PubSubFactoryImpl{
 			Publishers: func(topic string) (pubsubs.Publisher, error) {
-				return publishers(pub, topic)
+				return publishers(pbs, topic)
 			},
 			Subscribers: func(topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
-				return subscribers(sub, topic, id, receiver)
+				return subscribers(pbs, topic, id, receiver)
 			},
 		}
 	}
@@ -151,92 +149,113 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 // Kafka ConsumerFactor
 //****************************************************************************
 
-// Config defines configuration fields for use with a ConsumerFactory.
+// Config defines configuration fields for use with a PublisherConsumerFactory.
 type Config struct {
-	Brokers              []string
-	ConsumersCount       int
-	AutoOffsetReset      string
-	NoConsumerGroup      bool
-	DefaultConsumerGroup string
-	Unmarshaler          Unmarshaler
-	Log                  actorkit.Logs
-	PollingTime          time.Duration
-	Overrides            kafka.ConfigMap
+	Brokers                []string
+	ConsumersCount         int
+	NoConsumerGroup        bool
+	ProjectID              string
+	AutoOffsetReset        string
+	DefaultConsumerGroup   string
+	Marshaler              Marshaler
+	Unmarshaler            Unmarshaler
+	Log                    actorkit.Logs
+	PollingTime            time.Duration
+	MessageDeliveryTimeout time.Duration
+	ConsumerOverrides      kafka.ConfigMap
+	ProducerOverrides      kafka.ConfigMap
 }
 
-// ConsumerFactory implements a kafka subscriber provider which handles and manages
-// kafka based consumers of giving topics.
-type ConsumerFactory struct {
-	config    Config
-	doOnce    sync.Once
-	closer    chan struct{}
-	waiter    sync.WaitGroup
+func (c *Config) init() {
+	if c.Log == nil {
+		c.Log = &actorkit.DrainLog{}
+	}
+	if c.ProjectID == "" {
+		c.ProjectID = actorkit.PackageName
+	}
+	if c.MessageDeliveryTimeout <= 0 {
+		c.MessageDeliveryTimeout = 2 * time.Second
+	}
+	if c.ConsumersCount == 0 {
+		c.ConsumersCount = runtime.NumCPU()
+	}
+	if c.AutoOffsetReset == "" {
+		c.AutoOffsetReset = "latest"
+	}
+	if c.DefaultConsumerGroup == "" {
+		c.NoConsumerGroup = true
+	}
+}
+
+// PublisherConsumerFactory implements a central factory for creating publishers or consumers for
+// topics for a underline kafka infrastructure.
+type PublisherConsumerFactory struct {
+	config Config
+
+	waiter       sync.WaitGroup
+	rootContext  context.Context
+	rootCanceler func()
+
 	cl        sync.RWMutex
 	consumers map[string]*Consumer
 }
 
-// NewConsumerFactory returns a new instance of a ConsumerFactory.
-func NewConsumerFactory(config Config, unmarshaler Unmarshaler) *ConsumerFactory {
-	var ksub ConsumerFactory
-	ksub.config = config
-	ksub.closer = make(chan struct{}, 0)
-	ksub.consumers = map[string]*Consumer{}
-
-	if config.ConsumersCount == 0 {
-		config.ConsumersCount = runtime.NumCPU()
+// NewPublisherConsumerFactory returns a new instance of a PublisherConsumerFactory.
+func NewPublisherConsumerFactory(ctx context.Context, config Config) *PublisherConsumerFactory {
+	config.init()
+	rctx, cano := context.WithCancel(ctx)
+	return &PublisherConsumerFactory{
+		config:       config,
+		rootContext:  rctx,
+		rootCanceler: cano,
+		consumers:    map[string]*Consumer{},
 	}
-
-	if config.AutoOffsetReset == "" {
-		config.AutoOffsetReset = "latest"
-	}
-
-	if config.DefaultConsumerGroup == "" {
-		config.NoConsumerGroup = true
-	}
-
-	return &ksub
 }
 
 // Wait blocks till all consumers generated by giving factory are closed.
-func (ka *ConsumerFactory) Wait() {
+func (ka *PublisherConsumerFactory) Wait() {
 	ka.waiter.Wait()
 }
 
 // Close closes all Consumers generated by consumer factory.
-func (ka *ConsumerFactory) Close() error {
-	ka.doOnce.Do(func() {
-		close(ka.closer)
-	})
+func (ka *PublisherConsumerFactory) Close() error {
+	ka.rootCanceler()
 	ka.waiter.Wait()
 	return nil
 }
 
-// CreateConsumer return a new consumer for a giving topic to be used for kafka.
+// NewPublisher returns a new Publisher for a giving topic,
+func (ka *PublisherConsumerFactory) NewPublisher(topic string, userOverrides *kafka.ConfigMap) (*Publisher, error) {
+	base, err := generateProducerConfig(&ka.config)
+	if err != nil {
+		return nil, err
+	}
+
+	if userOverrides != nil {
+		if err := mergeConfluentConfigs(&base, userOverrides); err != nil {
+			return nil, err
+		}
+	}
+
+	return NewPublisher(ka.rootContext, &ka.config, base, topic)
+}
+
+// NewConsumer return a new consumer for a giving topic to be used for kafka.
 // The provided id value if not empty will be used as the group.id.
-func (ka *ConsumerFactory) CreateConsumer(topic string, id string, receiver pubsubs.Receiver) (*Consumer, error) {
-	var cid string
-	if id == "" {
-		cid = ka.config.DefaultConsumerGroup
-	} else {
-		cid = id
-	}
-
-	config, err := ka.generateConfig(cid)
+func (ka *PublisherConsumerFactory) NewConsumer(topic string, id string, receiver pubsubs.Receiver) (*Consumer, error) {
+	consumer, err := NewConsumer(ka.rootContext, &ka.config, id, topic, receiver)
 	if err != nil {
 		return nil, err
 	}
-
-	consumer, err := NewConsumer(&ka.config, config, topic, ka.config.PollingTime, ka.config.Unmarshaler, receiver)
-	if err != nil {
-		return nil, err
-	}
-
-	ka.waiter.Add(1)
 
 	errRes := make(chan error, 1)
+
+	ka.waiter.Add(1)
 	go func() {
 		defer ka.waiter.Done()
-		consumer.Consume(ka.closer, errRes)
+		errRes <- consumer.Consume()
+
+		consumer.Wait()
 	}()
 
 	if err = <-errRes; err != nil {
@@ -249,137 +268,127 @@ func (ka *ConsumerFactory) CreateConsumer(topic string, id string, receiver pubs
 	return consumer, nil
 }
 
-func (ka *ConsumerFactory) hasConsumer(topic string) bool {
+func (ka *PublisherConsumerFactory) hasConsumer(topic string) bool {
 	ka.cl.RLock()
 	defer ka.cl.RUnlock()
 	_, ok := ka.consumers[topic]
 	return ok
 }
 
-func (ka *ConsumerFactory) generateConfig(id string) (*kafka.ConfigMap, error) {
-	kconfig := &kafka.ConfigMap{
-		"debug":                ",",
-		"session.timeout.ms":   6000,
-		"auto.offset.reset":    ka.config.AutoOffsetReset,
-		"bootstrap.servers":    strings.Join(ka.config.Brokers, ","),
-		"default.topic.config": kafka.ConfigMap{"auto.offset.reset": ka.config.AutoOffsetReset},
-	}
-
-	if !ka.config.NoConsumerGroup {
-		kconfig.SetKey("group.id", id)
-		kconfig.SetKey("enable.auto.commit", true)
-
-		// to achieve at-least-once delivery we store offsets after processing of the message
-		kconfig.SetKey("enable.auto.offset.store", false)
-	} else {
-		// this group will be not committed, setting just for api requirements
-		kconfig.SetKey("group.id", "no_group_"+xid.New().String())
-		kconfig.SetKey("enable.auto.commit", false)
-	}
-
-	if err := mergeConfluentConfigs(kconfig, ka.config.Overrides); err != nil {
-		return kconfig, err
-	}
-
-	return kconfig, nil
-}
-
 //****************************************************************************
 // Kafka Consumer
 //****************************************************************************
 
-// Directive defines a int type to represent directive handling for an error.
-type Directive int
-
-// constants of directive.
-const (
-	Rollback Directive = iota
-	Close
-)
-
 // Consumer implements a Kafka message subscription consumer.
 type Consumer struct {
+	id          string
 	topic       string
 	config      *Config
-	once        sync.Once
-	closer      chan struct{}
-	unmarshaler Unmarshaler
-	log         actorkit.Logs
-	polling     time.Duration
-	consumer    *kafka.Consumer
-	receiver    pubsubs.Receiver
+	kafkaConfig *kafka.ConfigMap
+
+	waiter   sync.WaitGroup
+	consumer *kafka.Consumer
+	receiver pubsubs.Receiver
+
+	log      actorkit.Logs
+	context  context.Context
+	canceler func()
 }
 
 // NewConsumer returns a new instance of a Consumer.
-func NewConsumer(co *Config, config *kafka.ConfigMap, topic string, polling time.Duration, unmarshaler Unmarshaler, receiver pubsubs.Receiver) (*Consumer, error) {
-	kconsumer, err := kafka.NewConsumer(config)
+func NewConsumer(ctx context.Context, config *Config, id string, topic string, receiver pubsubs.Receiver) (*Consumer, error) {
+	if id == "" && config.DefaultConsumerGroup != "" {
+		id = config.DefaultConsumerGroup
+	}
+
+	groupID := fmt.Sprintf(pubsubs.SubscriberTopicFormat, "kafka", config.ProjectID, topic, id)
+	kafkaConfig, err := generateConsumerConfig(groupID, config)
 	if err != nil {
+		err = errors.WrapOnly(err)
+		config.Log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+			event.String("topic", topic).String("group", groupID)
+		}))
 		return nil, err
 	}
 
+	kconsumer, err := kafka.NewConsumer(&kafkaConfig)
+	if err != nil {
+		err = errors.WrapOnly(err)
+		config.Log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+			event.String("topic", topic).String("group", groupID)
+		}))
+		return nil, err
+	}
+
+	rctx, can := context.WithCancel(ctx)
+
 	return &Consumer{
+		id:          id,
+		config:      config,
 		topic:       topic,
-		config:      co,
-		log:         co.Log,
-		polling:     polling,
-		consumer:    kconsumer,
 		receiver:    receiver,
-		unmarshaler: unmarshaler,
-		closer:      make(chan struct{}, 0),
+		log:         config.Log,
+		kafkaConfig: &kafkaConfig,
+		consumer:    kconsumer,
+		context:     rctx,
+		canceler:    can,
 	}, nil
 }
 
 // Consume initializes giving consumer for message consumption
 // from underline kafka consumer.
-func (c *Consumer) Consume(kill chan struct{}, errs chan error) {
+func (c *Consumer) Consume() error {
 	if err := c.consumer.Subscribe(c.topic, nil); err != nil {
-		em := errors.Wrap(err, "Failed to subscribe to topic %q", c.topic)
-		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, pubsubs.SubscriptionError{Err: em, Topic: c.topic})
-		}
-		errs <- em
-		return
+		err = errors.Wrap(err, "Failed to subscribe to topic %q", c.topic)
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", c.topic).String("group", c.id)
+		}))
+		return err
 	}
 
-	errs <- nil
-	c.run(kill)
+	c.waiter.Add(1)
+	go c.run()
+	return nil
 }
 
 // Stop stops the giving consumer, ending all consuming operations.
 func (c *Consumer) Stop() {
-	c.once.Do(func() {
-		close(c.closer)
-	})
+	c.canceler()
 }
 
-func (c *Consumer) close() {
+// Wait blocks till the consumer is closed.
+func (c *Consumer) Wait() {
+	c.waiter.Wait()
+}
+
+func (c *Consumer) close() error {
 	if err := c.consumer.Close(); err != nil {
-		em := errors.Wrap(err, "Failed to close subscriber for topic %q", c.topic)
-		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: em, Topic: c.topic})
-		}
+		err = errors.Wrap(err, "Failed to close consumer adequately for topic %q", c.topic)
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", c.topic).String("group", c.id)
+		}))
+		return err
 	}
+	return nil
 }
 
-func (c *Consumer) run(closer chan struct{}) {
-	ms := int(c.polling.Seconds()) * 1000
+func (c *Consumer) run() {
+	defer c.waiter.Done()
+
+	ms := int(c.config.PollingTime.Seconds()) * 1000
 
 	for {
 		select {
-		case <-c.closer:
-			c.close()
-			return
-		case <-closer:
+		case <-c.context.Done():
 			c.close()
 			return
 		default:
 			if event := c.consumer.Poll(ms); event != nil {
 				switch tm := event.(type) {
 				case *kafka.Message:
+					// close consumer if returned error is unacceptable.
 					if err := c.handleIncomingMessage(tm); err != nil {
-						// close consumer has the given error is unacceptable.
-						c.consumer.Close()
-
+						c.close()
 						return
 					}
 				case kafka.PartitionEOF:
@@ -393,29 +402,43 @@ func (c *Consumer) run(closer chan struct{}) {
 
 func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 	if msg.TopicPartition.Error != nil {
-		return c.handleError(msg.TopicPartition.Error, pubsubs.NACK, msg)
+		err := errors.WrapOnly(msg.TopicPartition.Error)
+		return c.handleError(err, pubsubs.NACK, msg)
 	}
 
-	rec, err := c.unmarshaler.Unmarshal(msg)
+	rec, err := c.config.Unmarshaler.Unmarshal(msg)
 	if err != nil {
-		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, pubsubs.UnmarshalingError{Err: errors.Wrap(err, "Failed to marshal message"), Data: msg.Value})
-		}
+		err = errors.WrapOnly(err)
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", c.topic).String("group", c.id)
+		}))
 		return err
 	}
 
+	c.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("received new message", "context", nil).With(func(event actorkit.LogEvent) {
+		event.String("topic", c.topic).String("group", c.id).ObjectJSON("message", rec)
+	}))
+
 	action, err := c.receiver(rec)
 	if err != nil {
-		c.log.Emit(actorkit.ERROR, pubsubs.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: msg.Value, Topic: c.topic})
+		err = errors.WrapOnly(err)
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", c.topic).String("group", c.id)
+		}))
 		return c.handleError(err, action, msg)
 	}
 
 	if _, err := c.consumer.StoreOffsets([]kafka.TopicPartition{msg.TopicPartition}); err != nil {
-		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: errors.Wrap(err, "Failed to set new message offset for topic partition %q", c.topic), Topic: c.topic})
-		}
+		err = errors.WrapOnly(err)
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", c.topic).String("group", c.id)
+		}))
 		return err
 	}
+
+	c.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("consumed new message", "context", nil).With(func(event actorkit.LogEvent) {
+		event.String("topic", c.topic).String("group", c.id).ObjectJSON("message", rec)
+	}))
 
 	return nil
 }
@@ -435,11 +458,11 @@ func (c *Consumer) handleError(err error, action pubsubs.Action, msg *kafka.Mess
 
 func (c *Consumer) rollback(msg *kafka.Message) error {
 	if err := c.consumer.Seek(msg.TopicPartition, 1000*60); err != nil {
-		sem := errors.Wrap(err, "Failed to rollback message")
-		if c.log != nil {
-			c.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: sem, Topic: c.topic})
-		}
-		return sem
+		err = errors.Wrap(err, "Failed to rollback message")
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", c.topic).String("group", c.id)
+		}))
+		return err
 	}
 	return nil
 }
@@ -448,131 +471,191 @@ func (c *Consumer) rollback(msg *kafka.Message) error {
 // Kafka Publisher
 //****************************************************************************
 
-// PublisherFactory defines a factor for creating publishers which send messages for giving
-// kafka brokers.
-type PublisherFactory struct {
-	brokers   []string
-	base      kafka.ConfigMap
-	log       actorkit.Logs
-	marshaler Marshaler
-}
-
-// NewPublisherFactory returns a new instance of the PublisherFactory using the default list of brokers
-// and default ConfigMap (this is optional, if not provided, one will be used). This default config map
-// will be merged with any provided during call to PublisherFactory.Publisher.
-func NewPublisherFactory(brokers []string, base *kafka.ConfigMap, marshaler Marshaler, log actorkit.Logs) *PublisherFactory {
-	if base == nil {
-		base = &kafka.ConfigMap{
-			"debug":                        ",",
-			"queue.buffering.max.messages": 10000000,
-			"queue.buffering.max.kbytes":   2097151,
-			"bootstrap.servers":            strings.Join(brokers, ","),
-		}
-	}
-
-	return &PublisherFactory{
-		log:       log,
-		base:      *base,
-		brokers:   brokers,
-		marshaler: marshaler,
-	}
-}
-
-// NewPublisher returns a new instance of a Publisher for a giving topic.
-func (p *PublisherFactory) NewPublisher(topic string, userconf kafka.ConfigMap) (*Publisher, error) {
-	newConfig := kafka.ConfigMap{}
-
-	if err := mergeConfluentConfigs(&newConfig, p.base); err != nil {
-		return nil, err
-	}
-
-	if err := mergeConfluentConfigs(&newConfig, userconf); err != nil {
-		return nil, err
-	}
-
-	newConfig["bootstrap.servers"] = strings.Join(p.brokers, ",")
-
-	return NewPublisher(topic, &newConfig, p.log, p.marshaler)
-}
-
 // Publisher implements a customized wrapper around the kafka Publisher.
+// Delivery actorkit envelopes as messages to designated topics.
+//
+// The publisher is created to run with the time-life of it's context, once
+// the passed in parent context expires, closes or get's cancelled. It
+// will also self close.
 type Publisher struct {
-	topic     string
-	marshaler Marshaler
-	once      sync.Once
-	config    *kafka.ConfigMap
-	producer  *kafka.Producer
-	log       actorkit.Logs
+	topic       string
+	config      *Config
+	log         actorkit.Logs
+	waiter      sync.WaitGroup
+	context     context.Context
+	canceler    func()
+	kafkaConfig *kafka.ConfigMap
+	producer    *kafka.Producer
 }
 
 // NewPublisher returns a new instance of Publisher.
-func NewPublisher(topic string, config *kafka.ConfigMap, log actorkit.Logs, marshaler Marshaler) (*Publisher, error) {
+func NewPublisher(ctx context.Context, config *Config, kafkaConfig kafka.ConfigMap, topic string) (*Publisher, error) {
 	var kap Publisher
 	kap.topic = topic
 	kap.config = config
+	kap.log = config.Log
+	kap.kafkaConfig = &kafkaConfig
 
-	producer, err := kafka.NewProducer(kap.config)
+	rctx, can := context.WithCancel(ctx)
+	kap.context = rctx
+	kap.canceler = can
+
+	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Creating new publisher", "context", nil).
+		String("topic", topic).ObjectJSON("config", kafkaConfig))
+
+	producer, err := kafka.NewProducer(kap.kafkaConfig)
 	if err != nil {
+		err = errors.Wrap(err, "Failed to create new Producer")
+		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", topic).ObjectJSON("config", kap.kafkaConfig)
+		}))
 		return nil, err
 	}
 
-	kap.log = log
+	kap.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Created producer for topic", "context", nil).With(func(event actorkit.LogEvent) {
+		event.String("topic", topic).String("addr", producer.String()).ObjectJSON("config", kap.kafkaConfig)
+	}))
+
 	kap.producer = producer
-	kap.marshaler = marshaler
+
+	// block until the context get's closed.
+	kap.waiter.Add(1)
+	go kap.blockUntil()
+
 	return &kap, nil
 }
 
 // Close attempts to close giving underline producer.
 func (ka *Publisher) Close() error {
-	ka.once.Do(func() {
-		ka.producer.Close()
-	})
+	ka.canceler()
 	return nil
+}
+
+// Wait blocks till the producer get's closed.
+func (ka *Publisher) Wait() {
+	ka.waiter.Wait()
 }
 
 // Publish sends giving message envelope  to given topic.
 func (ka *Publisher) Publish(msg actorkit.Envelope) error {
-	encoded, err := ka.marshaler.Marshal(pubsubs.Message{Topic: ka.topic, Envelope: msg})
+	encoded, err := ka.config.Marshaler.Marshal(pubsubs.Message{Topic: ka.topic, Envelope: msg})
 	if err != nil {
-		em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
-		if ka.log != nil {
-			ka.log.Emit(actorkit.ERROR, pubsubs.MarshalingError{Err: em, Data: msg})
-		}
+		err = errors.Wrap(err, "Failed to marshal incoming message")
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", ka.topic).ObjectJSON("message", msg)
+		}))
 		return err
 	}
 
+	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("publishing new message", "context", nil).With(func(event actorkit.LogEvent) {
+		event.String("topic", ka.topic).ObjectJSON("message", encoded)
+	}))
+
 	res := make(chan kafka.Event)
 	if err := ka.producer.Produce(&encoded, res); err != nil {
-		em := errors.Wrap(err, "failed to send mesage to producer")
-		if ka.log != nil {
-			ka.log.Emit(actorkit.ERROR, pubsubs.PublishError{Err: em, Data: encoded, Topic: ka.topic})
-		}
-		return em
+		err = errors.Wrap(err, "failed to send message to producer")
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", ka.topic).ObjectJSON("message", msg)
+		}))
+		return err
 	}
 
-	event := <-res
+	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("reading event message", "context", nil).With(func(event actorkit.LogEvent) {
+		event.String("topic", ka.topic).ObjectJSON("message", encoded)
+	}))
+
+	var event kafka.Event
+
+	select {
+	case event = <-res:
+		ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("event message received", "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", ka.topic).ObjectJSON("message", encoded).ObjectJSON("event", event)
+		}))
+	case <-time.After(ka.config.MessageDeliveryTimeout):
+		err := errors.New("timeout: failed to receive response on event channel")
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", ka.topic).ObjectJSON("message", msg)
+		}))
+		return err
+	}
+
 	kmessage, ok := event.(*kafka.Message)
 	if ok {
-		em := errors.New("failed to receive *Kafka.Message as event response")
-		if ka.log != nil {
-			ka.log.Emit(actorkit.ERROR, pubsubs.PublishError{Err: em, Data: encoded, Topic: ka.topic})
-		}
-		return em
+		err = errors.New("failed to receive *Kafka.Message as event response")
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", ka.topic).ObjectJSON("message", msg)
+		}))
+		return err
 	}
 
 	if kmessage.TopicPartition.Error != nil {
-		em := errors.Wrap(kmessage.TopicPartition.Error, "failed to deliver message to kafka topic")
-		if ka.log != nil {
-			ka.log.Emit(actorkit.ERROR, pubsubs.PublishError{Err: em, Data: encoded, Topic: ka.topic})
-		}
-		return em
+		err = errors.Wrap(kmessage.TopicPartition.Error, "failed to deliver message to kafka topic")
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			event.String("topic", ka.topic).ObjectJSON("message", msg)
+		}))
+		return err
 	}
 
+	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event actorkit.LogEvent) {
+		event.String("topic", ka.topic).ObjectJSON("message", encoded)
+	}))
 	return nil
 }
 
-func mergeConfluentConfigs(baseConfig *kafka.ConfigMap, valuesToSet kafka.ConfigMap) error {
-	for key, value := range valuesToSet {
+func (ka *Publisher) blockUntil() {
+	defer ka.waiter.Done()
+	<-ka.context.Done()
+	ka.producer.Close()
+}
+
+//****************************************************************************
+// internal functions
+//****************************************************************************
+
+func generateConsumerConfig(id string, config *Config) (kafka.ConfigMap, error) {
+	kconfig := kafka.ConfigMap{
+		"debug":                ",",
+		"session.timeout.ms":   6000,
+		"auto.offset.reset":    config.AutoOffsetReset,
+		"bootstrap.servers":    strings.Join(config.Brokers, ","),
+		"default.topic.config": kafka.ConfigMap{"auto.offset.reset": config.AutoOffsetReset},
+	}
+
+	if !config.NoConsumerGroup {
+		kconfig.SetKey("group.id", id)
+		kconfig.SetKey("enable.auto.commit", true)
+
+		// to achieve at-least-once delivery we store offsets after processing of the message
+		kconfig.SetKey("enable.auto.offset.store", false)
+	} else {
+		// this group will be not committed, setting just for api requirements
+		kconfig.SetKey("group.id", "no_group_"+xid.New().String())
+		kconfig.SetKey("enable.auto.commit", false)
+	}
+
+	if err := mergeConfluentConfigs(&kconfig, &config.ConsumerOverrides); err != nil {
+		return kconfig, err
+	}
+
+	return kconfig, nil
+}
+
+func generateProducerConfig(config *Config) (kafka.ConfigMap, error) {
+	konfig := kafka.ConfigMap{
+		"debug":                        ",",
+		"queue.buffering.max.messages": 10000000,
+		"queue.buffering.max.kbytes":   2097151,
+		"bootstrap.servers":            strings.Join(config.Brokers, ","),
+	}
+
+	if err := mergeConfluentConfigs(&konfig, &config.ProducerOverrides); err != nil {
+		return konfig, err
+	}
+	return konfig, nil
+}
+
+func mergeConfluentConfigs(baseConfig *kafka.ConfigMap, valuesToSet *kafka.ConfigMap) error {
+	for key, value := range *valuesToSet {
 		if err := baseConfig.SetKey(key, value); err != nil {
 			return errors.Wrap(err, "cannot overwrite config value for %s", key)
 		}

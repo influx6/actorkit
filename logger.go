@@ -117,8 +117,9 @@ var (
 // LogEvent exposes set methods for generating a safe low-allocation json log
 // based on a set of messages and key-value pairs.
 type LogEvent interface {
-	Write() LogMessage
+	LogMessage
 
+	With(func(LogEvent)) LogEvent
 	Int(string, int) LogEvent
 	Bool(string, bool) LogEvent
 	Int64(string, int64) LogEvent
@@ -163,7 +164,7 @@ func LogMsgWithContext(message string, ctx string, hook func(LogEvent)) LogEvent
 		newEvent.addString(ctx, s)
 		newEvent.endEntry()
 
-		return newEvent.Write().Message()
+		return newEvent.Message()
 	}
 	return event
 }
@@ -200,6 +201,12 @@ func (l *logEventImpl) Bytes(name string, value []byte) LogEvent {
 func (l *logEventImpl) QBytes(name string, value []byte) LogEvent {
 	l.addQuotedBytes(name, value)
 	l.endEntry()
+	return l
+}
+
+// With applies giving function to the log event object.
+func (l *logEventImpl) With(handler func(event LogEvent)) LogEvent {
+	handler(l)
 	return l
 }
 
@@ -263,8 +270,8 @@ func (l *logEventImpl) Float64(name string, value float64) LogEvent {
 	return l
 }
 
-// Write delivers giving log event as a generated message.
-func (l *logEventImpl) Write() LogMessage {
+// Message returns the generated JSOn of giving logEvent.
+func (l *logEventImpl) Message() string {
 	if l.released() {
 		panic("Re-using released logEventImpl")
 	}
@@ -282,7 +289,12 @@ func (l *logEventImpl) Write() LogMessage {
 
 	l.resetContent()
 	l.release()
-	return Message(content)
+	return content
+}
+
+// Write delivers giving log event as a generated message.
+func (l *logEventImpl) Write() LogMessage {
+	return Message(l.Message())
 }
 
 // Buf returns the current content of the logEventImpl.

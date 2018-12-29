@@ -12,22 +12,22 @@ build: gomod build-golang-test build-golang-test build-redis-test build-kafka-te
 tests: gomod run-golang-test run-golang-test run-kafka-test run-nats-test run-nats-streaming-test run-redis-test
 
 build-golang-test:
-	docker build -t actorkit-test -f ./scripts/Dockerfile-actorkit-tests $(PROJECT_DIR)
+	docker build -t actorkit-test -f ./tools/scripts/Dockerfile-actorkit-tests $(PROJECT_DIR)
 
 build-google-test:
-	docker build -t actorkit-google-test -f ./scripts/Dockerfile-google-pubsub-tests $(PROJECT_DIR)
+	docker build -t actorkit-google-test -f ./tools/scripts/Dockerfile-google-pubsub-tests $(PROJECT_DIR)
 	
 build-redis-test:
-	docker build -t actorkit-redis-test -f ./scripts/Dockerfile-redis-pubsub-tests $(PROJECT_DIR)
+	docker build -t actorkit-redis-test -f ./tools/scripts/Dockerfile-redis-pubsub-tests $(PROJECT_DIR)
 	
 build-kafka-test:
-	docker build -t actorkit-kafka-test -f ./scripts/Dockerfile-kafka-pubsub-tests $(PROJECT_DIR)
+	docker build -t actorkit-kafka-test -f ./tools/scripts/Dockerfile-kafka-pubsub-tests $(PROJECT_DIR)
 	
 build-nats-test:
-	docker build -t actorkit-nats-test -f ./scripts/Dockerfile-nats-pubsub-tests $(PROJECT_DIR)
+	docker build -t actorkit-nats-test -f ./tools/scripts/Dockerfile-nats-pubsub-tests $(PROJECT_DIR)
 	
 build-nats-streaming-test:
-	docker build -t actorkit-nats-streaming-test -f ./scripts/Dockerfile-nats-streaming-pubsub-tests $(PROJECT_DIR)
+	docker build -t actorkit-nats-streaming-test -f ./tools/scripts/Dockerfile-nats-streaming-pubsub-tests $(PROJECT_DIR)
 
 run-golang-test:
 	docker run -it --rm  actorkit-test
