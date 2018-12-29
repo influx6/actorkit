@@ -323,7 +323,7 @@ func NewConsumer(ctx context.Context, config *Config, id string, topic string, r
 	rctx, can := context.WithCancel(ctx)
 
 	return &Consumer{
-		id:          id,
+		id:          groupID,
 		config:      config,
 		topic:       topic,
 		receiver:    receiver,
@@ -617,7 +617,6 @@ func generateConsumerConfig(id string, config *Config) (kafka.ConfigMap, error) 
 		"debug":                ",",
 		"session.timeout.ms":   6000,
 		"auto.offset.reset":    config.AutoOffsetReset,
-		"bootstrap.servers":    strings.Join(config.Brokers, ","),
 		"default.topic.config": kafka.ConfigMap{"auto.offset.reset": config.AutoOffsetReset},
 	}
 
@@ -637,6 +636,8 @@ func generateConsumerConfig(id string, config *Config) (kafka.ConfigMap, error) 
 		return kconfig, err
 	}
 
+	kconfig["bootstrap.servers"] = strings.Join(config.Brokers, ",")
+
 	return kconfig, nil
 }
 
@@ -645,12 +646,14 @@ func generateProducerConfig(config *Config) (kafka.ConfigMap, error) {
 		"debug":                        ",",
 		"queue.buffering.max.messages": 10000000,
 		"queue.buffering.max.kbytes":   2097151,
-		"bootstrap.servers":            strings.Join(config.Brokers, ","),
 	}
 
 	if err := mergeConfluentConfigs(&konfig, &config.ProducerOverrides); err != nil {
 		return konfig, err
 	}
+
+	konfig["bootstrap.servers"] = strings.Join(config.Brokers, ",")
+
 	return konfig, nil
 }
 
