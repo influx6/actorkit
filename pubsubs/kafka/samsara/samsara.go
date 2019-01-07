@@ -527,12 +527,22 @@ func (ka *AsyncPublisher) Publish(msg actorkit.Envelope) error {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
 	}))
 
+	errChan := ka.producer.Errors()
 	sendingChan := ka.producer.Input()
+	successChan := ka.producer.Successes()
+
 	select {
 	case sendingChan <- &encoded:
-		ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event actorkit.LogEvent) {
-			event.String("topic", ka.topic).ObjectJSON("message", encoded)
-		}))
+		select {
+		case <-successChan:
+			ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event actorkit.LogEvent) {
+				event.String("topic", ka.topic).ObjectJSON("message", encoded)
+			}))
+		case err := <-errChan:
+			ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+				event.String("topic", ka.topic).ObjectJSON("message", msg)
+			}))
+		}
 	case <-time.After(ka.config.MessageDeliveryTimeout):
 		err := errors.New("timeout: failed to send message")
 		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
@@ -638,10 +648,6 @@ func (ka *SyncPublisher) Publish(msg actorkit.Envelope) error {
 		}))
 		return err
 	}
-
-	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("reading event message", "context", nil).With(func(event actorkit.LogEvent) {
-		event.String("topic", ka.topic).ObjectJSON("message", encoded)
-	}))
 
 	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event actorkit.LogEvent) {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
