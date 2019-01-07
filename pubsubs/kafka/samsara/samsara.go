@@ -12,7 +12,7 @@ import (
 
 	"github.com/gokit/xid"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/Shopify/sarama"
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/errors"
 )
@@ -29,52 +29,55 @@ var (
 // Marshaler defines a interface exposing method to transform a pubsubs.Message
 // into a kafka message.
 type Marshaler interface {
-	Marshal(message pubsubs.Message) (kafka.Message, error)
+	Marshal(message pubsubs.Message) (sarama.ProducerMessage, error)
 }
 
 // Unmarshaler defines an interface who's implementer exposes said method to
 // transform a kafka message into a pubsubs Message.
 type Unmarshaler interface {
-	Unmarshal(*kafka.Message) (pubsubs.Message, error)
+	Unmarshal(*sarama.ConsumerMessage) (pubsubs.Message, error)
 }
+
+// Partitioner takes giving message returning appropriate
+// partition name to be used for kafka message.
+type Partitioner func(pubsubs.Message) string
 
 // MarshalerWrapper implements the Marshaler interface.
 type MarshalerWrapper struct {
-	Envelope pubsubs.Marshaler
-
-	// Partitioner takes giving message returning appropriate
-	// partition name to be used for kafka message.
-	Partitioner func(pubsubs.Message) string
+	Envelope    pubsubs.Marshaler
+	Partitioner Partitioner
 }
 
 // Marshal implements the Marshaler interface.
-func (kc MarshalerWrapper) Marshal(message pubsubs.Message) (kafka.Message, error) {
+func (kc MarshalerWrapper) Marshal(message pubsubs.Message) (sarama.ProducerMessage, error) {
+	var newMessage sarama.ProducerMessage
+
 	envelopeBytes, err := kc.Envelope.Marshal(message.Envelope)
 	if err != nil {
-		return kafka.Message{}, err
+		return newMessage, err
 	}
 
-	attrs := make([]kafka.Header, 0, len(message.Envelope.Header)+1)
-	attrs = append(attrs, kafka.Header{Key: idParam, Value: message.Envelope.Ref.Bytes()})
+	attrs := make([]sarama.RecordHeader, 0, len(message.Envelope.Header)+1)
+	attrs = append(attrs, sarama.RecordHeader{
+		Key:   []byte(idParam),
+		Value: message.Envelope.Ref.Bytes(),
+	})
 
 	for k, v := range message.Envelope.Header {
-		attrs = append(attrs, kafka.Header{Key: k, Value: []byte(v)})
+		attrs = append(attrs, sarama.RecordHeader{
+			Key:   []byte(k),
+			Value: []byte(v),
+		})
 	}
 
-	var key []byte
 	if kc.Partitioner != nil {
-		key = []byte(kc.Partitioner(message))
+		newMessage.Key = sarama.ByteEncoder(kc.Partitioner(message))
 	}
 
-	return kafka.Message{
-		Key:     key,
-		Headers: attrs,
-		Value:   envelopeBytes,
-		TopicPartition: kafka.TopicPartition{
-			Topic:     &message.Topic,
-			Partition: kafka.PartitionAny,
-		},
-	}, nil
+	newMessage.Topic = message.Topic
+	newMessage.Headers = attrs
+	newMessage.Value = sarama.ByteEncoder(envelopeBytes)
+	return newMessage, nil
 }
 
 // UnmarshalerWrapper implements the Unmarshaler interface.
@@ -83,9 +86,9 @@ type UnmarshalerWrapper struct {
 }
 
 // Unmarshal implements the Unmarshaler interface.
-func (kc UnmarshalerWrapper) Unmarshal(message *kafka.Message) (pubsubs.Message, error) {
+func (kc UnmarshalerWrapper) Unmarshal(message *sarama.ConsumerMessage) (pubsubs.Message, error) {
 	var msg pubsubs.Message
-	msg.Topic = *message.TopicPartition.Topic
+	msg.Topic = message.Topic
 
 	var err error
 	if msg.Envelope, err = kc.Envelope.Unmarshal(message.Value); err != nil {
@@ -94,14 +97,15 @@ func (kc UnmarshalerWrapper) Unmarshal(message *kafka.Message) (pubsubs.Message,
 
 	// confirm header id matches envelope id
 	for _, v := range message.Headers {
-		switch v.Key {
+		var tm = string(v.Key)
+		switch tm {
 		case idParam:
 			if string(v.Value) != msg.Envelope.Ref.String() {
 				return msg, errors.New("Kafka message ID does not matched envelope data")
 			}
 		default:
-			if !msg.Envelope.Has(v.Key) {
-				msg.Envelope.Header[v.Key] = string(v.Value)
+			if !msg.Envelope.Has(tm) {
+				msg.Envelope.Header[tm] = string(v.Value)
 			}
 		}
 	}
@@ -159,8 +163,8 @@ type Config struct {
 	Log                    actorkit.Logs
 	PollingTime            time.Duration
 	MessageDeliveryTimeout time.Duration
-	ConsumerOverrides      kafka.ConfigMap
-	ProducerOverrides      kafka.ConfigMap
+	ConsumerOverrides      sarama.Config
+	ProducerOverrides      sarama.Config
 }
 
 func (c *Config) init() {
@@ -222,7 +226,7 @@ func (ka *PublisherConsumerFactory) Close() error {
 }
 
 // NewPublisher returns a new Publisher for a giving topic,
-func (ka *PublisherConsumerFactory) NewPublisher(topic string, userOverrides *kafka.ConfigMap) (*Publisher, error) {
+func (ka *PublisherConsumerFactory) NewPublisher(topic string, userOverrides *sarama.Config) (*Publisher, error) {
 	base, err := generateProducerConfig(&ka.config)
 	if err != nil {
 		return nil, err
@@ -237,7 +241,7 @@ func (ka *PublisherConsumerFactory) NewPublisher(topic string, userOverrides *ka
 	return NewPublisher(ka.rootContext, &ka.config, base, topic)
 }
 
-// NewConsumer return a new consumer for a giving topic to be used for kafka.
+// NewConsumer return a new consumer for a giving topic to be used for sarama.
 // The provided id value if not empty will be used as the group.id.
 func (ka *PublisherConsumerFactory) NewConsumer(topic string, id string, receiver pubsubs.Receiver) (*Consumer, error) {
 	consumer, err := NewConsumer(ka.rootContext, &ka.config, id, topic, receiver)
@@ -281,10 +285,10 @@ type Consumer struct {
 	id          string
 	topic       string
 	config      *Config
-	kafkaConfig *kafka.ConfigMap
+	kafkaConfig *sarama.Config
 
 	waiter   sync.WaitGroup
-	consumer *kafka.Consumer
+	consumer *sarama.Consumer
 	receiver pubsubs.Receiver
 
 	log      actorkit.Logs
@@ -308,7 +312,7 @@ func NewConsumer(ctx context.Context, config *Config, id string, topic string, r
 		return nil, err
 	}
 
-	kconsumer, err := kafka.NewConsumer(&kafkaConfig)
+	kconsumer, err := sarama.NewConsumer(&kafkaConfig)
 	if err != nil {
 		err = errors.WrapOnly(err)
 		config.Log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
@@ -382,14 +386,14 @@ func (c *Consumer) run() {
 		default:
 			if event := c.consumer.Poll(ms); event != nil {
 				switch tm := event.(type) {
-				case *kafka.Message:
+				case *sarama.Message:
 					// close consumer if returned error is unacceptable.
 					if err := c.handleIncomingMessage(tm); err != nil {
 						c.close()
 						return
 					}
-				case kafka.PartitionEOF:
-				case kafka.OffsetsCommitted:
+				case sarama.PartitionEOF:
+				case sarama.OffsetsCommitted:
 				default:
 				}
 			}
@@ -397,7 +401,7 @@ func (c *Consumer) run() {
 	}
 }
 
-func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
+func (c *Consumer) handleIncomingMessage(msg *sarama.Message) error {
 	if msg.TopicPartition.Error != nil {
 		err := errors.WrapOnly(msg.TopicPartition.Error)
 		return c.handleError(err, pubsubs.NACK, msg)
@@ -425,7 +429,7 @@ func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 		return c.handleError(err, action, msg)
 	}
 
-	if _, err := c.consumer.StoreOffsets([]kafka.TopicPartition{msg.TopicPartition}); err != nil {
+	if _, err := c.consumer.StoreOffsets([]sarama.TopicPartition{msg.TopicPartition}); err != nil {
 		err = errors.WrapOnly(err)
 		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
 			event.String("topic", c.topic).String("group", c.id)
@@ -440,7 +444,7 @@ func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 	return nil
 }
 
-func (c *Consumer) handleError(err error, action pubsubs.Action, msg *kafka.Message) error {
+func (c *Consumer) handleError(err error, action pubsubs.Action, msg *sarama.Message) error {
 	switch action {
 	case pubsubs.ACK:
 		return nil
@@ -453,7 +457,7 @@ func (c *Consumer) handleError(err error, action pubsubs.Action, msg *kafka.Mess
 	}
 }
 
-func (c *Consumer) rollback(msg *kafka.Message) error {
+func (c *Consumer) rollback(msg *sarama.Message) error {
 	if err := c.consumer.Seek(msg.TopicPartition, 1000*60); err != nil {
 		err = errors.Wrap(err, "Failed to rollback message")
 		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
@@ -481,12 +485,12 @@ type Publisher struct {
 	waiter      sync.WaitGroup
 	context     context.Context
 	canceler    func()
-	kafkaConfig *kafka.ConfigMap
-	producer    *kafka.Producer
+	kafkaConfig *sarama.ConfigMap
+	producer    *sarama.Producer
 }
 
 // NewPublisher returns a new instance of Publisher.
-func NewPublisher(ctx context.Context, config *Config, kafkaConfig kafka.ConfigMap, topic string) (*Publisher, error) {
+func NewPublisher(ctx context.Context, config *Config, kafkaConfig sarama.ConfigMap, topic string) (*Publisher, error) {
 	var kap Publisher
 	kap.topic = topic
 	kap.config = config
@@ -500,7 +504,7 @@ func NewPublisher(ctx context.Context, config *Config, kafkaConfig kafka.ConfigM
 	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Creating new publisher", "context", nil).
 		String("topic", topic).ObjectJSON("config", kafkaConfig))
 
-	producer, err := kafka.NewProducer(kap.kafkaConfig)
+	producer, err := sarama.NewProducer(kap.kafkaConfig)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to create new Producer")
 		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
@@ -548,7 +552,7 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
 	}))
 
-	res := make(chan kafka.Event)
+	res := make(chan sarama.Event)
 	if err := ka.producer.Produce(&encoded, res); err != nil {
 		err = errors.Wrap(err, "failed to send message to producer")
 		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
@@ -561,7 +565,7 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
 	}))
 
-	var event kafka.Event
+	var event sarama.Event
 
 	select {
 	case event = <-res:
@@ -576,7 +580,7 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 		return err
 	}
 
-	kmessage, ok := event.(*kafka.Message)
+	kmessage, ok := event.(*sarama.Message)
 	if ok {
 		err = errors.New("failed to receive *Kafka.Message as event response")
 		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
@@ -609,13 +613,13 @@ func (ka *Publisher) blockUntil() {
 // internal functions
 //****************************************************************************
 
-func generateConsumerConfig(id string, config *Config) (kafka.ConfigMap, error) {
-	kconfig := kafka.ConfigMap{
+func generateConsumerConfig(id string, config *Config) (sarama.ConfigMap, error) {
+	kconfig := sarama.ConfigMap{
 		"debug":                ",",
 		"session.timeout.ms":   6000,
 		"auto.offset.reset":    config.AutoOffsetReset,
 		"bootstrap.servers":    strings.Join(config.Brokers, ","),
-		"default.topic.config": kafka.ConfigMap{"auto.offset.reset": config.AutoOffsetReset},
+		"default.topic.config": sarama.ConfigMap{"auto.offset.reset": config.AutoOffsetReset},
 	}
 
 	if !config.NoConsumerGroup {
@@ -637,8 +641,8 @@ func generateConsumerConfig(id string, config *Config) (kafka.ConfigMap, error) 
 	return kconfig, nil
 }
 
-func generateProducerConfig(config *Config) (kafka.ConfigMap, error) {
-	konfig := kafka.ConfigMap{
+func generateProducerConfig(config *Config) (sarama.ConfigMap, error) {
+	konfig := sarama.ConfigMap{
 		"debug":                        ",",
 		"queue.buffering.max.messages": 10000000,
 		"queue.buffering.max.kbytes":   2097151,
@@ -651,7 +655,7 @@ func generateProducerConfig(config *Config) (kafka.ConfigMap, error) {
 	return konfig, nil
 }
 
-func mergeConfluentConfigs(baseConfig *kafka.ConfigMap, valuesToSet *kafka.ConfigMap) error {
+func mergeConfluentConfigs(baseConfig *sarama.ConfigMap, valuesToSet *sarama.ConfigMap) error {
 	for key, value := range *valuesToSet {
 		if err := baseConfig.SetKey(key, value); err != nil {
 			return errors.Wrap(err, "cannot overwrite config value for %s", key)
