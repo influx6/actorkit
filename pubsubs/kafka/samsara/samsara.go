@@ -1,3 +1,5 @@
+// Package samsara implements a kafka-pubsub provider ontop of the Shopify samara library which provides a performant
+// kafka client and publishing foundation.
 package samsara
 
 import (
@@ -108,54 +110,8 @@ func (kc UnmarshalerWrapper) Unmarshal(message *sarama.ConsumerMessage) (pubsubs
 	return msg, nil
 }
 
-//*****************************************************************************
-// PubSubFactory
-//*****************************************************************************
-
-// PublisherHandler defines a function type which takes a giving PublisherConsumerFactory
-// and a given topic, returning a new publisher with all related underline specific
-// details added and instantiated.
-type PublisherHandler func(*PublisherConsumerFactory, string) (pubsubs.Publisher, error)
-
-// SubscriberHandler defines a function type which takes a giving SubscriptionFactory
-// and a given topic, returning a new subscription with all related underline specific
-// details added and instantiated.
-type SubscriberHandler func(factory *PublisherConsumerFactory, topic string, id string, r pubsubs.Receiver) (pubsubs.Subscription, error)
-
-// QueueGroupSubscriberHandler defines a function type which returns a subscription for a giving topic and group using a
-// provided id as durable name for subscription.
-type QueueGroupSubscriberHandler func(factory *PublisherConsumerFactory, topic string, group string, id string, r pubsubs.Receiver) (pubsubs.Subscription, error)
-
-// PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
-// a factory for generating publishers and subscribers.
-type PubSubFactoryGenerator func(*PublisherConsumerFactory) pubsubs.PubSubFactory
-
-// PubSubFactory provides a partial function for the generation of a pubsub.PubSubFactory
-// using the PubSubFactorGenerator function.
-func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler, groupSubscribers QueueGroupSubscriberHandler) PubSubFactoryGenerator {
-	return func(factory *PublisherConsumerFactory) pubsubs.PubSubFactory {
-		var pbs pubsubs.PubSubFactoryImpl
-		if publishers != nil {
-			pbs.Publishers = func(topic string) (pubsubs.Publisher, error) {
-				return publishers(factory, topic)
-			}
-		}
-		if subscribers != nil {
-			pbs.Subscribers = func(topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
-				return subscribers(factory, topic, id, receiver)
-			}
-		}
-		if groupSubscribers != nil {
-			pbs.QueueGroupSubscribers = func(topic string, group string, id string, r pubsubs.Receiver) (pubsubs.Subscription, error) {
-				return groupSubscribers(factory, topic, group, id, r)
-			}
-		}
-		return &pbs
-	}
-}
-
 //****************************************************************************
-// Kafka ConsumerFactor
+// Kafka Config
 //****************************************************************************
 
 // Config defines configuration fields for use with a PublisherConsumerFactory.
@@ -217,128 +173,50 @@ func (c *Config) init() error {
 	return nil
 }
 
-// PublisherConsumerFactory implements a central factory for creating publishers or consumers for
-// topics for a underline kafka infrastructure.
-type PublisherConsumerFactory struct {
-	config Config
+//*****************************************************************************
+// PubSubFactory
+//*****************************************************************************
 
-	waiter       sync.WaitGroup
-	rootContext  context.Context
-	rootCanceler func()
+// PublisherHandler defines a function type which takes a giving PublisherConsumerFactory
+// and a given topic, returning a new publisher with all related underline specific
+// details added and instantiated.
+type PublisherHandler func(*PublisherConsumerFactory, string) (pubsubs.Publisher, error)
 
-	cl        sync.RWMutex
-	consumers []consumerContract
-}
+// SubscriberHandler defines a function type which takes a giving SubscriptionFactory
+// and a given topic, returning a new subscription with all related underline specific
+// details added and instantiated.
+type SubscriberHandler func(factory *PublisherConsumerFactory, topic string, id string, r pubsubs.Receiver) (pubsubs.Subscription, error)
 
-type consumerContract struct {
-	retries  int
-	consumer *SaramaConsumingClient
-}
+// QueueGroupSubscriberHandler defines a function type which returns a subscription for a giving topic and group using a
+// provided id as durable name for subscription.
+type QueueGroupSubscriberHandler func(factory *PublisherConsumerFactory, topic string, group string, id string, r pubsubs.Receiver) (pubsubs.Subscription, error)
 
-// Consume implements retries logic for a giving SaramaConsumingClient.
-func (cc *consumerContract) Consume(errs chan error) {
-	// we must first attempt a initial connection and return on error.
-	if err := cc.consumer.Consume(); err != nil {
-		errs <- err
-		return
-	}
+// PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
+// a factory for generating publishers and subscribers.
+type PubSubFactoryGenerator func(*PublisherConsumerFactory) pubsubs.PubSubFactory
 
-	errs <- nil
-
-	for {
-		cc.consumer.Wait()
-
-		if cc.retries > 0 {
-			cc.retries++
-			time.Sleep(cc.consumer.config.ReconnectRetrySleep * time.Duration(cc.retries))
+// PubSubFactory provides a partial function for the generation of a pubsub.PubSubFactory
+// using the PubSubFactorGenerator function.
+func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler, groupSubscribers QueueGroupSubscriberHandler) PubSubFactoryGenerator {
+	return func(factory *PublisherConsumerFactory) pubsubs.PubSubFactory {
+		var pbs pubsubs.PubSubFactoryImpl
+		if publishers != nil {
+			pbs.Publishers = func(topic string) (pubsubs.Publisher, error) {
+				return publishers(factory, topic)
+			}
 		}
-
-		select {
-		case <-cc.consumer.ctx.Done():
-			return
-		default:
+		if subscribers != nil {
+			pbs.Subscribers = func(topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
+				return subscribers(factory, topic, id, receiver)
+			}
 		}
-
-		if err := cc.consumer.Consume(); err != nil {
-			continue
+		if groupSubscribers != nil {
+			pbs.QueueGroupSubscribers = func(topic string, group string, id string, r pubsubs.Receiver) (pubsubs.Subscription, error) {
+				return groupSubscribers(factory, topic, group, id, r)
+			}
 		}
-
-		cc.retries = 0
+		return &pbs
 	}
-}
-
-// NewPublisherConsumerFactory returns a new instance of a PublisherConsumerFactory.
-func NewPublisherConsumerFactory(ctx context.Context, config Config) (*PublisherConsumerFactory, error) {
-	if err := config.init(); err != nil {
-		return nil, err
-	}
-	rctx, cano := context.WithCancel(ctx)
-	return &PublisherConsumerFactory{
-		config:       config,
-		rootContext:  rctx,
-		rootCanceler: cano,
-	}, nil
-}
-
-// Wait blocks till all consumers generated by giving factory are closed.
-func (ka *PublisherConsumerFactory) Wait() {
-	ka.waiter.Wait()
-}
-
-// Close closes all Consumers generated by consumer factory.
-func (ka *PublisherConsumerFactory) Close() error {
-	ka.rootCanceler()
-	ka.waiter.Wait()
-	return nil
-}
-
-// NewPublisher returns a new Publisher for a giving topic.
-func (ka *PublisherConsumerFactory) NewPublisher(topic string, userOverrides *sarama.Config) (*SyncPublisher, error) {
-	if userOverrides == nil {
-		userOverrides = generateSyncProducerConfig(&ka.config)
-	}
-	return NewSyncPublisher(ka.rootContext, &ka.config, userOverrides, topic)
-}
-
-// NewAsyncPublisher returns a new Publisher for a giving topic using an async publisher.
-func (ka *PublisherConsumerFactory) NewAsyncPublisher(topic string, userOverrides *sarama.Config) (*AsyncPublisher, error) {
-	if userOverrides == nil {
-		userOverrides = generateSyncProducerConfig(&ka.config)
-	}
-	return NewAsyncPublisher(ka.rootContext, &ka.config, userOverrides, topic)
-}
-
-// NewConsumer return a new consumer for a giving topic to be used for sarama.
-// The provided id value if not empty will be used as the group.id.
-func (ka *PublisherConsumerFactory) NewConsumer(topic string, id string, receiver pubsubs.Receiver) (*SaramaConsumingClient, error) {
-	var kafkaConfig *sarama.Config
-	if ka.config.ConsumerOverrides != nil {
-		kafkaConfig = ka.config.ConsumerOverrides
-	}
-
-	consumer, err := NewSaramaConsumingClient(ka.rootContext, &ka.config, kafkaConfig, topic, "", id, receiver)
-	if err != nil {
-		return nil, err
-	}
-
-	var errRes = make(chan error, 1)
-	var co = consumerContract{consumer: consumer}
-
-	ka.waiter.Add(1)
-	go func() {
-		defer ka.waiter.Done()
-		co.Consume(errRes)
-	}()
-
-	if err = <-errRes; err != nil {
-		return nil, err
-	}
-
-	ka.cl.Lock()
-	ka.consumers = append(ka.consumers, co)
-	ka.cl.Unlock()
-
-	return consumer, nil
 }
 
 //****************************************************************************
@@ -909,6 +787,143 @@ func (ka *SyncPublisher) blockUntil() {
 	if err := ka.producer.Close(); err != nil {
 		err = errors.Wrap(err, "Failed to close kafka producer")
 		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil))
+	}
+}
+
+//****************************************************************************
+// Kafka PublisherConsumerFactory
+//****************************************************************************
+
+// PublisherConsumerFactory implements a central factory for creating publishers or consumers for
+// topics for a underline kafka infrastructure.
+type PublisherConsumerFactory struct {
+	config Config
+
+	waiter       sync.WaitGroup
+	rootContext  context.Context
+	rootCanceler func()
+
+	cl        sync.RWMutex
+	consumers []consumerContract
+}
+
+// NewPublisherConsumerFactory returns a new instance of a PublisherConsumerFactory.
+func NewPublisherConsumerFactory(ctx context.Context, config Config) (*PublisherConsumerFactory, error) {
+	if err := config.init(); err != nil {
+		return nil, err
+	}
+	rctx, cano := context.WithCancel(ctx)
+	return &PublisherConsumerFactory{
+		config:       config,
+		rootContext:  rctx,
+		rootCanceler: cano,
+	}, nil
+}
+
+// Wait blocks till all consumers generated by giving factory are closed.
+func (ka *PublisherConsumerFactory) Wait() {
+	ka.waiter.Wait()
+}
+
+// Close closes all Consumers generated by consumer factory.
+func (ka *PublisherConsumerFactory) Close() error {
+	ka.rootCanceler()
+	ka.waiter.Wait()
+	return nil
+}
+
+// NewPublisher returns a new Publisher for a giving topic.
+func (ka *PublisherConsumerFactory) NewPublisher(topic string, userOverrides *sarama.Config) (*SyncPublisher, error) {
+	if userOverrides == nil {
+		userOverrides = generateSyncProducerConfig(&ka.config)
+	}
+	return NewSyncPublisher(ka.rootContext, &ka.config, userOverrides, topic)
+}
+
+// NewAsyncPublisher returns a new Publisher for a giving topic using an async publisher.
+func (ka *PublisherConsumerFactory) NewAsyncPublisher(topic string, userOverrides *sarama.Config) (*AsyncPublisher, error) {
+	if userOverrides == nil {
+		userOverrides = generateAsyncProducerConfig(&ka.config)
+	}
+	return NewAsyncPublisher(ka.rootContext, &ka.config, userOverrides, topic)
+}
+
+// NewConsumer return a new consumer for a giving topic to be used for sarama.
+// The provided id value if not empty will be used as the group.id.
+func (ka *PublisherConsumerFactory) NewConsumer(topic string, id string, receiver pubsubs.Receiver, userOverrides *sarama.Config) (*SaramaConsumingClient, error) {
+	return ka.NewGroupConsumer(topic, "", id, receiver, userOverrides)
+}
+
+// NewGroupConsumer return a new consumer for a giving topic to be used for sarama under a giving consuming group name using
+// provided id and overrides configuration if provided.
+func (ka *PublisherConsumerFactory) NewGroupConsumer(topic string, group string, id string, receiver pubsubs.Receiver, userOverrides *sarama.Config) (*SaramaConsumingClient, error) {
+	if ka.config.ConsumerOverrides != nil && userOverrides == nil {
+		userOverrides = ka.config.ConsumerOverrides
+	}
+
+	if userOverrides == nil {
+		userOverrides = generateConsumerConfig(id, &ka.config)
+	}
+
+	consumer, err := NewSaramaConsumingClient(ka.rootContext, &ka.config, userOverrides, topic, group, id, receiver)
+	if err != nil {
+		return nil, err
+	}
+
+	var errRes = make(chan error, 1)
+	var co = consumerContract{consumer: consumer}
+
+	ka.waiter.Add(1)
+	go func() {
+		defer ka.waiter.Done()
+		co.Consume(errRes)
+	}()
+
+	if err = <-errRes; err != nil {
+		return nil, err
+	}
+
+	ka.cl.Lock()
+	ka.consumers = append(ka.consumers, co)
+	ka.cl.Unlock()
+
+	return consumer, nil
+}
+
+type consumerContract struct {
+	retries  int
+	consumer *SaramaConsumingClient
+}
+
+// Consume implements retries logic for a giving SaramaConsumingClient.
+func (cc *consumerContract) Consume(errs chan error) {
+	// we must first attempt a initial connection and return on error.
+	if err := cc.consumer.Consume(); err != nil {
+		errs <- err
+		return
+	}
+
+	errs <- nil
+
+	for {
+		cc.consumer.Wait()
+
+		if cc.retries > 0 {
+			cc.retries++
+			time.Sleep(cc.consumer.config.ReconnectRetrySleep * time.Duration(cc.retries))
+		}
+
+		select {
+		case <-cc.consumer.ctx.Done():
+			return
+		default:
+		}
+
+		if err := cc.consumer.Consume(); err != nil {
+			continue
+		}
+
+		cc.retries = 0
 	}
 }
 
