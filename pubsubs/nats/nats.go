@@ -48,14 +48,18 @@ type PubSubFactoryGenerator func(factory *PublisherSubscriberFactory) pubsubs.Pu
 // using the PubSubFactorGenerator function.
 func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
 	return func(factory *PublisherSubscriberFactory) pubsubs.PubSubFactory {
-		return &pubsubs.PubSubFactoryImpl{
-			Publishers: func(topic string) (pubsubs.Publisher, error) {
+		var pbs pubsubs.PubSubFactoryImpl
+		if publishers != nil {
+			pbs.Publishers = func(topic string) (pubsubs.Publisher, error) {
 				return publishers(factory, topic)
-			},
-			Subscribers: func(topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
-				return subscribers(factory, topic, id, receiver)
-			},
+			}
 		}
+		if subscribers != nil {
+			pbs.Subscribers = func(topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
+				return subscribers(factory, topic, id, receiver)
+			}
+		}
+		return &pbs
 	}
 }
 
@@ -100,9 +104,8 @@ type PublisherSubscriberFactory struct {
 	pl   sync.RWMutex
 	pubs map[string]*Publisher
 
-	sl     sync.RWMutex
-	subs   map[string]*Subscription
-	topics map[string]int
+	sl   sync.RWMutex
+	subs map[string]*Subscription
 }
 
 // NewPublisherSubscriberFactory returns a new instance of publisher factory.
@@ -112,7 +115,6 @@ func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*Publish
 	var pb PublisherSubscriberFactory
 	pb.id = xid.New()
 	pb.config = config
-	pb.topics = map[string]int{}
 	pb.pubs = map[string]*Publisher{}
 	pb.subs = map[string]*Subscription{}
 	pb.ctx, pb.canceler = context.WithCancel(ctx)
@@ -145,35 +147,23 @@ func (pf *PublisherSubscriberFactory) Close() error {
 }
 
 // Subscribe returns a new subscription for a giving topic which will be used for processing
-// messages for giving topic from the NATS streaming provider. If the topic already has a subscriber then
-// a subscriber with a ever increasing _id is added and returned if a user defined group id is not set,
-// the subscriber receives the giving topic_id as durable name for it's subscription if supported.
-//
-// The id argument is optional and can be left empty.
+// messages for giving topic from the NATS streaming provider. If the id already exists then
+// the subscriber is returned.
 func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver, direction func(error) Directive) (*Subscription, error) {
-	if sub, ok := pf.getSubscription(topic); ok {
+	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "nats", pf.config.ProjectID, topic, id)
+	if sub, ok := pf.getSubscription(subid); ok {
 		return sub, nil
-	}
-
-	pf.sl.RLock()
-	last := pf.topics[topic]
-	pf.sl.RUnlock()
-
-	last++
-
-	if id == "" {
-		id = fmt.Sprintf("%d", last)
 	}
 
 	var sub Subscription
 	sub.topic = topic
+	sub.id = subid
 	sub.client = pf.c
 	sub.log = pf.config.Log
 	sub.receiver = receiver
 	sub.direction = direction
 	sub.m = pf.config.Unmarshaler
 	sub.errs = make(chan error, 1)
-	sub.id = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "nats", pf.config.ProjectID, topic, id)
 
 	sub.ctx, sub.canceler = context.WithCancel(pf.ctx)
 	if err := sub.init(); err != nil {
@@ -182,7 +172,6 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 
 	pf.sl.Lock()
 	pf.subs[sub.id] = &sub
-	pf.topics[topic] = last
 	pf.sl.Unlock()
 
 	return &sub, nil
@@ -235,17 +224,17 @@ func (pf *PublisherSubscriberFactory) hasPublisher(topic string) bool {
 	return ok
 }
 
-func (pf *PublisherSubscriberFactory) getSubscription(topic string) (*Subscription, bool) {
+func (pf *PublisherSubscriberFactory) getSubscription(id string) (*Subscription, bool) {
 	pf.sl.RLock()
 	defer pf.sl.RUnlock()
-	pm, ok := pf.subs[topic]
+	pm, ok := pf.subs[id]
 	return pm, ok
 }
 
-func (pf *PublisherSubscriberFactory) hasSubscription(topic string) bool {
+func (pf *PublisherSubscriberFactory) hasSubscription(id string) bool {
 	pf.sl.RLock()
 	defer pf.sl.RUnlock()
-	_, ok := pf.subs[topic]
+	_, ok := pf.subs[id]
 	return ok
 }
 
@@ -385,14 +374,25 @@ type Subscription struct {
 	receiver  pubsubs.Receiver
 }
 
-// ID returns the giving durable name for giving subscription.
+// Topic returns the topic name of giving subscription.
+func (s *Subscription) Topic() string {
+	return s.topic
+}
+
+// Group returns the group or queue group name of giving subscription.
+func (s *Subscription) Group() string {
+	return ""
+}
+
+// ID returns the identification of giving subscription used for durability if supported.
 func (s *Subscription) ID() string {
 	return s.id
 }
 
 // Stop ends giving subscription and it's operation in listening to given topic.
-func (s *Subscription) Stop() {
+func (s *Subscription) Stop() error {
 	s.canceler()
+	return nil
 }
 
 func (s *Subscription) handle(msg *pubsub.Msg) {

@@ -30,12 +30,23 @@ func (e Eventer) Publish(m interface{}) {
 
 // Subscribe adds a giving subscription using the provided handler and predicate.
 func (e Eventer) Subscribe(handler Handler, predicate Predicate) Subscription {
-	return e.es.Subscribe(func(m interface{}) {
-		handler(m)
-	}).WithPredicate(func(m interface{}) bool {
-		if predicate == nil {
-			return true
-		}
-		return predicate(m)
-	})
+	return subscriber{
+		Subscription: e.es.Subscribe(func(m interface{}) {
+			handler(m)
+		}).WithPredicate(func(m interface{}) bool {
+			if predicate == nil {
+				return true
+			}
+			return predicate(m)
+		}),
+	}
+}
+
+type subscriber struct {
+	*es.Subscription
+}
+
+func (s subscriber) Stop() error {
+	s.Subscription.Stop()
+	return nil
 }

@@ -119,7 +119,7 @@ type PublisherHandler func(*PublisherFactory, string) (pubsubs.Publisher, error)
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*SubscriptionFactory, string, string, pubsubs.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*SubscriptionFactory, string, string, pubsubs.Receiver) (pubsubs.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
@@ -129,14 +129,18 @@ type PubSubFactoryGenerator func(pub *PublisherFactory, sub *SubscriptionFactory
 // using the PubSubFactorGenerator function.
 func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
 	return func(pub *PublisherFactory, sub *SubscriptionFactory) pubsubs.PubSubFactory {
-		return &pubsubs.PubSubFactoryImpl{
-			Publishers: func(topic string) (pubsubs.Publisher, error) {
+		var pbs pubsubs.PubSubFactoryImpl
+		if publishers != nil {
+			pbs.Publishers = func(topic string) (pubsubs.Publisher, error) {
 				return publishers(pub, topic)
-			},
-			Subscribers: func(topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
-				return subscribers(sub, topic, id, receiver)
-			},
+			}
 		}
+		if subscribers != nil {
+			pbs.Subscribers = func(topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
+				return subscribers(sub, topic, id, receiver)
+			}
+		}
+		return &pbs
 	}
 }
 
@@ -404,8 +408,8 @@ func NewSubscriptionFactory(ctx context.Context, config SubscriberConfig) (*Subs
 
 // Subscribe subscribes to a giving topic, if one exists then a new subscription with a ever incrementing id is assigned
 // to new subscription.
-func (sb *SubscriptionFactory) Subscribe(topic string, id string, config *pubsub.SubscriptionConfig, receiver func(pubsubs.Message) error, action func(error) Directive) (actorkit.Subscription, error) {
-	return sb.createSubscription(topic, id, config, receiver, action)
+func (sb *SubscriptionFactory) Subscribe(topic string, id string, config *pubsub.SubscriptionConfig, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
+	return sb.createSubscription(topic, id, config, receiver)
 }
 
 // Wait blocks till all subscription and SubscriptionFactory is closed.
@@ -423,7 +427,7 @@ func (sb *SubscriptionFactory) Close() error {
 	return err
 }
 
-func (sb *SubscriptionFactory) createSubscription(topic string, id string, config *pubsub.SubscriptionConfig, receiver func(pubsubs.Message) error, direction func(error) Directive) (*Subscription, error) {
+func (sb *SubscriptionFactory) createSubscription(topic string, id string, config *pubsub.SubscriptionConfig, receiver pubsubs.Receiver) (*Subscription, error) {
 	errs := make(chan error, 1)
 	subs := make(chan *Subscription, 1)
 
@@ -454,7 +458,6 @@ func (sb *SubscriptionFactory) createSubscription(topic string, id string, confi
 		newSub.log = sb.config.Log
 		newSub.receiver = receiver
 		newSub.config = &sb.config
-		newSub.direction = direction
 		newSub.ctx, newSub.canceler = context.WithCancel(sb.ctx)
 
 		if err := newSub.init(); err != nil {
@@ -515,25 +518,40 @@ func (sb *SubscriptionFactory) run() {
 }
 
 // Subscription implements a subscriber of a giving topic which is being subscribe to
-// for. It implements the actorkit.Subscription interface.
+// for. It implements the pubsubs.Subscription interface.
 type Subscription struct {
-	id        string
-	topic     string
-	canceler  func()
-	log       actorkit.Logs
-	tx        *pubsub.Topic
-	client    *pubsub.Client
-	ctx       context.Context
-	config    *SubscriberConfig
-	sub       *pubsub.Subscription
-	direction func(error) Directive
-	subc      pubsub.SubscriptionConfig
-	receiver  func(pubsubs.Message) error
+	id       string
+	topic    string
+	canceler func()
+	log      actorkit.Logs
+	tx       *pubsub.Topic
+	client   *pubsub.Client
+	ctx      context.Context
+	config   *SubscriberConfig
+	sub      *pubsub.Subscription
+	subc     pubsub.SubscriptionConfig
+	receiver pubsubs.Receiver
+}
+
+// Topic returns the topic name of giving subscription.
+func (s *Subscription) Topic() string {
+	return s.topic
+}
+
+// Group returns the group or queue group name of giving subscription.
+func (s *Subscription) Group() string {
+	return ""
+}
+
+// ID returns the identification of giving subscription used for durability if supported.
+func (s *Subscription) ID() string {
+	return s.id
 }
 
 // Stop ends giving subscription and it's operation in listening to given topic.
-func (s *Subscription) Stop() {
+func (s *Subscription) Stop() error {
 	s.canceler()
+	return nil
 }
 
 func (s *Subscription) init() error {
@@ -601,29 +619,28 @@ func (s *Subscription) run() {
 			if s.log != nil {
 				s.log.Emit(actorkit.ERROR, pubsubs.UnmarshalingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
 			}
-			switch s.direction(err) {
-			case Ack:
-				message.Ack()
-			case Nack:
-				message.Nack()
-			}
+
+			message.Nack()
 			return
 		}
 
-		if err := s.receiver(decoded); err != nil {
+		action, err := s.receiver(decoded)
+		if err != nil {
 			if s.log != nil {
 				s.log.Emit(actorkit.ERROR, pubsubs.MessageHandlingError{Err: errors.WrapOnly(err), Data: message.Data, Topic: s.topic})
 			}
-			switch s.direction(err) {
-			case Ack:
-				message.Ack()
-			case Nack:
-				message.Nack()
-			}
+			message.Nack()
 			return
 		}
 
-		message.Ack()
+		switch action {
+		case pubsubs.ACK:
+			message.Ack()
+		case pubsubs.NACK:
+			message.Nack()
+		case pubsubs.NOPN:
+			return
+		}
 	}); err != nil {
 		if s.log != nil {
 			s.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: errors.WrapOnly(err), Topic: s.topic})

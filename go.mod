@@ -3,7 +3,7 @@ module github.com/gokit/actorkit
 require (
 	cloud.google.com/go v0.33.1
 	github.com/DataDog/zstd v1.3.5 // indirect
-	github.com/Shopify/sarama v1.20.0 // indirect
+	github.com/Shopify/sarama v1.20.0
 	github.com/armon/go-metrics v0.0.0-20180917152333-f0300d1749da // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/confluentinc/confluent-kafka-go v0.11.6

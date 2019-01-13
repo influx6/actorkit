@@ -124,7 +124,10 @@ type PublisherHandler func(*PublisherConsumerFactory, string) (pubsubs.Publisher
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*PublisherConsumerFactory, string, string, pubsubs.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*PublisherConsumerFactory, string, string, pubsubs.Receiver) (pubsubs.Subscription, error)
+
+// GroupSubscribeHandler defines a function returning a subscription to a topic for a giving queue group.
+type GroupSubscriberHandler func(*PublisherConsumerFactory, string, string, string, pubsubs.Receiver) (pubsubs.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
@@ -132,16 +135,25 @@ type PubSubFactoryGenerator func(*PublisherConsumerFactory) pubsubs.PubSubFactor
 
 // PubSubFactory provides a partial function for the generation of a pubsub.PubSubFactory
 // using the PubSubFactorGenerator function.
-func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
+func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler, groupSubscribers GroupSubscriberHandler) PubSubFactoryGenerator {
 	return func(pbs *PublisherConsumerFactory) pubsubs.PubSubFactory {
-		return &pubsubs.PubSubFactoryImpl{
-			Publishers: func(topic string) (pubsubs.Publisher, error) {
+		var factory pubsubs.PubSubFactoryImpl
+		if publishers != nil {
+			factory.Publishers = func(topic string) (pubsubs.Publisher, error) {
 				return publishers(pbs, topic)
-			},
-			Subscribers: func(topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
-				return subscribers(pbs, topic, id, receiver)
-			},
+			}
 		}
+		if subscribers != nil {
+			factory.Subscribers = func(topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
+				return subscribers(pbs, topic, id, receiver)
+			}
+		}
+		if groupSubscribers != nil {
+			factory.QueueGroupSubscribers = func(group string, topic string, id string, r pubsubs.Receiver) (pubsubs.Subscription, error) {
+				return groupSubscribers(pbs, group, topic, id, r)
+			}
+		}
+		return &factory
 	}
 }
 
@@ -151,22 +163,42 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 
 // Config defines configuration fields for use with a PublisherConsumerFactory.
 type Config struct {
-	Brokers                []string
-	ConsumersCount         int
-	NoConsumerGroup        bool
-	ProjectID              string
-	AutoOffsetReset        string
-	DefaultConsumerGroup   string
-	Marshaler              Marshaler
-	Unmarshaler            Unmarshaler
-	Log                    actorkit.Logs
-	PollingTime            time.Duration
+	Brokers              []string
+	ConsumersCount       int
+	NoConsumerGroup      bool
+	ProjectID            string
+	AutoOffsetReset      string
+	DefaultConsumerGroup string
+
+	// Marshaler provides the marshaler to be used for serializing messages through the
+	// delivery mechanism.
+	Marshaler Marshaler
+
+	// Unmarshaler provides the underline unmarshaler to be used for deserializing messages
+	// through the delivery mechanism.
+	Unmarshaler Unmarshaler
+
+	// Log provides the logging provider for delivery operational logs.
+	Log actorkit.Logs
+
+	// PollingTime is the time to be used for polling the underline driver for messages.
+	PollingTime time.Duration
+
+	// MessageDeliveryTimeout is the timeout to wait before response
+	// from the underline message broker before timeout.
 	MessageDeliveryTimeout time.Duration
-	ConsumerOverrides      kafka.ConfigMap
-	ProducerOverrides      kafka.ConfigMap
+
+	// ConsumerOverrides is the Sarama.Config to be used for consumers.
+	ConsumerOverrides kafka.ConfigMap
+
+	// ProducerOverrides is the Sarama.Config to be used for producers to override the default.
+	ProducerOverrides kafka.ConfigMap
 }
 
-func (c *Config) init() {
+func (c *Config) init() error {
+	if len(c.Brokers) == 0 {
+		return errors.New("missing brokers")
+	}
 	if c.Log == nil {
 		c.Log = &actorkit.DrainLog{}
 	}
@@ -185,6 +217,7 @@ func (c *Config) init() {
 	if c.DefaultConsumerGroup == "" {
 		c.NoConsumerGroup = true
 	}
+	return nil
 }
 
 // PublisherConsumerFactory implements a central factory for creating publishers or consumers for
@@ -201,15 +234,18 @@ type PublisherConsumerFactory struct {
 }
 
 // NewPublisherConsumerFactory returns a new instance of a PublisherConsumerFactory.
-func NewPublisherConsumerFactory(ctx context.Context, config Config) *PublisherConsumerFactory {
-	config.init()
+func NewPublisherConsumerFactory(ctx context.Context, config Config) (*PublisherConsumerFactory, error) {
+	if err := config.init(); err != nil {
+		return nil, err
+	}
+
 	rctx, cano := context.WithCancel(ctx)
 	return &PublisherConsumerFactory{
 		config:       config,
 		rootContext:  rctx,
 		rootCanceler: cano,
 		consumers:    map[string]*Consumer{},
-	}
+	}, nil
 }
 
 // Wait blocks till all consumers generated by giving factory are closed.
@@ -240,10 +276,38 @@ func (ka *PublisherConsumerFactory) NewPublisher(topic string, userOverrides *ka
 	return NewPublisher(ka.rootContext, &ka.config, base, topic)
 }
 
+// NewGroupConsumer return a new consumer for a giving topic within a giving group to be used for kafka.
+// The provided id value if not empty will be used as the group.id.
+func (ka *PublisherConsumerFactory) NewGroupConsumer(topic string, group string, id string, receiver pubsubs.Receiver) (*Consumer, error) {
+	consumer, err := NewConsumer(ka.rootContext, &ka.config, group, id, topic, receiver)
+	if err != nil {
+		return nil, err
+	}
+
+	errRes := make(chan error, 1)
+
+	ka.waiter.Add(1)
+	go func() {
+		defer ka.waiter.Done()
+		errRes <- consumer.Consume()
+
+		consumer.Wait()
+	}()
+
+	if err = <-errRes; err != nil {
+		return nil, err
+	}
+
+	ka.cl.Lock()
+	ka.consumers[topic] = consumer
+	ka.cl.Unlock()
+	return consumer, nil
+}
+
 // NewConsumer return a new consumer for a giving topic to be used for kafka.
 // The provided id value if not empty will be used as the group.id.
 func (ka *PublisherConsumerFactory) NewConsumer(topic string, id string, receiver pubsubs.Receiver) (*Consumer, error) {
-	consumer, err := NewConsumer(ka.rootContext, &ka.config, id, topic, receiver)
+	consumer, err := NewConsumer(ka.rootContext, &ka.config, "", id, topic, receiver)
 	if err != nil {
 		return nil, err
 	}
@@ -296,17 +360,24 @@ type Consumer struct {
 }
 
 // NewConsumer returns a new instance of a Consumer.
-func NewConsumer(ctx context.Context, config *Config, id string, topic string, receiver pubsubs.Receiver) (*Consumer, error) {
-	if id == "" && config.DefaultConsumerGroup != "" {
-		id = config.DefaultConsumerGroup
+func NewConsumer(ctx context.Context, config *Config, group string, id string, topic string, receiver pubsubs.Receiver) (*Consumer, error) {
+	if group == "" && config.DefaultConsumerGroup != "" {
+		group = config.DefaultConsumerGroup
 	}
 
-	groupID := fmt.Sprintf(pubsubs.SubscriberTopicFormat, "kafka", config.ProjectID, topic, id)
-	kafkaConfig, err := generateConsumerConfig(groupID, config)
+	if id == "" {
+		id = xid.New().String()
+	}
+
+	if group == "" {
+		group = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "kafka", config.ProjectID, topic, id)
+	}
+
+	kafkaConfig, err := generateConsumerConfig(group, config)
 	if err != nil {
 		err = errors.WrapOnly(err)
 		config.Log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
-			event.String("topic", topic).String("group", groupID)
+			event.String("topic", topic).String("group", group)
 		}))
 		return nil, err
 	}
@@ -315,7 +386,7 @@ func NewConsumer(ctx context.Context, config *Config, id string, topic string, r
 	if err != nil {
 		err = errors.WrapOnly(err)
 		config.Log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
-			event.String("topic", topic).String("group", groupID)
+			event.String("topic", topic).String("group", group)
 		}))
 		return nil, err
 	}
@@ -323,7 +394,7 @@ func NewConsumer(ctx context.Context, config *Config, id string, topic string, r
 	rctx, can := context.WithCancel(ctx)
 
 	return &Consumer{
-		id:          groupID,
+		id:          group,
 		config:      config,
 		topic:       topic,
 		receiver:    receiver,
@@ -351,9 +422,25 @@ func (c *Consumer) Consume() error {
 	return nil
 }
 
+// Topic returns the topic name of giving subscription.
+func (s *Consumer) Topic() string {
+	return s.topic
+}
+
+// Group returns the group or queue group name of giving subscription.
+func (s *Consumer) Group() string {
+	return ""
+}
+
+// ID returns the identification of giving subscription used for durability if supported.
+func (s *Consumer) ID() string {
+	return s.id
+}
+
 // Stop stops the giving consumer, ending all consuming operations.
-func (c *Consumer) Stop() {
+func (c *Consumer) Stop() error {
 	c.canceler()
+	return nil
 }
 
 // Wait blocks till the consumer is closed.
@@ -665,4 +752,24 @@ func mergeConfluentConfigs(baseConfig *kafka.ConfigMap, valuesToSet *kafka.Confi
 	}
 
 	return nil
+}
+
+const digits = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~+"
+
+func uint64ToID(u uint64) string {
+	var buf [13]byte
+	i := 13
+	// base is power of 2: use shifts and addresss instead of / and %
+	for u >= 64 {
+		i--
+		buf[i] = digits[uintptr(u)&0x3f]
+		u >>= 6
+	}
+	// u < base
+	i--
+	buf[i] = digits[uintptr(u)]
+	i--
+	buf[i] = '$'
+
+	return string(buf[i:])
 }

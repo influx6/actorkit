@@ -8,7 +8,13 @@ import (
 // SubscriberTopicFormat defines the expected format for a subscriber group name, queue name can be formulated.
 const SubscriberTopicFormat = "/pubsub/%s/project/%s/topics/%s/subscriber/%s"
 
+// QueueGroupSubscriberTopicFormat defines the expected format for a subscriber queue group name, queue name can be formulated.
+const QueueGroupSubscriberTopicFormat = "/pubsub/%s/project/%s/topics/%s/subscriber/%s/%s"
+
 var (
+	// ErrNotSupported is returned when a giving feature or method has no implementation
+	// support.
+	ErrNotSupported = errors.New("method not supported")
 
 	// ErrSubscriptionFailed is returned for failed subscription to topic.
 	ErrSubscriptionFailed = errors.New("failed to subscribe to topic")
@@ -52,11 +58,22 @@ type Unmarshaler interface {
 type PubSubFactory interface {
 	PublisherFactory
 	SubscriptionFactory
+	QueueGroupSubscriptionFactory
 }
 
 //*****************************************************************************
 // PubSubFactoryImpl
 //*****************************************************************************
+
+// Subscription expects the implementer to provide methods to identify the topic,
+// id and group/queueGroup name of giving subscription and a method to stop or end it.
+type Subscription interface {
+	actorkit.Subscription
+
+	ID() string
+	Topic() string
+	Group() string
+}
 
 // PublisherHandler defines a function type which takes a giving PublisherFactory
 // and a given topic, returning a new publisher with all related underline specific
@@ -66,30 +83,43 @@ type PublisherHandler func(string) (Publisher, error)
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(topic string, id string, r Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(topic string, id string, r Receiver) (Subscription, error)
+
+// QueueGroupSubscriberHandler defines a function type which takes a giving SubscriptionFactory
+// and a given topic, returning a new subscription for a giving queue group name.
+type QueueGroupSubscriberHandler func(group string, topic string, id string, r Receiver) (Subscription, error)
 
 // PubSubFactoryImpl implements the PubSubFactory interface, allowing providing
 // custom generator functions which will returning appropriate Publishers and Subscribers
 // for some underline platform.
 type PubSubFactoryImpl struct {
-	Publishers  PublisherHandler
-	Subscribers SubscriberHandler
+	Publishers            PublisherHandler
+	Subscribers           SubscriberHandler
+	QueueGroupSubscribers QueueGroupSubscriberHandler
 }
 
 // NewPublisher returns a new Publisher using the Publishers handler function provided.
-func (p *PubSubFactoryImpl) NewPublisher(topic string) (Publisher, error) {
+func (p PubSubFactoryImpl) NewPublisher(topic string) (Publisher, error) {
 	if p.Publishers == nil {
-		return nil, errors.New("NewPublisher not supported")
+		return nil, errors.New("NewPublisher is not supported")
 	}
 	return p.Publishers(topic)
 }
 
 // NewSubscriber returns a new Subscriber using the Subscribers handler function provided.
-func (p *PubSubFactoryImpl) NewSubscriber(topic string, id string, r Receiver) (actorkit.Subscription, error) {
+func (p PubSubFactoryImpl) NewSubscriber(topic string, id string, r Receiver) (Subscription, error) {
 	if p.Publishers == nil {
-		return nil, errors.New("NewSubscriber not supported")
+		return nil, errors.New("NewSubscriber is not supported")
 	}
 	return p.Subscribers(topic, id, r)
+}
+
+// NewQueueGroupSubscriber returns a new Subscriber using the Subscribers handler function provided.
+func (p PubSubFactoryImpl) NewQueueGroupSubscriber(group string, topic string, id string, r Receiver) (Subscription, error) {
+	if p.Publishers == nil {
+		return nil, errors.New("NewQueueGroupSubscriber is not supported")
+	}
+	return p.QueueGroupSubscribers(group, topic, id, r)
 }
 
 //*********************************************************
@@ -134,7 +164,12 @@ type Receiver func(Message) (Action, error)
 
 // SubscriptionFactory exposes a given method for the creation of a subscription.
 type SubscriptionFactory interface {
-	NewSubscriber(string, string, Receiver) (actorkit.Subscription, error)
+	NewSubscriber(string, string, Receiver) (Subscription, error)
+}
+
+// QueueGroupSubscriptionFactory exposes a given method for the creation of a subscription.
+type QueueGroupSubscriptionFactory interface {
+	NewQueueGroupSubscriber(string, string, string, Receiver) (Subscription, error)
 }
 
 //*********************************************************

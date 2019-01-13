@@ -10,7 +10,6 @@ import (
 
 	streaming "github.com/gokit/actorkit/pubsubs/natstreaming"
 
-	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/actorkit/pubsubs/internal/benches"
 )
@@ -36,8 +35,10 @@ func TestNATS(t *testing.T) {
 
 	factory := streaming.PubSubFactory(func(factory *streaming.PublisherSubscriberFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.Publisher(topic)
-	}, func(factory *streaming.PublisherSubscriberFactory, topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
+	}, func(factory *streaming.PublisherSubscriberFactory, topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
 		return factory.Subscribe(topic, id, receiver, nil)
+	}, func(factory *streaming.PublisherSubscriberFactory, topic string, group string, id string, r pubsubs.Receiver) (pubsubs.Subscription, error) {
+		return factory.QueueSubscribe(topic, group, id, r, nil)
 	})(natspub)
 
 	benches.PubSubFactoryTestSuite(t, factory)

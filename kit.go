@@ -441,7 +441,7 @@ type Escalatable interface {
 // Subscription defines a method which exposes a single method
 // to remove giving subscription.
 type Subscription interface {
-	Stop()
+	Stop() error
 }
 
 // Handler defines a function type which is to be passed

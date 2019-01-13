@@ -9,7 +9,6 @@ import (
 
 	"github.com/gokit/actorkit/pubsubs/redis"
 
-	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/actorkit/pubsubs/internal/benches"
 )
@@ -26,7 +25,7 @@ func TestRedis(t *testing.T) {
 
 	factory := redis.PubSubFactory(func(factory *redis.PublisherSubscriberFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.Publisher(topic)
-	}, func(factory *redis.PublisherSubscriberFactory, topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
+	}, func(factory *redis.PublisherSubscriberFactory, topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
 		return factory.Subscribe(topic, id, receiver)
 	})(natspub)
 

@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	gpubsub "cloud.google.com/go/pubsub"
-	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/actorkit/pubsubs/google"
 	"github.com/gokit/actorkit/pubsubs/internal/benches"
@@ -38,10 +37,8 @@ func TestKafka(t *testing.T) {
 
 	factory := google.PubSubFactory(func(factory *google.PublisherFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.Publisher(topic, &gpubsub.PublishSettings{})
-	}, func(factory *google.SubscriptionFactory, topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
-		return factory.Subscribe(topic, id, &gpubsub.SubscriptionConfig{}, receiver, func(_ error) google.Directive {
-			return google.Nack
-		})
+	}, func(factory *google.SubscriptionFactory, topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
+		return factory.Subscribe(topic, id, &gpubsub.SubscriptionConfig{}, receiver)
 	})(publishers, subscribers)
 
 	benches.PubSubFactoryTestSuite(t, factory)

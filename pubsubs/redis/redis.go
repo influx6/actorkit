@@ -31,7 +31,7 @@ type PublisherHandler func(*PublisherSubscriberFactory, string) (pubsubs.Publish
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*PublisherSubscriberFactory, string, string, pubsubs.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*PublisherSubscriberFactory, string, string, pubsubs.Receiver) (pubsubs.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
@@ -41,14 +41,18 @@ type PubSubFactoryGenerator func(factory *PublisherSubscriberFactory) pubsubs.Pu
 // using the PubSubFactorGenerator function.
 func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
 	return func(factory *PublisherSubscriberFactory) pubsubs.PubSubFactory {
-		return &pubsubs.PubSubFactoryImpl{
-			Publishers: func(topic string) (pubsubs.Publisher, error) {
+		var pbs pubsubs.PubSubFactoryImpl
+		if publishers != nil {
+			pbs.Publishers = func(topic string) (pubsubs.Publisher, error) {
 				return publishers(factory, topic)
-			},
-			Subscribers: func(topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
-				return subscribers(factory, topic, id, receiver)
-			},
+			}
 		}
+		if subscribers != nil {
+			pbs.Subscribers = func(topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
+				return subscribers(factory, topic, id, receiver)
+			}
+		}
+		return &pbs
 	}
 }
 
@@ -306,7 +310,7 @@ func (p *Publisher) run() {
 //*****************************************************************************
 
 // Subscription implements a subscriber of a giving topic which is being subscribe to
-// for. It implements the actorkit.Subscription interface.
+// for. It implements the pubsubs.Subscription interface.
 type Subscription struct {
 	id       string
 	topic    string
@@ -321,7 +325,17 @@ type Subscription struct {
 	receiver func(pubsubs.Message) error
 }
 
-// ID returns the giving durable name for giving subscription.
+// Topic returns the topic name of giving subscription.
+func (s *Subscription) Topic() string {
+	return s.topic
+}
+
+// Group returns the group or queue group name of giving subscription.
+func (s *Subscription) Group() string {
+	return ""
+}
+
+// ID returns the identification of giving subscription used for durability if supported.
 func (s *Subscription) ID() string {
 	return s.id
 }
@@ -332,9 +346,10 @@ func (s *Subscription) Error() error {
 }
 
 // Stop ends giving subscription and it's operation in listening to given topic.
-func (s *Subscription) Stop() {
+func (s *Subscription) Stop() error {
 	s.canceler()
 	s.waiter.Wait()
+	return nil
 }
 
 func (s *Subscription) handle(msg *pubsub.Message) {

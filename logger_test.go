@@ -79,11 +79,12 @@ func BenchmarkGetLogEvent(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
+		attr := map[string]interface{}{"id": 23}
 		for i := b.N; i > 0; i-- {
 			event := actorkit.LogMsg("My log")
 			event.String("name", "thunder")
 			event.Int("id", 234)
-			event.ObjectJSON("data", map[string]interface{}{"id": 23})
+			event.ObjectJSON("data", attr)
 			event.Message()
 		}
 	})
@@ -107,11 +108,12 @@ func BenchmarkGetLogEvent(b *testing.B) {
 		b.ResetTimer()
 		b.ReportAllocs()
 
+		bu := []byte("{\"id\": 23}")
 		for i := b.N; i > 0; i-- {
 			event := actorkit.LogMsg("My log")
 			event.String("name", "thunder")
 			event.Int("id", 234)
-			event.Bytes("data", []byte("{\"id\": 23}"))
+			event.Bytes("data", bu)
 			event.Message()
 		}
 	})
