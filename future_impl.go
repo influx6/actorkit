@@ -145,7 +145,7 @@ func (f *FutureImpl) TimedFuture(d time.Duration) Future {
 
 // Watch adds giving function into event system for future.
 func (f *FutureImpl) Watch(fn func(interface{})) Subscription {
-	return f.events.Subscribe(fn)
+	return subscriber{f.events.Subscribe(fn)}
 }
 
 // DeathWatch implements DeathWatch interface.

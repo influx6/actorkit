@@ -600,19 +600,19 @@ func NewAsyncPublisher(ctx context.Context, config *Config, kafkaConfig *sarama.
 	kap.canceler = can
 
 	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Creating new publisher", "context", nil).
-		String("topic", topic).ObjectJSON("config", kafkaConfig))
+		String("topic", topic))
 
 	producer, err := sarama.NewAsyncProducer(config.Brokers, kap.kafkaConfig)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to create new Producer")
 		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
-			event.String("topic", topic).ObjectJSON("config", kap.kafkaConfig)
+			event.String("topic", topic)
 		}))
 		return nil, err
 	}
 
 	kap.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Created producer for topic", "context", nil).With(func(event actorkit.LogEvent) {
-		event.String("topic", topic).ObjectJSON("config", kap.kafkaConfig)
+		event.String("topic", topic)
 	}))
 
 	kap.producer = producer
@@ -716,19 +716,19 @@ func NewSyncPublisher(ctx context.Context, config *Config, kafkaConfig *sarama.C
 	kap.canceler = can
 
 	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Creating new publisher", "context", nil).
-		String("topic", topic).ObjectJSON("config", kafkaConfig))
+		String("topic", topic))
 
 	producer, err := sarama.NewSyncProducer(config.Brokers, kap.kafkaConfig)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to create new Producer")
 		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
-			event.String("topic", topic).ObjectJSON("config", kap.kafkaConfig)
+			event.String("topic", topic)
 		}))
 		return nil, err
 	}
 
 	kap.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Created producer for topic", "context", nil).With(func(event actorkit.LogEvent) {
-		event.String("topic", topic).ObjectJSON("config", kap.kafkaConfig)
+		event.String("topic", topic)
 	}))
 
 	kap.producer = producer

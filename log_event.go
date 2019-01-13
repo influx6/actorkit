@@ -210,8 +210,8 @@ func (l *logEventImpl) Message() string {
 		l.onRelease = nil
 	}
 
-	cn := make([]byte, 0, len(l.content))
-	cn = cn[:copy(cn, l.content)]
+	cn := make([]byte, len(l.content))
+	copy(cn, l.content)
 
 	l.resetContent()
 	l.release()

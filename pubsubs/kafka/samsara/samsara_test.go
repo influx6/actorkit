@@ -16,7 +16,7 @@ import (
 
 func TestSamaraPubsub(t *testing.T) {
 	publishers, err := samsara.NewPublisherConsumerFactory(context.Background(), samsara.Config{
-		Brokers:     []string{"localhost:9092"},
+		Brokers:     []string{"127.0.0.1:9092"},
 		ProjectID:   "wireco",
 		Log:         &internal.TLog{},
 		Marshaler:   samsara.MarshalerWrapper{Envelope: encoders.NoAddressMarshaler{}},

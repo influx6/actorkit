@@ -582,7 +582,7 @@ func (a *AddrImpl) DeathWatch(addr Addr) error {
 // listeners of giving address events.
 func (a *AddrImpl) Watch(fn func(interface{})) Subscription {
 	if a.deadletter {
-		return deadLetters.Subscribe(fn)
+		return subscriber{deadLetters.Subscribe(fn)}
 	}
 	return a.actor.Watch(fn)
 }
