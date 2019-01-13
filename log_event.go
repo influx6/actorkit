@@ -235,7 +235,11 @@ func (l *logEventImpl) reset() {
 
 func (l *logEventImpl) reduce(d int) {
 	available := len(l.content)
-	l.content = l.content[:available-d]
+	rem := available - d
+	if rem < 0 {
+		rem = 0
+	}
+	l.content = l.content[:rem]
 }
 
 func (l *logEventImpl) resetContent() {

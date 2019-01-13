@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Shopify/sarama"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/gokit/actorkit/internal"
@@ -18,6 +20,7 @@ func TestSamaraPubsub(t *testing.T) {
 	publishers, err := samsara.NewPublisherConsumerFactory(context.Background(), samsara.Config{
 		Brokers:     []string{"127.0.0.1:9092"},
 		ProjectID:   "wireco",
+		Version:     sarama.V0_11_0_2,
 		Log:         &internal.TLog{},
 		Marshaler:   samsara.MarshalerWrapper{Envelope: encoders.NoAddressMarshaler{}},
 		Unmarshaler: samsara.UnmarshalerWrapper{Envelope: encoders.NoAddressUnmarshaler{}},
