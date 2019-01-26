@@ -31,9 +31,7 @@ func TestNATS(t *testing.T) {
 	factory := nats.PubSubFactory(func(factory *nats.PublisherSubscriberFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.Publisher(topic)
 	}, func(factory *nats.PublisherSubscriberFactory, topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
-		return factory.Subscribe(topic, id, receiver, func(_ error) nats.Directive {
-			return nats.Nack
-		})
+		return factory.Subscribe(topic, id, receiver)
 	})(natspub)
 
 	benches.PubSubFactoryTestSuite(t, factory)

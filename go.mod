@@ -4,6 +4,7 @@ require (
 	cloud.google.com/go v0.33.1
 	github.com/DataDog/zstd v1.3.5 // indirect
 	github.com/Shopify/sarama v1.20.0
+	github.com/Shopify/toxiproxy v2.1.4+incompatible // indirect
 	github.com/armon/go-metrics v0.0.0-20180917152333-f0300d1749da // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/confluentinc/confluent-kafka-go v0.11.6
@@ -16,7 +17,6 @@ require (
 	github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe
 	github.com/gokit/es v0.0.0-20181225110440-a554c1c8305f
 	github.com/gokit/xid v1.2.2
-	github.com/golang/mock v1.1.1
 	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
 	github.com/googleapis/gax-go v2.0.2+incompatible // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
@@ -33,6 +33,7 @@ require (
 	github.com/pascaldekloe/goe v0.0.0-20180627143212-57f6aae5913c // indirect
 	github.com/pierrec/lz4 v2.0.5+incompatible // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a // indirect
+	github.com/segmentio/kafka-go v0.2.2
 	github.com/serialx/hashring v0.0.0-20180504054112-49a4782e9908
 	github.com/stretchr/testify v1.2.2
 	go.opencensus.io v0.18.0 // indirect

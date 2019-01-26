@@ -16,16 +16,6 @@ import (
 	"github.com/gokit/errors"
 )
 
-// Directive defines a int type for representing
-// a giving action to be performed due to an error.
-type Directive int
-
-// set of possible directives.
-const (
-	Ack Directive = iota
-	Nack
-)
-
 //*****************************************************************************
 // PubSubFactory
 //*****************************************************************************
@@ -38,7 +28,7 @@ type PublisherHandler func(*PublisherSubscriberFactory, string) (pubsubs.Publish
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*PublisherSubscriberFactory, string, string, pubsubs.Receiver) (actorkit.Subscription, error)
+type SubscriberHandler func(*PublisherSubscriberFactory, string, string, pubsubs.Receiver) (*Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
@@ -55,7 +45,7 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 			}
 		}
 		if subscribers != nil {
-			pbs.Subscribers = func(topic string, id string, receiver pubsubs.Receiver) (actorkit.Subscription, error) {
+			pbs.Subscribers = func(topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
 				return subscribers(factory, topic, id, receiver)
 			}
 		}
@@ -149,7 +139,7 @@ func (pf *PublisherSubscriberFactory) Close() error {
 // Subscribe returns a new subscription for a giving topic which will be used for processing
 // messages for giving topic from the NATS streaming provider. If the id already exists then
 // the subscriber is returned.
-func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver, direction func(error) Directive) (*Subscription, error) {
+func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver) (*Subscription, error) {
 	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "nats", pf.config.ProjectID, topic, id)
 	if sub, ok := pf.getSubscription(subid); ok {
 		return sub, nil
@@ -161,7 +151,6 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 	sub.client = pf.c
 	sub.log = pf.config.Log
 	sub.receiver = receiver
-	sub.direction = direction
 	sub.m = pf.config.Unmarshaler
 	sub.errs = make(chan error, 1)
 
@@ -361,17 +350,16 @@ func (p *Publisher) run() {
 // Subscription implements a subscriber of a giving topic which is being subscribe to
 // for. It implements the actorkit.Subscription interface.
 type Subscription struct {
-	id        string
-	topic     string
-	errs      chan error
-	canceler  func()
-	client    *pubsub.Conn
-	ctx       context.Context
-	log       actorkit.Logs
-	m         pubsubs.Unmarshaler
-	sub       *pubsub.Subscription
-	direction func(error) Directive
-	receiver  pubsubs.Receiver
+	id       string
+	topic    string
+	errs     chan error
+	canceler func()
+	client   *pubsub.Conn
+	ctx      context.Context
+	log      actorkit.Logs
+	m        pubsubs.Unmarshaler
+	sub      *pubsub.Subscription
+	receiver pubsubs.Receiver
 }
 
 // Topic returns the topic name of giving subscription.

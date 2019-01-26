@@ -98,7 +98,7 @@ func (kc UnmarshalerWrapper) Unmarshal(message *sarama.ConsumerMessage) (pubsubs
 		switch tm {
 		case idParam:
 			if string(v.Value) != msg.Envelope.Ref.String() {
-				return msg, errors.New("Kafka message ID does not matched envelope data")
+				return msg, errors.New("Kafka message ID does not matched envelope ref id")
 			}
 		default:
 			if !msg.Envelope.Has(tm) {
