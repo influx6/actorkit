@@ -131,8 +131,9 @@ type Config struct {
 	URL                    string
 	ClusterID              string
 	ProjectID              string
-	MinMessageSize         float64
-	MaxMessageSize         float64
+	MinMessageSize         uint64
+	MaxMessageSize         uint64
+	AutoCommit             bool
 	MessageDeliveryTimeout time.Duration
 	MaxAckInterval         time.Duration
 	Marshaler              Marshaler
@@ -533,18 +534,21 @@ func (s *Subscription) handle(msg segment.Message) {
 
 func (s *Subscription) init() error {
 	var err error
-	var sub *segment.Reader
+
+	var rconfig segment.ReaderConfig
+	rconfig.Topic = s.topic
+	rconfig.MaxBytes = int(s.config.MaxMessageSize)
+	rconfig.MinBytes = int(s.config.MinMessageSize)
+
 	if s.queue {
-		//sub, err = s.client.QueueSubscribe(s.topic, s.group, s.handle, ops...)
-	} else {
-		//sub, err = s.client.Subscribe(s.topic, s.handle, ops...)
+		rconfig.GroupID = s.group
 	}
 
+	var reader = segment.NewReader(rconfig)
 	if err != nil {
 		return err
 	}
-
-	s.reader = sub
+	s.reader = reader
 	return nil
 }
 
@@ -554,5 +558,19 @@ func (s *Subscription) run() {
 		err = errors.Wrap(err, "Failed to close kafka reader")
 		s.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).
 			String("topic", s.topic))
+	}
+}
+
+func (s *Subscription) readLoop() {
+	var err error
+	var m segment.Message
+	var autoCommit = s.config.AutoCommit
+
+	for {
+		if autoCommit {
+			m, err = s.reader.FetchMessage(s.ctx)
+		} else {
+			m, err = s.reader.ReadMessage(s.ctx)
+		}
 	}
 }
