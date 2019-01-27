@@ -4,14 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/gokit/actorkit/internal"
-
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/actorkit/pubsubs/internal/benches"
 	"github.com/gokit/actorkit/pubsubs/internal/encoders"
 	kafka "github.com/gokit/actorkit/pubsubs/kafka/librdkafka"
+	"github.com/stretchr/testify/require"
 )
 
 func TestKafka(t *testing.T) {

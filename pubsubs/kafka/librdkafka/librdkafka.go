@@ -11,13 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gokit/actorkit"
-
-	"github.com/gokit/xid"
-
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/errors"
+	"github.com/gokit/xid"
 )
 
 const (
@@ -730,7 +728,7 @@ func generateConsumerConfig(id string, config *Config) (kafka.ConfigMap, error) 
 
 func generateProducerConfig(config *Config) (kafka.ConfigMap, error) {
 	konfig := kafka.ConfigMap{
-		"debug":                        ",",
+		"debug": ",",
 		"queue.buffering.max.messages": 10000000,
 		"queue.buffering.max.kbytes":   2097151,
 	}

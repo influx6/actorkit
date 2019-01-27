@@ -5,15 +5,12 @@ import (
 	"testing"
 
 	"github.com/Shopify/sarama"
-
-	"github.com/stretchr/testify/require"
-
 	"github.com/gokit/actorkit/internal"
-
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/actorkit/pubsubs/internal/benches"
 	"github.com/gokit/actorkit/pubsubs/internal/encoders"
 	"github.com/gokit/actorkit/pubsubs/kafka/samsara"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSamaraPubsub(t *testing.T) {
