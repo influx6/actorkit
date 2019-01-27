@@ -2,18 +2,15 @@ package segments
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
-	"github.com/gokit/actorkit/pubsubs"
-
 	"github.com/gokit/actorkit"
-
-	"github.com/gokit/xid"
-
+	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/errors"
+	"github.com/gokit/xid"
 	segment "github.com/segmentio/kafka-go"
+	"golang.org/x/sync/errgroup"
 )
 
 //*****************************************************************************
@@ -128,9 +125,7 @@ func (kc UnmarshalerWrapper) Unmarshal(message segment.Message) (pubsubs.Message
 
 // Config provides a config struct for instantiating a PublishSubscribeFactory type.
 type Config struct {
-	URL                    string
-	ClusterID              string
-	ProjectID              string
+	Brokers                []string
 	MinMessageSize         uint64
 	MaxMessageSize         uint64
 	AutoCommit             bool
@@ -142,6 +137,14 @@ type Config struct {
 	Dialer                 *segment.Dialer
 	Balancer               segment.Balancer
 	Compression            segment.CompressionCodec
+
+	// WriterConfigOverride can be provided to set default
+	// configuration values for which will be used for creating writers.
+	WriterConfigOverride *segment.WriterConfig
+
+	// ReaderConfigOverride can be provided to set default
+	// configuration values for which will be used for creating readers.
+	ReaderConfigOverride *segment.ReaderConfig
 }
 
 func (c *Config) init() {
@@ -162,9 +165,6 @@ func (c *Config) init() {
 	}
 	if c.MessageDeliveryTimeout <= 0 {
 		c.MessageDeliveryTimeout = 1 * time.Second
-	}
-	if c.ProjectID == "" {
-		c.ProjectID = actorkit.PackageName
 	}
 }
 
@@ -217,6 +217,8 @@ func (pf *PublisherSubscriberFactory) Close() error {
 // messages for giving topic from the nats streaming provider. If the topic already has a subscriber then
 // a subscriber with a ever increasing _id is added and returned if a user defined group id is not set,
 // the subscriber receives the giving id as it's queue group name for it's subscription.
+//
+// Implementation hold's no respect for the id value, it is lost once a subscription is lost.
 func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, id string, receiver pubsubs.Receiver) (*Subscription, error) {
 	if topic == "" {
 		return nil, errors.New("topic value can not be empty")
@@ -230,20 +232,14 @@ func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, i
 		return nil, errors.New("id value can not be empty")
 	}
 
-	var subid = fmt.Sprintf(pubsubs.QueueGroupSubscriberTopicFormat, "nats-streaming", pf.config.ProjectID, topic, grp, id)
-	if sub, ok := pf.getSubscription(subid); ok {
-		return sub, nil
-	}
-
 	var sub Subscription
-	sub.id = subid
+	sub.id = id
 	sub.group = grp
 	sub.queue = true
 	sub.topic = topic
 	sub.config = &pf.config
 	sub.log = pf.config.Log
 	sub.receiver = receiver
-	sub.errs = make(chan error, 1)
 	sub.ctx, sub.canceler = context.WithCancel(pf.ctx)
 
 	if err := sub.init(); err != nil {
@@ -261,18 +257,15 @@ func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, i
 // messages for giving topic from the nats streaming provider. If the topic already has a subscriber then
 // a subscriber with a ever increasing _id is added. The id value is used as a durable name value for the giving
 // subscription. If one exists then that is returned.
+//
+// Implementation hold's no respect for the id value, it is lost once a subscription is lost.
 func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver) (*Subscription, error) {
-	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "kafka-segmentio", pf.config.ProjectID, topic, id)
-	if sub, ok := pf.getSubscription(subid); ok {
-		return sub, nil
-	}
-
 	var sub Subscription
-	sub.id = subid
+	sub.id = id
 	sub.topic = topic
 	sub.config = &pf.config
+	sub.log = pf.config.Log
 	sub.receiver = receiver
-	sub.errs = make(chan error, 1)
 
 	sub.ctx, sub.canceler = context.WithCancel(pf.ctx)
 	if err := sub.init(); err != nil {
@@ -295,6 +288,27 @@ func (pf *PublisherSubscriberFactory) Publisher(topic string) (*Publisher, error
 		return pm, nil
 	}
 
+	var wconfig segment.WriterConfig
+
+	if pf.config.WriterConfigOverride != nil {
+		wconfig = *pf.config.WriterConfigOverride
+	}
+
+	wconfig.Topic = topic
+	wconfig.Brokers = pf.config.Brokers
+
+	if pf.config.Dialer != nil {
+		wconfig.Dialer = pf.config.Dialer
+	}
+
+	if pf.config.Balancer != nil {
+		wconfig.Balancer = pf.config.Balancer
+	}
+
+	if pf.config.Compression != nil {
+		wconfig.CompressionCodec = pf.config.Compression
+	}
+
 	pctx, canceler := context.WithCancel(pf.ctx)
 	pm := &Publisher{
 		factory:  pf,
@@ -304,8 +318,8 @@ func (pf *PublisherSubscriberFactory) Publisher(topic string) (*Publisher, error
 		cfg:      &pf.config,
 		log:      pf.config.Log,
 		m:        pf.config.Marshaler,
-		error:    make(chan error, 1),
 		actions:  make(chan func(), 0),
+		writer:   segment.NewWriter(wconfig),
 	}
 
 	pm.waiter.Add(1)
@@ -373,7 +387,6 @@ type Publisher struct {
 	canceler func()
 	cfg      *Config
 	m        Marshaler
-	error    chan error
 	actions  chan func()
 	waiter   sync.WaitGroup
 	writer   *segment.Writer
@@ -470,11 +483,11 @@ type Subscription struct {
 	queue    bool
 	config   *Config
 	canceler func()
-	errs     chan error
 	ctx      context.Context
 	reader   *segment.Reader
 	log      actorkit.Logs
 	m        Unmarshaler
+	errg     errgroup.Group
 	receiver pubsubs.Receiver
 }
 
@@ -493,15 +506,17 @@ func (s *Subscription) ID() string {
 	return s.id
 }
 
-// Error returns the associated received error.
+// Error returns any error which was the cause for the stopping of
+// subscription, it will block till subscription ends to get error if
+// not done, so use carefully.
 func (s *Subscription) Error() error {
-	return <-s.errs
+	return s.errg.Wait()
 }
 
 // Stop ends giving subscription and it's operation in listening to given topic.
 func (s *Subscription) Stop() error {
 	s.canceler()
-	return nil
+	return s.errg.Wait()
 }
 
 func (s *Subscription) handle(msg segment.Message) {
@@ -533,10 +548,14 @@ func (s *Subscription) handle(msg segment.Message) {
 }
 
 func (s *Subscription) init() error {
-	var err error
-
 	var rconfig segment.ReaderConfig
+
+	if s.config.ReaderConfigOverride != nil {
+		rconfig = *s.config.ReaderConfigOverride
+	}
+
 	rconfig.Topic = s.topic
+	rconfig.Brokers = s.config.Brokers
 	rconfig.MaxBytes = int(s.config.MaxMessageSize)
 	rconfig.MinBytes = int(s.config.MinMessageSize)
 
@@ -545,10 +564,9 @@ func (s *Subscription) init() error {
 	}
 
 	var reader = segment.NewReader(rconfig)
-	if err != nil {
-		return err
-	}
 	s.reader = reader
+	s.errg.Go(s.readLoop)
+
 	return nil
 }
 
@@ -561,16 +579,30 @@ func (s *Subscription) run() {
 	}
 }
 
-func (s *Subscription) readLoop() {
+func (s *Subscription) readLoop() error {
 	var err error
 	var m segment.Message
 	var autoCommit = s.config.AutoCommit
 
 	for {
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		default:
+		}
+
 		if autoCommit {
 			m, err = s.reader.FetchMessage(s.ctx)
 		} else {
 			m, err = s.reader.ReadMessage(s.ctx)
 		}
+
+		if err != nil {
+			return err
+		}
+
+		s.handle(m)
 	}
+
+	return nil
 }

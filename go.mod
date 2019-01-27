@@ -38,7 +38,7 @@ require (
 	github.com/stretchr/testify v1.2.2
 	go.opencensus.io v0.18.0 // indirect
 	golang.org/x/crypto v0.0.0-20181203042331-505ab145d0a9 // indirect
-	golang.org/x/sync v0.0.0-20181108010431-42b317875d0f // indirect
+	golang.org/x/sync v0.0.0-20181108010431-42b317875d0f
 	google.golang.org/api v0.0.0-20181126234655-bed42c95df7d
 	google.golang.org/genproto v0.0.0-20181109154231-b5d43981345b // indirect
 	gopkg.in/vmihailenco/msgpack.v2 v2.9.1 // indirect

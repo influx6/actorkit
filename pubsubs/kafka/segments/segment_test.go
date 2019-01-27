@@ -5,20 +5,16 @@ import (
 	"testing"
 
 	"github.com/gokit/actorkit/internal"
-	"github.com/gokit/actorkit/pubsubs/internal/encoders"
-	"github.com/stretchr/testify/assert"
-
-	segment "github.com/gokit/actorkit/pubsubs/kafka/segments"
-
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/actorkit/pubsubs/internal/benches"
+	"github.com/gokit/actorkit/pubsubs/internal/encoders"
+	segment "github.com/gokit/actorkit/pubsubs/kafka/segments"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNATS(t *testing.T) {
 	kpub, err := segment.NewPublisherSubscriberFactory(context.Background(), segment.Config{
-		URL:         "127.0.0.1:9092",
-		ClusterID:   "cluster_server",
-		ProjectID:   "wireco",
+		Brokers:     []string{"127.0.0.1:9092"},
 		Log:         &internal.TLog{},
 		Marshaler:   segment.MarshalerWrapper{Envelope: encoders.NoAddressMarshaler{}},
 		Unmarshaler: segment.UnmarshalerWrapper{Envelope: encoders.NoAddressUnmarshaler{}},
