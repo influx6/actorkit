@@ -5,10 +5,8 @@ import (
 	"time"
 
 	"github.com/gokit/actorkit"
-
-	"github.com/stretchr/testify/assert"
-
 	"github.com/gokit/actorkit/pubsubs"
+	"github.com/stretchr/testify/assert"
 )
 
 //**************************************************************************
@@ -50,7 +48,9 @@ func testMessagePublishingAndSubscription(t *testing.T, pubsub pubsubs.PubSubFac
 	assert.NoError(t, err)
 	assert.NotNil(t, sub)
 
-	defer sub.Stop()
+	defer func(sm pubsubs.Subscription) {
+		sm.Stop()
+	}(sub)
 
 	assert.NoError(t, pub.Publish(actorkit.CreateEnvelope(actorkit.DeadLetters(), actorkit.Header{}, "300")))
 

@@ -7,9 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gokit/actorkit"
-
 	"github.com/Shopify/sarama"
+	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/errors"
 )
@@ -247,14 +246,14 @@ type SaramaConsumingClient struct {
 //      cGroupName: The consumer group name to be used for consumption from the streams.
 //
 func NewSaramaConsumingClient(parentCtx context.Context, config *Config, kafkaConfig *sarama.Config, topic string, cGroupName string, id string, receiver pubsubs.Receiver) (*SaramaConsumingClient, error) {
-	childCtx, canceler := context.WithCancel(parentCtx)
+	childCtx, childCancel := context.WithCancel(parentCtx)
 	return &SaramaConsumingClient{
 		id:            id,
 		topic:         topic,
 		config:        config,
 		receiver:      receiver,
 		ctx:           childCtx,
-		canceller:     canceler,
+		canceller:     childCancel,
 		logs:          config.Log,
 		kafkaConfig:   kafkaConfig,
 		consumerGroup: cGroupName,
@@ -386,12 +385,15 @@ func (sm *SaramaConsumingClient) consumeByGroup(client sarama.Client) error {
 
 func (sm *SaramaConsumingClient) consumeGroupConsumer(client sarama.Client, consumer sarama.ConsumerGroup) error {
 	sm.waiter.Add(1)
-	go func() {
+
+	var groupConsumer = &groupConsumptionHandler{
+		SaramaConsumingClient: sm,
+	}
+
+	go func(dm *groupConsumptionHandler) {
 		defer sm.waiter.Done()
 
-		var groupConsumer groupConsumptionHandler
-		groupConsumer.client = sm
-		if err := consumer.Consume(sm.ctx, []string{sm.topic}, groupConsumer); err != nil {
+		if err := consumer.Consume(sm.ctx, []string{sm.topic}, dm); err != nil {
 			err = errors.Wrap(err, "Failed during message consumption for topic %q", sm.topic)
 			sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
 				event.String("topic", sm.topic)
@@ -410,7 +412,7 @@ func (sm *SaramaConsumingClient) consumeGroupConsumer(client sarama.Client, cons
 				}
 			}))
 		}
-	}()
+	}(groupConsumer)
 	return nil
 }
 
@@ -540,7 +542,7 @@ func (sm *SaramaConsumingClient) logConsumerErrorsFromMessages(errs <-chan *sara
 }
 
 type groupConsumptionHandler struct {
-	client *SaramaConsumingClient
+	*SaramaConsumingClient
 }
 
 func (groupConsumptionHandler) Setup(_ sarama.ConsumerGroupSession) error   { return nil }
@@ -556,10 +558,10 @@ func (h groupConsumptionHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, 
 			}
 
 			// if we fail to consume message, immediately stop.
-			if err := h.client.handleMessage(msg, sess); err != nil {
+			if err := h.SaramaConsumingClient.handleMessage(msg, sess); err != nil {
 				return err
 			}
-		case <-h.client.ctx.Done():
+		case <-h.SaramaConsumingClient.ctx.Done():
 			return nil
 		}
 	}
@@ -802,9 +804,6 @@ type PublisherConsumerFactory struct {
 	waiter       sync.WaitGroup
 	rootContext  context.Context
 	rootCanceler func()
-
-	cl        sync.RWMutex
-	consumers []consumerContract
 }
 
 // NewPublisherConsumerFactory returns a new instance of a PublisherConsumerFactory.
@@ -812,11 +811,12 @@ func NewPublisherConsumerFactory(ctx context.Context, config Config) (*Publisher
 	if err := config.init(); err != nil {
 		return nil, err
 	}
-	rctx, cano := context.WithCancel(ctx)
+
+	rootCtx, rootCanceler := context.WithCancel(ctx)
 	return &PublisherConsumerFactory{
 		config:       config,
-		rootContext:  rctx,
-		rootCanceler: cano,
+		rootContext:  rootCtx,
+		rootCanceler: rootCanceler,
 	}, nil
 }
 
@@ -871,7 +871,7 @@ func (ka *PublisherConsumerFactory) NewGroupConsumer(topic string, group string,
 	}
 
 	var errRes = make(chan error, 1)
-	var co = consumerContract{consumer: consumer}
+	var co = &consumerContract{consumer: consumer}
 
 	ka.waiter.Add(1)
 	go func() {
@@ -882,10 +882,6 @@ func (ka *PublisherConsumerFactory) NewGroupConsumer(topic string, group string,
 	if err = <-errRes; err != nil {
 		return nil, err
 	}
-
-	ka.cl.Lock()
-	ka.consumers = append(ka.consumers, co)
-	ka.cl.Unlock()
 
 	return consumer, nil
 }
