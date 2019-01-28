@@ -7,6 +7,7 @@ import (
 	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 //**************************************************************************
@@ -37,7 +38,7 @@ func testMessagePublishing(t *testing.T, pubsub pubsubs.PublisherFactory) {
 func testMessagePublishingAndSubscription(t *testing.T, pubsub pubsubs.PubSubFactory) {
 	pub, err := pubsub.NewPublisher("rats")
 	assert.NoError(t, err)
-	assert.NotNil(t, pub)
+	require.NotNil(t, pub)
 
 	rec := make(chan pubsubs.Message, 1)
 	sub, err := pubsub.NewSubscriber("rats", "my-group", func(message pubsubs.Message) (pubsubs.Action, error) {
@@ -47,10 +48,6 @@ func testMessagePublishingAndSubscription(t *testing.T, pubsub pubsubs.PubSubFac
 
 	assert.NoError(t, err)
 	assert.NotNil(t, sub)
-
-	defer func(sm pubsubs.Subscription) {
-		sm.Stop()
-	}(sub)
 
 	assert.NoError(t, pub.Publish(actorkit.CreateEnvelope(actorkit.DeadLetters(), actorkit.Header{}, "300")))
 
@@ -63,6 +60,7 @@ func testMessagePublishingAndSubscription(t *testing.T, pubsub pubsubs.PubSubFac
 		assert.Fail(t, "Should have successfully received published message")
 	}
 
+	sub.Stop()
 	assert.NoError(t, pub.Close())
 }
 

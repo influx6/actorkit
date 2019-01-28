@@ -11,7 +11,7 @@ require (
 	github.com/eapache/go-resiliency v1.1.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
-	github.com/go-redis/redis v6.14.2+incompatible
+	github.com/go-redis/redis v6.15.1+incompatible
 	github.com/go-sql-driver/mysql v1.4.1 // indirect
 	github.com/gogo/protobuf v1.1.1 // indirect
 	github.com/gokit/errors v0.0.0-20181111123208-c5d2423f57fe

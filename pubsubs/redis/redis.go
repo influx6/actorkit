@@ -5,18 +5,15 @@ import (
 	"fmt"
 	"sync"
 
+	redis "github.com/go-redis/redis"
 	"github.com/gokit/actorkit"
-
-	pubsub "github.com/go-redis/redis"
-
-	"github.com/gokit/xid"
-
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/errors"
+	"github.com/gokit/xid"
 )
 
 const (
-	subIDFormat = "_actorkit_natsio_nats_%s_%d"
+	subIDFormat = "_actorkit_redis_%s_%d"
 )
 
 //*****************************************************************************
@@ -63,23 +60,22 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 // Config provides a config struct for instantiating a Publisher type.
 type Config struct {
 	URL         string
-	Options     pubsub.Options
+	Options     redis.Options
 	Marshaler   pubsubs.Marshaler
 	Unmarshaler pubsubs.Unmarshaler
 	Log         actorkit.Logs
 }
 
-// PublisherSubscriberFactory implements a Google pubsub Publisher factory which handles
+// PublisherSubscriberFactory implements a Google redis Publisher factory which handles
 // creation of publishers for topic publishing and management.
 type PublisherSubscriberFactory struct {
-	id     xid.ID
-	config Config
-	waiter sync.WaitGroup
-
+	id       xid.ID
+	config   Config
+	waiter   sync.WaitGroup
+	client   *redis.Client
 	ctx      context.Context
 	canceler func()
 
-	c    *pubsub.Client
 	pl   sync.RWMutex
 	pubs map[string]*Publisher
 
@@ -99,15 +95,18 @@ func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*Publish
 	pb.ctx, pb.canceler = context.WithCancel(ctx)
 
 	// create redis client
-	client := pubsub.NewClient(&pb.config.Options)
+	client := redis.NewClient(&pb.config.Options)
 
 	// verify that redis server is working with ping-pong.
 	status := client.Ping()
 	if err := status.Err(); err != nil {
-		return &pb, errors.Wrap(err, "Failed to create nats-streaming client")
+		return nil, errors.Wrap(err, "Failed to create nats-streaming client")
 	}
 
-	pb.c = client
+	fmt.Printf("REDIS-PUBF: %#v\n", client)
+
+	pb.client = client
+	fmt.Printf("REDIS-PUBF: %#v\n", pb.client)
 	return &pb, nil
 }
 
@@ -120,17 +119,19 @@ func (pf *PublisherSubscriberFactory) Wait() {
 func (pf *PublisherSubscriberFactory) Close() error {
 	pf.canceler()
 	pf.waiter.Wait()
-	return pf.c.Close()
+	return pf.client.Close()
 }
 
 // Subscribe returns a new subscription for a giving topic which will be used for processing
 // messages for giving topic from the NATS streaming provider. If the topic already has a subscriber then
 // a subscriber with a ever increasing _id is added and returned, the subscriber receives the giving
 // topic_id as durable name for it's subscription.
-func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver func(pubsubs.Message) error) (*Subscription, error) {
-	if sub, ok := pf.getSubscription(topic); ok {
-		return sub, nil
-	}
+func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver) (*Subscription, error) {
+	//if sub, ok := pf.getSubscription(topic); ok {
+	//	return sub, nil
+	//}
+
+	fmt.Printf("REDIS-PUBF: %#v\n", pf.client)
 
 	pf.sl.RLock()
 	last := pf.topics[topic]
@@ -138,13 +139,15 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 
 	last++
 
+	fmt.Printf("MEM: %#v\n", pf.client)
+
 	var sub Subscription
 	sub.topic = topic
-	sub.client = pf.c
+	sub.client = pf.client
 	sub.receiver = receiver
 	sub.m = pf.config.Unmarshaler
 	sub.errs = make(chan error, 1)
-	sub.ctx, sub.canceler = context.WithCancel(sub.ctx)
+	sub.ctx, sub.canceler = context.WithCancel(pf.ctx)
 
 	if id == "" {
 		sub.id = fmt.Sprintf(subIDFormat, topic, last)
@@ -173,7 +176,7 @@ func (pf *PublisherSubscriberFactory) Publisher(topic string) (*Publisher, error
 		return pm, nil
 	}
 
-	pub := NewPublisher(pf.ctx, topic, pf.c, pf.config.Marshaler)
+	pub := NewPublisher(pf.ctx, topic, pf.client, pf.config.Marshaler)
 	pf.addPublisher(pub)
 
 	pf.waiter.Add(1)
@@ -223,21 +226,21 @@ func (pf *PublisherSubscriberFactory) hasSubscription(topic string) bool {
 // Publisher
 //*****************************************************************************
 
-// Publisher implements the topic publishing provider for the google pubsub
+// Publisher implements the topic publishing provider for the google redis
 // layer.
 type Publisher struct {
 	topic    string
 	error    chan error
 	canceler func()
 	actions  chan func()
-	sink     *pubsub.Client
+	sink     *redis.Client
 	ctx      context.Context
 	m        pubsubs.Marshaler
 	log      actorkit.Logs
 }
 
 // NewPublisher returns a new instance of a Publisher.
-func NewPublisher(ctx context.Context, topic string, sink *pubsub.Client, marshaler pubsubs.Marshaler) *Publisher {
+func NewPublisher(ctx context.Context, topic string, sink *redis.Client, marshaler pubsubs.Marshaler) *Publisher {
 	pctx, canceler := context.WithCancel(ctx)
 	return &Publisher{
 		ctx:      pctx,
@@ -317,12 +320,12 @@ type Subscription struct {
 	errs     chan error
 	canceler func()
 	waiter   sync.WaitGroup
-	client   *pubsub.Client
-	sub      *pubsub.PubSub
+	client   *redis.Client
+	sub      *redis.PubSub
 	ctx      context.Context
 	log      actorkit.Logs
 	m        pubsubs.Unmarshaler
-	receiver func(pubsubs.Message) error
+	receiver pubsubs.Receiver
 }
 
 // Topic returns the topic name of giving subscription.
@@ -352,7 +355,7 @@ func (s *Subscription) Stop() error {
 	return nil
 }
 
-func (s *Subscription) handle(msg *pubsub.Message) {
+func (s *Subscription) handle(msg *redis.Message) {
 	payload := []byte(msg.Payload)
 	decoded, err := s.m.Unmarshal(payload)
 	if err != nil {
@@ -362,7 +365,7 @@ func (s *Subscription) handle(msg *pubsub.Message) {
 		return
 	}
 
-	if err := s.receiver(pubsubs.Message{Topic: msg.Channel, Envelope: decoded}); err != nil {
+	if _, err := s.receiver(pubsubs.Message{Topic: msg.Channel, Envelope: decoded}); err != nil {
 		if s.log != nil {
 			s.log.Emit(actorkit.ERROR, pubsubs.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: payload, Topic: msg.Channel})
 		}
