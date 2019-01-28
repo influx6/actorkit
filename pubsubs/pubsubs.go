@@ -5,11 +5,13 @@ import (
 	"github.com/gokit/errors"
 )
 
-// SubscriberTopicFormat defines the expected format for a subscriber group name, queue name can be formulated.
-const SubscriberTopicFormat = "/pubsub/%s/project/%s/topics/%s/subscriber/%s"
+const (
+	// SubscriberTopicFormat defines the expected format for a subscriber group name, queue name can be formulated.
+	SubscriberTopicFormat = "/pubsub/%s/project/%s/topics/%s/subscriber/%s"
 
-// QueueGroupSubscriberTopicFormat defines the expected format for a subscriber queue group name, queue name can be formulated.
-const QueueGroupSubscriberTopicFormat = "/pubsub/%s/project/%s/topics/%s/subscriber/%s/%s"
+	// QueueGroupSubscriberTopicFormat defines the expected format for a subscriber queue group name, queue name can be formulated.
+	QueueGroupSubscriberTopicFormat = "/pubsub/%s/project/%s/topics/%s/subscriber/%s/%s"
+)
 
 var (
 	// ErrNotSupported is returned when a giving feature or method has no implementation

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -145,6 +146,58 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 }
 
 //*****************************************************************************
+// Config
+//*****************************************************************************
+
+// Config provides a config struct for instantiating a Publisher type.
+type Config struct {
+	ProjectID   string
+	Log         actorkit.Logs
+	Marshaler   pubsubs.Marshaler
+	Unmarshaler pubsubs.Unmarshaler
+
+	// MessageDeliveryTimeout is the timeout to wait before response
+	// from the underline message broker before timeout.
+	MessageDeliveryTimeout time.Duration
+
+	// CreateMissingTopic flags dictates if we will create a topic if
+	// it does not already exists in the google cloud.
+	CreateMissingTopic bool
+
+	//
+	PublishSettings *pubsub.PublishSettings
+	ClientOptions   []option.ClientOption
+
+	ConsumersCount            int
+	MaxOutStandingMessage     int
+	MaxOutStandingBytes       int
+	MaxExtension              time.Duration
+	DefaultSubscriptionConfig pubsub.SubscriptionConfig
+}
+
+func (c *Config) init() error {
+	if c.Log == nil {
+		c.Log = &actorkit.DrainLog{}
+	}
+	if c.Unmarshaler == nil {
+		return errors.New("Config.Unmarshaler must be provided")
+	}
+	if c.Marshaler == nil {
+		return errors.New("Config.Marshaler must be provided")
+	}
+	if c.MessageDeliveryTimeout <= 0 {
+		c.MessageDeliveryTimeout = 5 * time.Second
+	}
+	if c.ProjectID == "" {
+		c.ProjectID = actorkit.PackageName
+	}
+	if c.ConsumersCount == 0 {
+		c.ConsumersCount = runtime.NumCPU()
+	}
+	return nil
+}
+
+//*****************************************************************************
 // Publisher
 //*****************************************************************************
 
@@ -164,19 +217,15 @@ type PublisherFactory struct {
 	config PublisherConfig
 	waiter sync.WaitGroup
 
-	ctx      context.Context
 	canceler func()
-
-	c      *pubsub.Client
-	pl     sync.RWMutex
-	topics map[string]*Publisher
+	ctx      context.Context
+	c        *pubsub.Client
 }
 
 // NewPublisherFactory returns a new instance of publisher factory.
 func NewPublisherFactory(ctx context.Context, config PublisherConfig) (*PublisherFactory, error) {
 	var pb PublisherFactory
 	pb.config = config
-	pb.topics = map[string]*Publisher{}
 	pb.ctx, pb.canceler = context.WithCancel(ctx)
 
 	client, err := pubsub.NewClient(pb.ctx, pb.config.ProjectID, pb.config.ClientOptions...)
@@ -205,12 +254,7 @@ func (pf *PublisherFactory) Close() error {
 // for topic and returned, else an error is returned if not found or due to some other
 // issues.
 func (pf *PublisherFactory) Publisher(topic string, setting *pubsub.PublishSettings) (*Publisher, error) {
-	if pm, ok := pf.getPublisher(topic); ok {
-		return pm, nil
-	}
-
 	t := pf.c.Topic(topic)
-
 	tExists, err := t.Exists(pf.ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to get topic %q", topic)
@@ -236,8 +280,6 @@ func (pf *PublisherFactory) Publisher(topic string, setting *pubsub.PublishSetti
 	}
 
 	pub := NewPublisher(pf.ctx, topic, t, &pf.config)
-	pf.addPublisher(pub)
-
 	pf.waiter.Add(1)
 	go func() {
 		defer pf.waiter.Done()
@@ -245,26 +287,6 @@ func (pf *PublisherFactory) Publisher(topic string, setting *pubsub.PublishSetti
 	}()
 
 	return pub, nil
-}
-
-func (pf *PublisherFactory) addPublisher(pb *Publisher) {
-	pf.pl.Lock()
-	pf.topics[pb.topic] = pb
-	pf.pl.Unlock()
-}
-
-func (pf *PublisherFactory) getPublisher(topic string) (*Publisher, bool) {
-	pf.pl.RLock()
-	defer pf.pl.RUnlock()
-	pm, ok := pf.topics[topic]
-	return pm, ok
-}
-
-func (pf *PublisherFactory) hasPublisher(topic string) bool {
-	pf.pl.RLock()
-	defer pf.pl.RUnlock()
-	_, ok := pf.topics[topic]
-	return ok
 }
 
 // Publisher implements the topic publishing provider for the google pubsub
@@ -385,10 +407,6 @@ type SubscriptionFactory struct {
 
 // NewSubscriptionFactory returns a new instance of a SubscriptionFactory.
 func NewSubscriptionFactory(ctx context.Context, config SubscriberConfig) (*SubscriptionFactory, error) {
-	if config.ConsumersCount == 0 {
-		config.ConsumersCount = runtime.NumCPU()
-	}
-
 	var sub SubscriptionFactory
 	sub.config = config
 	sub.actions = make(chan func(), 0)
@@ -443,8 +461,6 @@ func (sb *SubscriptionFactory) createSubscription(topic string, id string, confi
 		lastCount := sb.counter[topic]
 		lastCount++
 
-		newSubID := fmt.Sprintf(subIDFormat, topic, lastCount)
-
 		var co pubsub.SubscriptionConfig
 
 		if config != nil {
@@ -456,18 +472,12 @@ func (sb *SubscriptionFactory) createSubscription(topic string, id string, confi
 		var newSub Subscription
 		newSub.subc = co
 		newSub.topic = topic
-
-		if id == "" {
-			newSub.id = newSubID
-		} else {
-			newSub.id = id
-		}
-
 		newSub.log = sb.config.Log
 		newSub.receiver = receiver
 		newSub.config = &sb.config
-		newSub.ctx, newSub.canceler = context.WithCancel(sb.ctx)
+		newSub.id = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "redis", sb.config.ProjectID, topic, id)
 
+		newSub.ctx, newSub.canceler = context.WithCancel(sb.ctx)
 		if err := newSub.init(); err != nil {
 			errs <- err
 			return
@@ -563,8 +573,7 @@ func (s *Subscription) Stop() error {
 }
 
 func (s *Subscription) init() error {
-	sx := s.client.Subscription(s.id)
-
+	sx := s.client.Subscription(transformIDForGooglePubSubFormat(s.id))
 	sExists, err := sx.Exists(s.ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to check existence of subscription id %q", s.id)
@@ -588,7 +597,6 @@ func (s *Subscription) init() error {
 	}
 
 	tx := s.client.Topic(s.topic)
-
 	tExists, err := tx.Exists(s.ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to check existence of topic %q", s.topic)
@@ -654,4 +662,8 @@ func (s *Subscription) run() {
 			s.log.Emit(actorkit.ERROR, pubsubs.OpError{Err: errors.WrapOnly(err), Topic: s.topic})
 		}
 	}
+}
+
+func transformIDForGooglePubSubFormat(id string) string {
+	return strings.Replace(id, "/", "-", -1)
 }
