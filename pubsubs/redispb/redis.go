@@ -1,9 +1,12 @@
-package redis
+package redispb
 
 import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	redis "github.com/go-redis/redis"
 	"github.com/gokit/actorkit"
@@ -12,9 +15,8 @@ import (
 	"github.com/gokit/xid"
 )
 
-const (
-	subIDFormat = "_actorkit_redis_%s_%d"
-)
+// ErrBusyPublisher is returned when publisher fails to send a giving message.
+var ErrBusyPublisher = errors.New("publisher busy, try again")
 
 //*****************************************************************************
 // PubSubFactory
@@ -59,11 +61,37 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 
 // Config provides a config struct for instantiating a Publisher type.
 type Config struct {
-	URL         string
-	Options     redis.Options
+	ProjectID   string
+	Log         actorkit.Logs
+	Host        *redis.Options
 	Marshaler   pubsubs.Marshaler
 	Unmarshaler pubsubs.Unmarshaler
-	Log         actorkit.Logs
+
+	// MessageDeliveryTimeout is the timeout to wait before response
+	// from the underline message broker before timeout.
+	MessageDeliveryTimeout time.Duration
+}
+
+func (c *Config) init() error {
+	if c.Log == nil {
+		c.Log = &actorkit.DrainLog{}
+	}
+	if c.Host == nil {
+		return errors.New("Config.Host must be provided")
+	}
+	if c.Unmarshaler == nil {
+		return errors.New("Config.Unmarshaler must be provided")
+	}
+	if c.Marshaler == nil {
+		return errors.New("Config.Marshaler must be provided")
+	}
+	if c.MessageDeliveryTimeout <= 0 {
+		c.MessageDeliveryTimeout = 5 * time.Second
+	}
+	if c.ProjectID == "" {
+		c.ProjectID = actorkit.PackageName
+	}
+	return nil
 }
 
 // PublisherSubscriberFactory implements a Google redis Publisher factory which handles
@@ -86,6 +114,10 @@ type PublisherSubscriberFactory struct {
 
 // NewPublisherSubscriberFactory returns a new instance of publisher factory.
 func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
+	if err := config.init(); err != nil {
+		return nil, err
+	}
+
 	var pb PublisherSubscriberFactory
 	pb.id = xid.New()
 	pb.config = config
@@ -95,18 +127,21 @@ func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*Publish
 	pb.ctx, pb.canceler = context.WithCancel(ctx)
 
 	// create redis client
-	client := redis.NewClient(&pb.config.Options)
+	client := redis.NewClient(pb.config.Host)
+
+	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsg("Creating redis connection").
+		String("url", pb.config.Host.Addr))
 
 	// verify that redis server is working with ping-pong.
 	status := client.Ping()
 	if err := status.Err(); err != nil {
-		return nil, errors.Wrap(err, "Failed to create nats-streaming client")
+		return nil, errors.Wrap(err, "Failed to connect successfully redis client")
 	}
 
-	fmt.Printf("REDIS-PUBF: %#v\n", client)
+	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsg("Created redis connection").
+		String("url", pb.config.Host.Addr))
 
 	pb.client = client
-	fmt.Printf("REDIS-PUBF: %#v\n", pb.client)
 	return &pb, nil
 }
 
@@ -127,42 +162,42 @@ func (pf *PublisherSubscriberFactory) Close() error {
 // a subscriber with a ever increasing _id is added and returned, the subscriber receives the giving
 // topic_id as durable name for it's subscription.
 func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver) (*Subscription, error) {
-	//if sub, ok := pf.getSubscription(topic); ok {
-	//	return sub, nil
-	//}
+	if topic == "" {
+		return nil, errors.New("topic value can not be empty")
+	}
 
-	fmt.Printf("REDIS-PUBF: %#v\n", pf.client)
+	if id == "" {
+		return nil, errors.New("id value can not be empty")
+	}
 
-	pf.sl.RLock()
-	last := pf.topics[topic]
-	pf.sl.RUnlock()
+	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "redis", pf.config.ProjectID, topic, id)
 
-	last++
-
-	fmt.Printf("MEM: %#v\n", pf.client)
+	actorkit.LogMsg("Subscribing to redis topic").
+		String("url", pf.config.Host.Addr).
+		String("topic", topic).
+		String("id", subid).
+		Write(actorkit.DEBUG, pf.config.Log)
 
 	var sub Subscription
+	sub.id = subid
 	sub.topic = topic
 	sub.client = pf.client
 	sub.receiver = receiver
-	sub.m = pf.config.Unmarshaler
+	sub.config = &pf.config
 	sub.errs = make(chan error, 1)
 	sub.ctx, sub.canceler = context.WithCancel(pf.ctx)
 
-	if id == "" {
-		sub.id = fmt.Sprintf(subIDFormat, topic, last)
-	} else {
-		sub.id = id
-	}
-
 	if err := sub.init(); err != nil {
+		actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
+			event.String("topic", topic).String("host", pf.config.Host.Addr)
+		}).Write(actorkit.ERROR, pf.config.Log)
 		return nil, err
 	}
 
-	pf.sl.Lock()
-	pf.subs[sub.id] = &sub
-	pf.topics[topic] = last
-	pf.sl.Unlock()
+	actorkit.LogMsg("Subscribed to redis topic").
+		String("topic", topic).
+		String("url", pf.config.Host.Addr).
+		String("id", subid).Write(actorkit.DEBUG, pf.config.Log)
 
 	return &sub, nil
 }
@@ -172,54 +207,24 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 // for topic and returned, else an error is returned if not found or due to some other
 // issues.
 func (pf *PublisherSubscriberFactory) Publisher(topic string) (*Publisher, error) {
-	if pm, ok := pf.getPublisher(topic); ok {
-		return pm, nil
-	}
+	actorkit.LogMsg("Creating new publisher to redis topic").
+		String("topic", topic).
+		String("url", pf.config.Host.Addr).
+		Write(actorkit.DEBUG, pf.config.Log)
 
-	pub := NewPublisher(pf.ctx, topic, pf.client, pf.config.Marshaler)
-	pf.addPublisher(pub)
-
+	pub := NewPublisher(pf.ctx, &pf.config, topic, pf.client, pf.config.Marshaler)
 	pf.waiter.Add(1)
 	go func() {
 		defer pf.waiter.Done()
 		pub.run()
 	}()
 
+	actorkit.LogMsg("Created new publisher to redis topic").
+		String("topic", topic).
+		String("url", pf.config.Host.Addr).
+		Write(actorkit.DEBUG, pf.config.Log)
+
 	return pub, nil
-}
-
-func (pf *PublisherSubscriberFactory) addPublisher(pb *Publisher) {
-	pf.pl.Lock()
-	pf.pubs[pb.topic] = pb
-	pf.pl.Unlock()
-}
-
-func (pf *PublisherSubscriberFactory) getPublisher(topic string) (*Publisher, bool) {
-	pf.pl.RLock()
-	defer pf.pl.RUnlock()
-	pm, ok := pf.pubs[topic]
-	return pm, ok
-}
-
-func (pf *PublisherSubscriberFactory) hasPublisher(topic string) bool {
-	pf.pl.RLock()
-	defer pf.pl.RUnlock()
-	_, ok := pf.pubs[topic]
-	return ok
-}
-
-func (pf *PublisherSubscriberFactory) getSubscription(topic string) (*Subscription, bool) {
-	pf.sl.RLock()
-	defer pf.sl.RUnlock()
-	pm, ok := pf.subs[topic]
-	return pm, ok
-}
-
-func (pf *PublisherSubscriberFactory) hasSubscription(topic string) bool {
-	pf.sl.RLock()
-	defer pf.sl.RUnlock()
-	_, ok := pf.subs[topic]
-	return ok
 }
 
 //*****************************************************************************
@@ -230,19 +235,20 @@ func (pf *PublisherSubscriberFactory) hasSubscription(topic string) bool {
 // layer.
 type Publisher struct {
 	topic    string
+	config   *Config
 	error    chan error
 	canceler func()
 	actions  chan func()
 	sink     *redis.Client
 	ctx      context.Context
-	m        pubsubs.Marshaler
 	log      actorkit.Logs
 }
 
 // NewPublisher returns a new instance of a Publisher.
-func NewPublisher(ctx context.Context, topic string, sink *redis.Client, marshaler pubsubs.Marshaler) *Publisher {
+func NewPublisher(ctx context.Context, cfg *Config, topic string, sink *redis.Client, marshaler pubsubs.Marshaler) *Publisher {
 	pctx, canceler := context.WithCancel(ctx)
 	return &Publisher{
+		config:   cfg,
 		ctx:      pctx,
 		canceler: canceler,
 		sink:     sink,
@@ -263,26 +269,39 @@ func (p *Publisher) Close() error {
 func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	errs := make(chan error, 1)
 	action := func() {
-		marshaled, err := p.m.Marshal(msg)
+		marshaled, err := p.config.Marshaler.Marshal(msg)
 		if err != nil {
-			em := errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
-			if p.log != nil {
-				p.log.Emit(actorkit.ERROR, pubsubs.MarshalingError{Err: em, Data: msg})
-			}
-			errs <- em
+			err = errors.Wrap(err, "Failed to marshal incoming message: %%v", msg)
+			actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
+				event.String("topic", p.topic).String("", p.config.Host.Addr)
+			}).Write(actorkit.ERROR, p.config.Log)
+
+			errs <- err
 			return
 		}
+
+		actorkit.LogMsg("Sending new message to topic").
+			String("topic", p.topic).
+			String("url", p.config.Host.Addr).
+			QBytes("message", marshaled).
+			Write(actorkit.DEBUG, p.config.Log)
 
 		status := p.sink.Publish(p.topic, marshaled)
 		if err := status.Err(); err != nil {
-			sem := errors.Wrap(err, "Failed to publish message")
-			if p.log != nil {
-				p.log.Emit(actorkit.ERROR, pubsubs.PublishError{Err: sem, Data: marshaled, Topic: p.topic})
-			}
+			err = errors.Wrap(err, "Failed to publish message")
+			actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
+				event.String("topic", p.topic).String("", p.config.Host.Addr)
+			}).Write(actorkit.ERROR, p.config.Log)
 
-			errs <- sem
+			errs <- err
 			return
 		}
+
+		actorkit.LogMsg("Sent message to topic").
+			String("topic", p.topic).
+			String("url", p.config.Host.Addr).
+			QBytes("message", marshaled).
+			Write(actorkit.DEBUG, p.config.Log)
 
 		errs <- nil
 	}
@@ -290,8 +309,8 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	select {
 	case p.actions <- action:
 		return <-errs
-	default:
-		return errors.New("message failed to be published")
+	case <-time.After(p.config.MessageDeliveryTimeout):
+		return errors.WrapOnly(ErrBusyPublisher)
 	}
 }
 
@@ -319,12 +338,12 @@ type Subscription struct {
 	topic    string
 	errs     chan error
 	canceler func()
-	waiter   sync.WaitGroup
+	config   *Config
+	waiter   errgroup.Group
 	client   *redis.Client
 	sub      *redis.PubSub
 	ctx      context.Context
 	log      actorkit.Logs
-	m        pubsubs.Unmarshaler
 	receiver pubsubs.Receiver
 }
 
@@ -351,57 +370,77 @@ func (s *Subscription) Error() error {
 // Stop ends giving subscription and it's operation in listening to given topic.
 func (s *Subscription) Stop() error {
 	s.canceler()
-	s.waiter.Wait()
-	return nil
+	return s.waiter.Wait()
 }
 
 func (s *Subscription) handle(msg *redis.Message) {
 	payload := []byte(msg.Payload)
-	decoded, err := s.m.Unmarshal(payload)
+	decoded, err := s.config.Unmarshaler.Unmarshal(payload)
 	if err != nil {
-		if s.log != nil {
-			s.log.Emit(actorkit.ERROR, pubsubs.UnmarshalingError{Err: errors.Wrap(err, "Failed to marshal message"), Data: payload})
-		}
+		err = errors.Wrap(err, "Failed to marshal message")
+		actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
+			event.String("topic", s.topic).String("", s.config.Host.Addr)
+		}).Write(actorkit.ERROR, s.config.Log)
 		return
 	}
 
 	if _, err := s.receiver(pubsubs.Message{Topic: msg.Channel, Envelope: decoded}); err != nil {
-		if s.log != nil {
-			s.log.Emit(actorkit.ERROR, pubsubs.MessageHandlingError{Err: errors.Wrap(err, "Failed to process message"), Data: payload, Topic: msg.Channel})
-		}
+		err = errors.Wrap(err, "Failed to process message")
+		actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
+			event.String("topic", s.topic).
+				String("", s.config.Host.Addr).
+				QBytes("payload", payload).
+				String("channel", msg.Channel)
+		}).Write(actorkit.ERROR, s.config.Log)
 	}
 }
 
 func (s *Subscription) init() error {
 	s.sub = s.client.Subscribe(s.topic)
+	if err := s.sub.Ping(); err != nil {
+		return err
+	}
+	if err := s.sub.Subscribe(s.topic); err != nil {
+		return err
+	}
 
-	s.waiter.Add(1)
-	go s.run()
+	s.waiter.Go(s.run)
+
+	// BUG: It seems we need to give redis a second to prepare,
+	// else messages may not be received or be unstable.
+	s.awaitReadiness()
 
 	return nil
 }
 
-func (s *Subscription) stopSub() {
-	if err := s.sub.Unsubscribe(s.topic); err != nil {
-		if s.log != nil {
-			s.log.Emit(actorkit.ERROR, pubsubs.DesubscriptionError{Err: errors.WrapOnly(err), Topic: s.topic})
-		}
-	}
-
-	s.errs <- s.sub.Close()
+func (s *Subscription) awaitReadiness() {
+	<-time.After(1 * time.Millisecond)
 }
 
-func (s *Subscription) run() {
-	defer s.waiter.Done()
+func (s *Subscription) stopSub() error {
+	if err := s.sub.Unsubscribe(s.topic); err != nil {
+		err = errors.Wrap(err, "Failed to unsubscribe from topic")
+		actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
+			event.String("topic", s.topic).
+				String("", s.config.Host.Addr).
+				String("topic", s.topic)
+		}).Write(actorkit.ERROR, s.config.Log)
+		return err
+	}
+	return nil
+}
+
+func (s *Subscription) run() error {
 	receiver := s.sub.Channel()
+	closer := s.ctx.Done()
+
 	for {
 		select {
-		case <-s.ctx.Done():
-			s.stopSub()
+		case <-closer:
+			return s.stopSub()
 		case msg, ok := <-receiver:
 			if !ok {
-				s.stopSub()
-				return
+				return s.stopSub()
 			}
 
 			s.handle(msg)

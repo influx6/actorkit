@@ -164,7 +164,7 @@ type Receiver func(Message) (Action, error)
 
 // SubscriptionFactory exposes a given method for the creation of a subscription.
 type SubscriptionFactory interface {
-	NewSubscriber(string, string, Receiver) (Subscription, error)
+	NewSubscriber(topic string, id string, r Receiver) (Subscription, error)
 }
 
 // QueueGroupSubscriptionFactory exposes a given method for the creation of a subscription.

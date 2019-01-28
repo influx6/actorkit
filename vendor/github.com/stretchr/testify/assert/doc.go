@@ -13,7 +13,7 @@
 //      var a string = "Hello"
 //      var b string = "Hello"
 //
-//      assert.Equal(t, a, b, "The two words should be the same.")
+//      require.Equal(t, a, b, "The two words should be the same.")
 //
 //    }
 //
@@ -25,12 +25,12 @@
 //    )
 //
 //    func TestSomething(t *testing.T) {
-//      assert := assert.New(t)
+//      assert := require.New(t)
 //
 //      var a string = "Hello"
 //      var b string = "Hello"
 //
-//      assert.Equal(a, b, "The two words should be the same.")
+//      require.Equal(a, b, "The two words should be the same.")
 //    }
 //
 // Assertions

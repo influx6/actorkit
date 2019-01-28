@@ -20,8 +20,8 @@ func TestSegments(t *testing.T) {
 		Unmarshaler: segment.UnmarshalerWrapper{Envelope: encoders.NoAddressUnmarshaler{}},
 	})
 
-	assert.NoError(t, err)
-	assert.NotNil(t, kpub)
+	require.NoError(t, err)
+	require.NotNil(t, kpub)
 
 	if err != nil {
 		return

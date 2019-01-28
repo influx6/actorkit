@@ -22,8 +22,8 @@ func TestKafka(t *testing.T) {
 		},
 	})
 
-	assert.NoError(t, err)
-	assert.NotNil(t, publishers)
+	require.NoError(t, err)
+	require.NotNil(t, publishers)
 
 	subscribers, err := google.NewSubscriptionFactory(context.Background(), google.SubscriberConfig{
 		ProjectID: "",
@@ -32,8 +32,8 @@ func TestKafka(t *testing.T) {
 		},
 	})
 
-	assert.NoError(t, err)
-	assert.NotNil(t, subscribers)
+	require.NoError(t, err)
+	require.NotNil(t, subscribers)
 
 	factory := google.PubSubFactory(func(factory *google.PublisherFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.Publisher(topic, &gpubsub.PublishSettings{})

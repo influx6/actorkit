@@ -124,7 +124,7 @@ type PublisherHandler func(*PublisherConsumerFactory, string) (pubsubs.Publisher
 // details added and instantiated.
 type SubscriberHandler func(*PublisherConsumerFactory, string, string, pubsubs.Receiver) (pubsubs.Subscription, error)
 
-// GroupSubscribeHandler defines a function returning a subscription to a topic for a giving queue group.
+// GroupSubscriberHandler defines a function returning a subscription to a topic for a giving queue group.
 type GroupSubscriberHandler func(*PublisherConsumerFactory, string, string, string, pubsubs.Receiver) (pubsubs.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
@@ -277,6 +277,18 @@ func (ka *PublisherConsumerFactory) NewPublisher(topic string, userOverrides *ka
 // NewGroupConsumer return a new consumer for a giving topic within a giving group to be used for kafka.
 // The provided id value if not empty will be used as the group.id.
 func (ka *PublisherConsumerFactory) NewGroupConsumer(topic string, group string, id string, receiver pubsubs.Receiver) (*Consumer, error) {
+	if topic == "" {
+		return nil, errors.New("topic value can not be empty")
+	}
+
+	if id == "" {
+		return nil, errors.New("id value can not be empty")
+	}
+
+	if group == "" {
+		return nil, errors.New("group value can not be empty")
+	}
+
 	consumer, err := NewConsumer(ka.rootContext, &ka.config, group, id, topic, receiver)
 	if err != nil {
 		return nil, err
@@ -305,6 +317,14 @@ func (ka *PublisherConsumerFactory) NewGroupConsumer(topic string, group string,
 // NewConsumer return a new consumer for a giving topic to be used for kafka.
 // The provided id value if not empty will be used as the group.id.
 func (ka *PublisherConsumerFactory) NewConsumer(topic string, id string, receiver pubsubs.Receiver) (*Consumer, error) {
+	if topic == "" {
+		return nil, errors.New("topic value can not be empty")
+	}
+
+	if id == "" {
+		return nil, errors.New("id value can not be empty")
+	}
+
 	consumer, err := NewConsumer(ka.rootContext, &ka.config, "", id, topic, receiver)
 	if err != nil {
 		return nil, err
@@ -367,14 +387,15 @@ func NewConsumer(ctx context.Context, config *Config, group string, id string, t
 		id = xid.New().String()
 	}
 
+	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "librdkafka/kafka", config.ProjectID, topic, id)
 	if group == "" {
-		group = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "kafka", config.ProjectID, topic, id)
+		group = subid
 	}
 
 	kafkaConfig, err := generateConsumerConfig(group, config)
 	if err != nil {
 		err = errors.WrapOnly(err)
-		config.Log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+		config.Log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", topic).String("group", group)
 		}))
 		return nil, err
@@ -383,7 +404,7 @@ func NewConsumer(ctx context.Context, config *Config, group string, id string, t
 	kconsumer, err := kafka.NewConsumer(&kafkaConfig)
 	if err != nil {
 		err = errors.WrapOnly(err)
-		config.Log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+		config.Log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", topic).String("group", group)
 		}))
 		return nil, err
@@ -392,7 +413,7 @@ func NewConsumer(ctx context.Context, config *Config, group string, id string, t
 	rctx, can := context.WithCancel(ctx)
 
 	return &Consumer{
-		id:          group,
+		id:          subid,
 		config:      config,
 		topic:       topic,
 		receiver:    receiver,
@@ -409,7 +430,7 @@ func NewConsumer(ctx context.Context, config *Config, group string, id string, t
 func (c *Consumer) Consume() error {
 	if err := c.consumer.Subscribe(c.topic, nil); err != nil {
 		err = errors.Wrap(err, "Failed to subscribe to topic %q", c.topic)
-		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", c.topic).String("group", c.id)
 		}))
 		return err
@@ -421,18 +442,18 @@ func (c *Consumer) Consume() error {
 }
 
 // Topic returns the topic name of giving subscription.
-func (s *Consumer) Topic() string {
-	return s.topic
+func (c *Consumer) Topic() string {
+	return c.topic
 }
 
 // Group returns the group or queue group name of giving subscription.
-func (s *Consumer) Group() string {
+func (c *Consumer) Group() string {
 	return ""
 }
 
 // ID returns the identification of giving subscription used for durability if supported.
-func (s *Consumer) ID() string {
-	return s.id
+func (c *Consumer) ID() string {
+	return c.id
 }
 
 // Stop stops the giving consumer, ending all consuming operations.
@@ -449,7 +470,7 @@ func (c *Consumer) Wait() {
 func (c *Consumer) close() error {
 	if err := c.consumer.Close(); err != nil {
 		err = errors.Wrap(err, "Failed to close consumer adequately for topic %q", c.topic)
-		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", c.topic).String("group", c.id)
 		}))
 		return err
@@ -494,20 +515,20 @@ func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 	rec, err := c.config.Unmarshaler.Unmarshal(msg)
 	if err != nil {
 		err = errors.WrapOnly(err)
-		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", c.topic).String("group", c.id)
 		}))
 		return err
 	}
 
-	c.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("received new message", "context", nil).With(func(event actorkit.LogEvent) {
+	c.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("received new message", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", c.topic).String("group", c.id).ObjectJSON("message", rec)
 	}))
 
 	action, err := c.receiver(rec)
 	if err != nil {
 		err = errors.WrapOnly(err)
-		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", c.topic).String("group", c.id)
 		}))
 		return c.handleError(err, action, msg)
@@ -515,13 +536,13 @@ func (c *Consumer) handleIncomingMessage(msg *kafka.Message) error {
 
 	if _, err := c.consumer.StoreOffsets([]kafka.TopicPartition{msg.TopicPartition}); err != nil {
 		err = errors.WrapOnly(err)
-		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", c.topic).String("group", c.id)
 		}))
 		return err
 	}
 
-	c.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("consumed new message", "context", nil).With(func(event actorkit.LogEvent) {
+	c.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("consumed new message", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", c.topic).String("group", c.id).ObjectJSON("message", rec)
 	}))
 
@@ -544,7 +565,7 @@ func (c *Consumer) handleError(err error, action pubsubs.Action, msg *kafka.Mess
 func (c *Consumer) rollback(msg *kafka.Message) error {
 	if err := c.consumer.Seek(msg.TopicPartition, 1000*60); err != nil {
 		err = errors.Wrap(err, "Failed to rollback message")
-		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		c.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", c.topic).String("group", c.id)
 		}))
 		return err
@@ -591,13 +612,13 @@ func NewPublisher(ctx context.Context, config *Config, kafkaConfig kafka.ConfigM
 	producer, err := kafka.NewProducer(kap.kafkaConfig)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to create new Producer")
-		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", topic).ObjectJSON("config", kap.kafkaConfig)
 		}))
 		return nil, err
 	}
 
-	kap.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Created producer for topic", "context", nil).With(func(event actorkit.LogEvent) {
+	kap.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Created producer for topic", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", topic).String("addr", producer.String()).ObjectJSON("config", kap.kafkaConfig)
 	}))
 
@@ -626,26 +647,26 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 	encoded, err := ka.config.Marshaler.Marshal(pubsubs.Message{Topic: ka.topic, Envelope: msg})
 	if err != nil {
 		err = errors.Wrap(err, "Failed to marshal incoming message")
-		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", msg)
 		}))
 		return err
 	}
 
-	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("publishing new message", "context", nil).With(func(event actorkit.LogEvent) {
+	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("publishing new message", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
 	}))
 
 	res := make(chan kafka.Event)
 	if err := ka.producer.Produce(&encoded, res); err != nil {
 		err = errors.Wrap(err, "failed to send message to producer")
-		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", msg)
 		}))
 		return err
 	}
 
-	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("reading event message", "context", nil).With(func(event actorkit.LogEvent) {
+	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("reading event message", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
 	}))
 
@@ -653,12 +674,12 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 
 	select {
 	case event = <-res:
-		ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("event message received", "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("event message received", "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", encoded).ObjectJSON("event", event)
 		}))
 	case <-time.After(ka.config.MessageDeliveryTimeout):
 		err := errors.New("timeout: failed to receive response on event channel")
-		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", msg)
 		}))
 		return err
@@ -667,7 +688,7 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 	kmessage, ok := event.(*kafka.Message)
 	if ok {
 		err = errors.New("failed to receive *Kafka.Message as event response")
-		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", msg)
 		}))
 		return err
@@ -675,13 +696,13 @@ func (ka *Publisher) Publish(msg actorkit.Envelope) error {
 
 	if kmessage.TopicPartition.Error != nil {
 		err = errors.Wrap(kmessage.TopicPartition.Error, "failed to deliver message to kafka topic")
-		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", msg)
 		}))
 		return err
 	}
 
-	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event actorkit.LogEvent) {
+	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
 	}))
 	return nil
@@ -728,7 +749,7 @@ func generateConsumerConfig(id string, config *Config) (kafka.ConfigMap, error) 
 
 func generateProducerConfig(config *Config) (kafka.ConfigMap, error) {
 	konfig := kafka.ConfigMap{
-		"debug": ",",
+		"debug":                        ",",
 		"queue.buffering.max.messages": 10000000,
 		"queue.buffering.max.kbytes":   2097151,
 	}

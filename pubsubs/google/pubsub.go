@@ -409,6 +409,14 @@ func NewSubscriptionFactory(ctx context.Context, config SubscriberConfig) (*Subs
 // Subscribe subscribes to a giving topic, if one exists then a new subscription with a ever incrementing id is assigned
 // to new subscription.
 func (sb *SubscriptionFactory) Subscribe(topic string, id string, config *pubsub.SubscriptionConfig, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
+	if topic == "" {
+		return nil, errors.New("topic value can not be empty")
+	}
+
+	if id == "" {
+		return nil, errors.New("id value can not be empty")
+	}
+
 	return sb.createSubscription(topic, id, config, receiver)
 }
 

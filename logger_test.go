@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/gokit/actorkit"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetLogEvent(t *testing.T) {
@@ -12,7 +12,7 @@ func TestGetLogEvent(t *testing.T) {
 		event := actorkit.LogMsg("My log")
 		event.String("name", "thunder")
 		event.Int("id", 234)
-		assert.Equal(t, "{\"message\": \"My log\", \"name\": \"thunder\", \"id\": 234}", event.Message())
+		require.Equal(t, "{\"message\": \"My log\", \"name\": \"thunder\", \"id\": 234}", event.Message())
 	})
 
 	t.Run("with JSON fields", func(t *testing.T) {
@@ -20,17 +20,17 @@ func TestGetLogEvent(t *testing.T) {
 		event.String("name", "thunder")
 		event.Int("id", 234)
 		event.ObjectJSON("data", map[string]interface{}{"id": 23})
-		assert.Equal(t, "{\"message\": \"My log\", \"name\": \"thunder\", \"id\": 234, \"data\": {\"id\":23}}", event.Message())
+		require.Equal(t, "{\"message\": \"My log\", \"name\": \"thunder\", \"id\": 234, \"data\": {\"id\":23}}", event.Message())
 	})
 
 	t.Run("with Entry fields", func(t *testing.T) {
 		event := actorkit.LogMsg("My log")
 		event.String("name", "thunder")
 		event.Int("id", 234)
-		event.Object("data", func(event actorkit.LogEvent) {
+		event.Object("data", func(event *actorkit.LogEvent) {
 			event.Int("id", 23)
 		})
-		assert.Equal(t, "{\"message\": \"My log\", \"name\": \"thunder\", \"id\": 234, \"data\": {\"id\": 23}}", event.Message())
+		require.Equal(t, "{\"message\": \"My log\", \"name\": \"thunder\", \"id\": 234, \"data\": {\"id\": 23}}", event.Message())
 	})
 
 	t.Run("with bytes fields", func(t *testing.T) {
@@ -38,24 +38,24 @@ func TestGetLogEvent(t *testing.T) {
 		event.String("name", "thunder")
 		event.Int("id", 234)
 		event.Bytes("data", []byte("{\"id\": 23}"))
-		assert.Equal(t, "{\"message\": \"My log\", \"name\": \"thunder\", \"id\": 234, \"data\": {\"id\": 23}}", event.Message())
+		require.Equal(t, "{\"message\": \"My log\", \"name\": \"thunder\", \"id\": 234, \"data\": {\"id\": 23}}", event.Message())
 	})
 
 	t.Run("using context fields", func(t *testing.T) {
 		event := actorkit.LogMsgWithContext("My log", "data", nil)
 		event.String("name", "thunder")
 		event.Int("id", 234)
-		assert.Equal(t, "{\"message\": \"My log\", \"data\": {\"name\": \"thunder\", \"id\": 234}}", event.Message())
+		require.Equal(t, "{\"message\": \"My log\", \"data\": {\"name\": \"thunder\", \"id\": 234}}", event.Message())
 	})
 
 	t.Run("using context fields with hook", func(t *testing.T) {
-		event := actorkit.LogMsgWithContext("My log", "data", func(event actorkit.LogEvent) {
+		event := actorkit.LogMsgWithContext("My log", "data", func(event *actorkit.LogEvent) {
 			event.Bool("w", true)
 		})
 
 		event.String("name", "thunder")
 		event.Int("id", 234)
-		assert.Equal(t, "{\"message\": \"My log\", \"w\": true, \"data\": {\"name\": \"thunder\", \"id\": 234}}", event.Message())
+		require.Equal(t, "{\"message\": \"My log\", \"w\": true, \"data\": {\"name\": \"thunder\", \"id\": 234}}", event.Message())
 	})
 }
 
@@ -97,7 +97,7 @@ func BenchmarkGetLogEvent(b *testing.B) {
 			event := actorkit.LogMsg("My log")
 			event.String("name", "thunder")
 			event.Int("id", 234)
-			event.Object("data", func(event actorkit.LogEvent) {
+			event.Object("data", func(event *actorkit.LogEvent) {
 				event.Int("id", 23)
 			})
 			event.Message()

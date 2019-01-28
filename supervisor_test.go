@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/gokit/actorkit/internal"
 
 	"github.com/gokit/actorkit"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestExponentialBackoffRestartSupervisor(t *testing.T) {
@@ -20,19 +21,19 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 			return &internal.TLog{}
 		}),
 	})
-	assert.NoError(t, err)
-	assert.NotNil(t, system)
+	require.NoError(t, err)
+	require.NotNil(t, system)
 
 	child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-	assert.NoError(t, err)
-	assert.NotNil(t, child1)
+	require.NoError(t, err)
+	require.NotNil(t, child1)
 
 	child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-	assert.NoError(t, err)
-	assert.NotNil(t, child2)
+	require.NoError(t, err)
+	require.NotNil(t, child2)
 
-	assert.True(t, isRunning(child1), "currently in %+q", child1.State())
-	assert.True(t, isRunning(child2), "currently in %+q", child2.State())
+	require.True(t, isRunning(child1), "currently in %+q", child1.State())
+	require.True(t, isRunning(child2), "currently in %+q", child2.State())
 
 	var w sync.WaitGroup
 	w.Add(2)
@@ -51,8 +52,8 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 
 	supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-	assert.True(t, isRunning(child1), "currently in %+q", child1.State())
-	assert.True(t, isRunning(child2), "currently in %+q", child2.State())
+	require.True(t, isRunning(child1), "currently in %+q", child1.State())
+	require.True(t, isRunning(child2), "currently in %+q", child2.State())
 
 	w.Wait()
 	sub.Stop()
@@ -64,19 +65,19 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 func TestRestartSupervisor(t *testing.T) {
 	supervisor := &actorkit.RestartingSupervisor{}
 	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
-	assert.NoError(t, err)
-	assert.NotNil(t, system)
+	require.NoError(t, err)
+	require.NotNil(t, system)
 
 	child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-	assert.NoError(t, err)
-	assert.NotNil(t, child1)
+	require.NoError(t, err)
+	require.NotNil(t, child1)
 
 	child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-	assert.NoError(t, err)
-	assert.NotNil(t, child2)
+	require.NoError(t, err)
+	require.NotNil(t, child2)
 
-	assert.True(t, isRunning(child1))
-	assert.True(t, isRunning(child2))
+	require.True(t, isRunning(child1))
+	require.True(t, isRunning(child2))
 
 	var w sync.WaitGroup
 	w.Add(2)
@@ -94,8 +95,8 @@ func TestRestartSupervisor(t *testing.T) {
 
 	supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-	assert.True(t, isRunning(child1))
-	assert.True(t, isRunning(child2))
+	require.True(t, isRunning(child1))
+	require.True(t, isRunning(child2))
 
 	w.Wait()
 	sub.Stop()
@@ -110,8 +111,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 	supervisor := &actorkit.OneForOneSupervisor{
 		Max: 30,
 		PanicAction: func(i interface{}, addr actorkit.Addr, actor actorkit.Actor) {
-			assert.NotNil(t, i)
-			assert.IsType(t, actorkit.PanicEvent{}, i)
+			require.NotNil(t, i)
+			require.IsType(t, actorkit.PanicEvent{}, i)
 		},
 		Decider: func(tm interface{}) actorkit.Directive {
 			return supervisingAction(tm)
@@ -119,21 +120,21 @@ func TestOneForOneSupervisor(t *testing.T) {
 	}
 
 	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
-	assert.NoError(t, err)
-	assert.NotNil(t, system)
+	require.NoError(t, err)
+	require.NotNil(t, system)
 
 	t.Logf("When supervisor is told destroy")
 	{
 		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child1)
+		require.NoError(t, err)
+		require.NotNil(t, child1)
 
 		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child2)
+		require.NoError(t, err)
+		require.NotNil(t, child2)
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -155,8 +156,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.False(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -165,15 +166,15 @@ func TestOneForOneSupervisor(t *testing.T) {
 	t.Logf("When supervisor is told kill")
 	{
 		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child1)
+		require.NoError(t, err)
+		require.NotNil(t, child1)
 
 		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child2)
+		require.NoError(t, err)
+		require.NotNil(t, child2)
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -195,8 +196,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.False(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -207,15 +208,15 @@ func TestOneForOneSupervisor(t *testing.T) {
 	t.Logf("When supervisor is told stop")
 	{
 		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child1)
+		require.NoError(t, err)
+		require.NotNil(t, child1)
 
 		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child2)
+		require.NoError(t, err)
+		require.NotNil(t, child2)
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -237,8 +238,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.False(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -249,15 +250,15 @@ func TestOneForOneSupervisor(t *testing.T) {
 	t.Logf("When supervisor is told restart")
 	{
 		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child1)
+		require.NoError(t, err)
+		require.NotNil(t, child1)
 
 		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child2)
+		require.NoError(t, err)
+		require.NotNil(t, child2)
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -279,8 +280,8 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -296,8 +297,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 	supervisor := &actorkit.AllForOneSupervisor{
 		Max: 30,
 		PanicAction: func(i interface{}, addr actorkit.Addr, actor actorkit.Actor) {
-			assert.NotNil(t, i)
-			assert.IsType(t, actorkit.PanicEvent{}, i)
+			require.NotNil(t, i)
+			require.IsType(t, actorkit.PanicEvent{}, i)
 		},
 		Decider: func(tm interface{}) actorkit.Directive {
 			return supervisingAction(tm)
@@ -305,21 +306,21 @@ func TestAllForOneSupervisor(t *testing.T) {
 	}
 
 	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
-	assert.NoError(t, err)
-	assert.NotNil(t, system)
+	require.NoError(t, err)
+	require.NotNil(t, system)
 
 	t.Logf("When supervisor is told destroy")
 	{
 		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child1)
+		require.NoError(t, err)
+		require.NotNil(t, child1)
 
 		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child2)
+		require.NoError(t, err)
+		require.NotNil(t, child2)
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -341,8 +342,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, isRunning(child1))
-		assert.False(t, isRunning(child2))
+		require.False(t, isRunning(child1))
+		require.False(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -351,15 +352,15 @@ func TestAllForOneSupervisor(t *testing.T) {
 	t.Logf("When supervisor is told kill")
 	{
 		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child1)
+		require.NoError(t, err)
+		require.NotNil(t, child1)
 
 		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child2)
+		require.NoError(t, err)
+		require.NotNil(t, child2)
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -381,8 +382,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, isRunning(child1))
-		assert.False(t, isRunning(child2))
+		require.False(t, isRunning(child1))
+		require.False(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -393,15 +394,15 @@ func TestAllForOneSupervisor(t *testing.T) {
 	t.Logf("When supervisor is told stop")
 	{
 		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child1)
+		require.NoError(t, err)
+		require.NotNil(t, child1)
 
 		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child2)
+		require.NoError(t, err)
+		require.NotNil(t, child2)
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -423,8 +424,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.False(t, isRunning(child1))
-		assert.False(t, isRunning(child2))
+		require.False(t, isRunning(child1))
+		require.False(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()
@@ -435,15 +436,15 @@ func TestAllForOneSupervisor(t *testing.T) {
 	t.Logf("When supervisor is told restart")
 	{
 		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child1)
+		require.NoError(t, err)
+		require.NotNil(t, child1)
 
 		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
-		assert.NoError(t, err)
-		assert.NotNil(t, child2)
+		require.NoError(t, err)
+		require.NotNil(t, child2)
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		var w sync.WaitGroup
 		w.Add(2)
@@ -465,8 +466,8 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 		supervisor.Handle(errors.New("bad day"), child1, child1.Actor(), system.Actor())
 
-		assert.True(t, isRunning(child1))
-		assert.True(t, isRunning(child2))
+		require.True(t, isRunning(child1))
+		require.True(t, isRunning(child2))
 
 		w.Wait()
 		sub.Stop()

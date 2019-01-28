@@ -28,7 +28,7 @@ type PublisherHandler func(*PublisherSubscriberFactory, string) (pubsubs.Publish
 // SubscriberHandler defines a function type which takes a giving SubscriptionFactory
 // and a given topic, returning a new subscription with all related underline specific
 // details added and instantiated.
-type SubscriberHandler func(*PublisherSubscriberFactory, string, string, pubsubs.Receiver) (*Subscription, error)
+type SubscriberHandler func(*PublisherSubscriberFactory, string, string, pubsubs.Receiver) (pubsubs.Subscription, error)
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
@@ -140,6 +140,13 @@ func (pf *PublisherSubscriberFactory) Close() error {
 // messages for giving topic from the NATS streaming provider. If the id already exists then
 // the subscriber is returned.
 func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver) (*Subscription, error) {
+	if topic == "" {
+		return nil, errors.New("topic value can not be empty")
+	}
+
+	if id == "" {
+		return nil, errors.New("id value can not be empty")
+	}
 	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "nats", pf.config.ProjectID, topic, id)
 	if sub, ok := pf.getSubscription(subid); ok {
 		return sub, nil
@@ -171,6 +178,10 @@ func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receive
 // for topic and returned, else an error is returned if not found or due to some other
 // issues.
 func (pf *PublisherSubscriberFactory) Publisher(topic string) (*Publisher, error) {
+	if topic == "" {
+		return nil, errors.New("topic value can not be empty")
+	}
+
 	if pm, ok := pf.getPublisher(topic); ok {
 		return pm, nil
 	}

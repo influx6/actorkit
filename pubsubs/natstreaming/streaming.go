@@ -6,13 +6,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gokit/actorkit/pubsubs"
+
 	"github.com/gokit/actorkit"
 
-	"github.com/nats-io/go-nats"
+	nats "github.com/nats-io/go-nats"
 
 	"github.com/gokit/xid"
 
-	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/errors"
 	pubsub "github.com/nats-io/go-nats-streaming"
 )
@@ -80,7 +81,7 @@ type Config struct {
 	DefaultConn            *nats.Conn
 }
 
-func (c *Config) init() {
+func (c *Config) init() error {
 	if c.Log == nil {
 		c.Log = &actorkit.DrainLog{}
 	}
@@ -90,6 +91,7 @@ func (c *Config) init() {
 	if c.ProjectID == "" {
 		c.ProjectID = actorkit.PackageName
 	}
+	return nil
 }
 
 // PublisherSubscriberFactory implements a Google pubsub Publisher factory which handles
@@ -114,7 +116,9 @@ type PublisherSubscriberFactory struct {
 
 // NewPublisherSubscriberFactory returns a new instance of publisher factory.
 func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
-	config.init()
+	if err := config.init(); err != nil {
+		return nil, err
+	}
 
 	var pb PublisherSubscriberFactory
 	pb.id = xid.New()
@@ -212,6 +216,13 @@ func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, i
 // a subscriber with a ever increasing _id is added. The id value is used as a durable name value for the giving
 // subscription. If one exists then that is returned.
 func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver, ops []pubsub.SubscriptionOption) (*Subscription, error) {
+	if topic == "" {
+		return nil, errors.New("topic value can not be empty")
+	}
+
+	if id == "" {
+		return nil, errors.New("id value can not be empty")
+	}
 	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "nats-streaming", pf.config.ProjectID, topic, id)
 	if sub, ok := pf.getSubscription(subid); ok {
 		return sub, nil

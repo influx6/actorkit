@@ -3,9 +3,8 @@ package actorkit_test
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/gokit/actorkit"
+	"github.com/stretchr/testify/require"
 )
 
 type basic struct {
@@ -22,65 +21,65 @@ func TestActorImpl(t *testing.T) {
 	}
 	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
-	assert.NoError(t, am.Start())
-	assert.True(t, isRunning(am))
+	require.NoError(t, am.Start())
+	require.True(t, isRunning(am))
 
-	assert.NoError(t, am.Restart())
-	assert.True(t, isRunning(am))
+	require.NoError(t, am.Restart())
+	require.True(t, isRunning(am))
 
-	assert.NoError(t, am.Stop())
-	assert.False(t, isRunning(am))
+	require.NoError(t, am.Stop())
+	require.False(t, isRunning(am))
 }
 
 func TestActorImplMessaging(t *testing.T) {
 	base := &basic{Message: make(chan *actorkit.Envelope, 1)}
 	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
-	assert.NoError(t, am.Start())
-	assert.True(t, isRunning(am))
+	require.NoError(t, am.Start())
+	require.True(t, isRunning(am))
 
 	addr := actorkit.AddressOf(am, "basic")
-	assert.NoError(t, addr.Send(2, nil))
+	require.NoError(t, addr.Send(2, nil))
 
-	assert.NoError(t, am.Stop())
-	assert.False(t, isRunning(am))
+	require.NoError(t, am.Stop())
+	require.False(t, isRunning(am))
 
-	assert.Len(t, base.Message, 1)
+	require.Len(t, base.Message, 1)
 	content := <-base.Message
-	assert.NotNil(t, content)
-	assert.Equal(t, content.Data, 2)
+	require.NotNil(t, content)
+	require.Equal(t, content.Data, 2)
 }
 
 func TestActorChildMessaging(t *testing.T) {
 	system, err := actorkit.Ancestor("kit", "localhost", actorkit.Prop{})
-	assert.NoError(t, err)
-	assert.NotNil(t, system)
+	require.NoError(t, err)
+	require.NotNil(t, system)
 
 	base := &basic{
 		Message: make(chan *actorkit.Envelope, 1),
 	}
 
 	addr, err := system.Spawn("basic", actorkit.Prop{Behaviour: base})
-	assert.NoError(t, err)
-	assert.NotNil(t, addr)
+	require.NoError(t, err)
+	require.NotNil(t, addr)
 
-	assert.NoError(t, addr.Send(2, nil))
+	require.NoError(t, addr.Send(2, nil))
 
-	assert.NoError(t, actorkit.Poison(system))
-	assert.False(t, isRunning(system))
+	require.NoError(t, actorkit.Poison(system))
+	require.False(t, isRunning(system))
 
-	assert.Len(t, base.Message, 1)
+	require.Len(t, base.Message, 1)
 	content := <-base.Message
-	assert.NotNil(t, content)
-	assert.Equal(t, content.Data, 2)
+	require.NotNil(t, content)
+	require.Equal(t, content.Data, 2)
 }
 
 func TestActorImplPanic(t *testing.T) {
 	supervisor := &actorkit.OneForOneSupervisor{
 		Max: 30,
 		PanicAction: func(i interface{}, addr actorkit.Addr, actor actorkit.Actor) {
-			assert.NotNil(t, i)
-			assert.IsType(t, actorkit.PanicEvent{}, i)
+			require.NotNil(t, i)
+			require.IsType(t, actorkit.PanicEvent{}, i)
 		},
 		Decider: func(tm interface{}) actorkit.Directive {
 			switch tm.(type) {
@@ -96,14 +95,14 @@ func TestActorImplPanic(t *testing.T) {
 		panic("Error occured")
 	}, actorkit.UseSupervisor(supervisor))
 
-	assert.NoError(t, am.Start())
-	assert.True(t, isRunning(am))
+	require.NoError(t, am.Start())
+	require.True(t, isRunning(am))
 
 	addr := actorkit.AddressOf(am, "basic")
-	assert.NoError(t, addr.Send(2, nil))
+	require.NoError(t, addr.Send(2, nil))
 
-	assert.NoError(t, am.Stop())
-	assert.False(t, isRunning(am))
+	require.NoError(t, am.Stop())
+	require.False(t, isRunning(am))
 }
 
 func TestActorWithChildTreeStates(t *testing.T) {
@@ -112,30 +111,30 @@ func TestActorWithChildTreeStates(t *testing.T) {
 	}
 	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
-	assert.NoError(t, am.Start())
-	assert.True(t, isRunning(am))
+	require.NoError(t, am.Start())
+	require.True(t, isRunning(am))
 
 	childAddr, err := am.Spawn("child", actorkit.Prop{Behaviour: base})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, am.Children(), 1)
+	require.Len(t, am.Children(), 1)
 
 	grandChild, err := childAddr.Spawn("grand-child", actorkit.Prop{Behaviour: base})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, childAddr.Children(), 1)
+	require.Len(t, childAddr.Children(), 1)
 
-	assert.NoError(t, am.Restart())
-	assert.True(t, isRunning(am))
+	require.NoError(t, am.Restart())
+	require.True(t, isRunning(am))
 
-	assert.NoError(t, am.Stop())
-	assert.False(t, isRunning(am))
+	require.NoError(t, am.Stop())
+	require.False(t, isRunning(am))
 
-	assert.True(t, childAddr.ID() != am.ID())
-	assert.Error(t, childAddr.Send("a", nil))
+	require.True(t, childAddr.ID() != am.ID())
+	require.Error(t, childAddr.Send("a", nil))
 
-	assert.True(t, grandChild.ID() != childAddr.ID())
-	assert.Error(t, grandChild.Send("a", nil))
+	require.True(t, grandChild.ID() != childAddr.ID())
+	require.Error(t, grandChild.Send("a", nil))
 }
 
 func TestActorWithChildStates(t *testing.T) {
@@ -145,18 +144,18 @@ func TestActorWithChildStates(t *testing.T) {
 
 	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
 
-	assert.NoError(t, am.Start())
-	assert.True(t, isRunning(am))
+	require.NoError(t, am.Start())
+	require.True(t, isRunning(am))
 
 	childAddr, err := am.Spawn("child", actorkit.Prop{Behaviour: &basic{}})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.NoError(t, am.Restart())
-	assert.True(t, isRunning(am))
+	require.NoError(t, am.Restart())
+	require.True(t, isRunning(am))
 
-	assert.NoError(t, am.Stop())
-	assert.False(t, isRunning(am))
+	require.NoError(t, am.Stop())
+	require.False(t, isRunning(am))
 
-	assert.True(t, childAddr.ID() != am.ID())
-	assert.Error(t, childAddr.Send("a", nil))
+	require.True(t, childAddr.ID() != am.ID())
+	require.Error(t, childAddr.Send("a", nil))
 }

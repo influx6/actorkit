@@ -4,10 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/gokit/actorkit/internal"
 
 	"github.com/gokit/actorkit/pubsubs/internal/encoders"
-	"github.com/stretchr/testify/assert"
 
 	"github.com/gokit/actorkit/pubsubs/nats"
 
@@ -25,8 +26,8 @@ func TestNATS(t *testing.T) {
 
 	defer natspub.Close()
 
-	assert.NoError(t, err)
-	assert.NotNil(t, natspub)
+	require.NoError(t, err)
+	require.NotNil(t, natspub)
 
 	factory := nats.PubSubFactory(func(factory *nats.PublisherSubscriberFactory, topic string) (pubsubs.Publisher, error) {
 		return factory.Publisher(topic)

@@ -7,9 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/gokit/actorkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCircuitBreakerOpenHalfOpenCloseState(t *testing.T) {
@@ -20,28 +19,28 @@ func TestCircuitBreakerOpenHalfOpenCloseState(t *testing.T) {
 		MaxCoolDown: 4 * time.Second,
 	})
 
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 
 	for i := 3; i > 0; i-- {
-		assert.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
+		require.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
 			return errors.New("bad")
 		}, nil))
 	}
 
-	assert.True(t, cb.IsOpened())
+	require.True(t, cb.IsOpened())
 
-	assert.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
-		assert.Fail(t, "Should not be executed")
+	require.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
+		require.Fail(t, "Should not be executed")
 		return nil
 	}, nil))
 
 	<-time.After(time.Second * 3)
 
-	assert.True(t, cb.IsOpened())
-	assert.NoError(t, cb.Do(context.Background(), func(ctx context.Context) error {
+	require.True(t, cb.IsOpened())
+	require.NoError(t, cb.Do(context.Background(), func(ctx context.Context) error {
 		return nil
 	}, nil))
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 }
 
 func TestCircuitBreakerOpenCloseState(t *testing.T) {
@@ -52,43 +51,43 @@ func TestCircuitBreakerOpenCloseState(t *testing.T) {
 		MaxCoolDown: 4 * time.Second,
 	})
 
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 
 	for i := 3; i > 0; i-- {
-		assert.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
+		require.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
 			return errors.New("bad")
 		}, nil))
 	}
 
-	assert.True(t, cb.IsOpened())
+	require.True(t, cb.IsOpened())
 
-	assert.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
-		assert.Fail(t, "Should not be executed")
+	require.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
+		require.Fail(t, "Should not be executed")
 		return nil
 	}, nil))
 
 	<-time.After(time.Second * 3)
 
-	assert.True(t, cb.IsOpened())
-	assert.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
+	require.True(t, cb.IsOpened())
+	require.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
 		return errors.New("we bad")
 	}, nil))
-	assert.True(t, cb.IsOpened())
+	require.True(t, cb.IsOpened())
 
 	<-time.After(time.Second * 3)
 
-	assert.True(t, cb.IsOpened())
-	assert.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
+	require.True(t, cb.IsOpened())
+	require.Error(t, cb.Do(context.Background(), func(ctx context.Context) error {
 		return errors.New("we bad")
 	}, nil))
-	assert.True(t, cb.IsOpened())
+	require.True(t, cb.IsOpened())
 
 	<-time.After(time.Second * 6)
-	assert.True(t, cb.IsOpened())
-	assert.NoError(t, cb.Do(context.Background(), func(ctx context.Context) error {
+	require.True(t, cb.IsOpened())
+	require.NoError(t, cb.Do(context.Background(), func(ctx context.Context) error {
 		return nil
 	}, nil))
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 }
 
 func TestCircuitBreaker_Hooks(t *testing.T) {
@@ -114,20 +113,20 @@ func TestCircuitBreaker_Hooks(t *testing.T) {
 		},
 	})
 
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 	cb.Do(context.Background(), func(ctx context.Context) error {
 		return errors.New("bad")
 	}, nil)
 
-	assert.True(t, cb.IsOpened())
+	require.True(t, cb.IsOpened())
 
 	<-time.After(time.Second * 3)
 
-	assert.True(t, cb.IsOpened())
-	assert.NoError(t, cb.Do(context.Background(), func(ctx context.Context) error {
+	require.True(t, cb.IsOpened())
+	require.NoError(t, cb.Do(context.Background(), func(ctx context.Context) error {
 		return nil
 	}, nil))
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 
 	w.Wait()
 }
@@ -138,13 +137,13 @@ func TestCircuitBreaker_OneFailure(t *testing.T) {
 		MaxFailures: 1,
 	})
 
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 	cb.Do(context.Background(), func(ctx context.Context) error {
 		<-time.After(time.Second * 2)
 		return nil
 	}, nil)
 
-	assert.True(t, cb.IsOpened())
+	require.True(t, cb.IsOpened())
 }
 
 func TestCircuitBreaker_TwoFailure(t *testing.T) {
@@ -153,18 +152,18 @@ func TestCircuitBreaker_TwoFailure(t *testing.T) {
 		MaxFailures: 2,
 	})
 
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 	cb.Do(context.Background(), func(ctx context.Context) error {
 		<-time.After(time.Second * 2)
 		return nil
 	}, nil)
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 
 	cb.Do(context.Background(), func(ctx context.Context) error {
 		<-time.After(time.Second * 2)
 		return nil
 	}, nil)
-	assert.True(t, cb.IsOpened())
+	require.True(t, cb.IsOpened())
 }
 
 func TestCircuitBreaker_FailureDueToError(t *testing.T) {
@@ -173,18 +172,18 @@ func TestCircuitBreaker_FailureDueToError(t *testing.T) {
 		MaxFailures: 1,
 	})
 
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 
 	cb.Do(context.Background(), func(ctx context.Context) error {
 		<-time.After(time.Second * 2)
 		return nil
 	}, nil)
 
-	assert.False(t, cb.IsOpened())
+	require.False(t, cb.IsOpened())
 
 	cb.Do(context.Background(), func(ctx context.Context) error {
 		<-time.After(time.Second * 2)
 		return errors.New("bad")
 	}, nil)
-	assert.True(t, cb.IsOpened())
+	require.True(t, cb.IsOpened())
 }

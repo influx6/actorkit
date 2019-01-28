@@ -4,6 +4,7 @@ package samsara
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -247,12 +248,13 @@ type SaramaConsumingClient struct {
 //
 func NewSaramaConsumingClient(parentCtx context.Context, config *Config, kafkaConfig *sarama.Config, topic string, cGroupName string, id string, receiver pubsubs.Receiver) (*SaramaConsumingClient, error) {
 	childCtx, childCancel := context.WithCancel(parentCtx)
+	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "sarama/kafka", config.ProjectID, topic, id)
 	return &SaramaConsumingClient{
-		id:            id,
+		id:            subid,
 		topic:         topic,
 		config:        config,
-		receiver:      receiver,
 		ctx:           childCtx,
+		receiver:      receiver,
 		canceller:     childCancel,
 		logs:          config.Log,
 		kafkaConfig:   kafkaConfig,
@@ -293,7 +295,7 @@ func (sm *SaramaConsumingClient) Consume() error {
 	client, err := sarama.NewClient(sm.config.Brokers, sm.kafkaConfig)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to sarama client for topic %q", sm.topic)
-		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", sm.topic)
 			if sm.consumerGroup != "" {
 				event.String("consumer_group", sm.consumerGroup)
@@ -312,7 +314,7 @@ func (sm *SaramaConsumingClient) consumeByPartitions(client sarama.Client) error
 	partitionConsumer, err := sarama.NewConsumerFromClient(client)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to sarama client for topic %q", sm.topic)
-		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", sm.topic)
 			event.String("consumer_group", sm.consumerGroup)
 		}))
@@ -322,7 +324,7 @@ func (sm *SaramaConsumingClient) consumeByPartitions(client sarama.Client) error
 	partitions, err := partitionConsumer.Partitions(sm.topic)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to partition lists for topic %q from client", sm.topic)
-		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", sm.topic)
 			event.String("consumer_group", sm.consumerGroup)
 		}))
@@ -333,7 +335,7 @@ func (sm *SaramaConsumingClient) consumeByPartitions(client sarama.Client) error
 		ptConsumer, err := partitionConsumer.ConsumePartition(sm.topic, partition, sm.kafkaConfig.Consumer.Offsets.Initial)
 		if err != nil {
 			err = errors.Wrap(err, "Failed to create partition consumer for topic %q from client", sm.topic)
-			sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+			sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 				event.String("topic", sm.topic)
 				event.String("consumer_group", sm.consumerGroup)
 			}))
@@ -342,7 +344,7 @@ func (sm *SaramaConsumingClient) consumeByPartitions(client sarama.Client) error
 
 		if err := sm.consumePartitionConsumer(client, ptConsumer); err != nil {
 			err = errors.Wrap(err, "Failed to consume PartitionConsumer for topic %q from client", sm.topic)
-			sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+			sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 				event.String("topic", sm.topic)
 				event.Int64("partition", int64(partition))
 				event.String("consumer_group", sm.consumerGroup)
@@ -359,7 +361,7 @@ func (sm *SaramaConsumingClient) consumeByGroup(client sarama.Client) error {
 	group, err := sarama.NewConsumerGroupFromClient(sm.consumerGroup, client)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to sarama client for topic %q", sm.topic)
-		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", sm.topic)
 			event.String("consumer_group", sm.consumerGroup)
 		}))
@@ -373,7 +375,7 @@ func (sm *SaramaConsumingClient) consumeByGroup(client sarama.Client) error {
 
 	if err := sm.consumeGroupConsumer(client, group); err != nil {
 		err = errors.Wrap(err, "Failed to consume GroupConsumer for topic %q from client", sm.topic)
-		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", sm.topic)
 			event.String("consumer_group", sm.consumerGroup)
 			event.ObjectJSON("consumer_settings", sm.kafkaConfig.Consumer)
@@ -395,7 +397,7 @@ func (sm *SaramaConsumingClient) consumeGroupConsumer(client sarama.Client, cons
 
 		if err := consumer.Consume(sm.ctx, []string{sm.topic}, dm); err != nil {
 			err = errors.Wrap(err, "Failed during message consumption for topic %q", sm.topic)
-			sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+			sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 				event.String("topic", sm.topic)
 				if sm.consumerGroup != "" {
 					event.String("consumer_group", sm.consumerGroup)
@@ -405,7 +407,7 @@ func (sm *SaramaConsumingClient) consumeGroupConsumer(client sarama.Client, cons
 
 		if err := consumer.Close(); err != nil {
 			err = errors.Wrap(err, "Failed closing group consumer for topic %q", sm.topic)
-			sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+			sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 				event.String("topic", sm.topic)
 				if sm.consumerGroup != "" {
 					event.String("consumer_group", sm.consumerGroup)
@@ -422,7 +424,7 @@ func (sm *SaramaConsumingClient) consumePartitionConsumer(client sarama.Client, 
 		defer func() {
 			if err := consumer.Close(); err != nil {
 				err = errors.Wrap(err, "Failed closing group consumer for topic %q", sm.topic)
-				sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+				sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 					event.String("topic", sm.topic)
 					if sm.consumerGroup != "" {
 						event.String("consumer_group", sm.consumerGroup)
@@ -451,7 +453,7 @@ func (sm *SaramaConsumingClient) consumePartitionConsumer(client sarama.Client, 
 				// if we fail to consume message, immediately stop.
 				if err := sm.handleMessage(msg, nil); err != nil {
 					err = errors.Wrap(err, "Failed to consume PartitionConsumer for topic %q from client", sm.topic)
-					sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+					sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 						event.String("topic", sm.topic)
 						event.String("consumer_group", sm.consumerGroup)
 						event.ObjectJSON("consumer_settings", sm.kafkaConfig.Consumer)
@@ -465,7 +467,7 @@ func (sm *SaramaConsumingClient) consumePartitionConsumer(client sarama.Client, 
 }
 
 func (sm *SaramaConsumingClient) handleMessage(msg *sarama.ConsumerMessage, sess sarama.ConsumerGroupSession) error {
-	sm.logs.Emit(actorkit.INFO, actorkit.LogMsgWithContext("Received new message", "context", func(event actorkit.LogEvent) {
+	sm.logs.Emit(actorkit.INFO, actorkit.LogMsgWithContext("Received new message", "context", func(event *actorkit.LogEvent) {
 		event.ObjectJSON("msg", msg)
 		event.String("topic", sm.topic)
 		event.Int64("message.offset", msg.Offset)
@@ -477,7 +479,7 @@ func (sm *SaramaConsumingClient) handleMessage(msg *sarama.ConsumerMessage, sess
 	envMsg, err := sm.config.Unmarshaler.Unmarshal(msg)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to unmarshal *sarama.ConsumerMessage for topic %q", sm.topic)
-		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", sm.topic)
 			event.String("consumer_group", sm.consumerGroup)
 			event.ObjectJSON("consumer_settings", sm.kafkaConfig.Consumer)
@@ -485,7 +487,7 @@ func (sm *SaramaConsumingClient) handleMessage(msg *sarama.ConsumerMessage, sess
 		return err
 	}
 
-	sm.logs.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Message unmarshalled successfully", "context", func(event actorkit.LogEvent) {
+	sm.logs.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Message unmarshalled successfully", "context", func(event *actorkit.LogEvent) {
 		event.String("topic", sm.topic)
 		event.Int64("message.offset", msg.Offset)
 		event.String("consumer_group", sm.consumerGroup)
@@ -496,7 +498,7 @@ func (sm *SaramaConsumingClient) handleMessage(msg *sarama.ConsumerMessage, sess
 	action, err := sm.receiver(envMsg)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to process message successfully", sm.topic)
-		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event actorkit.LogEvent) {
+		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", sm.topic)
 			event.String("consumer_group", sm.consumerGroup)
 			event.ObjectJSON("consumer_settings", sm.kafkaConfig.Consumer)
@@ -521,7 +523,7 @@ func (sm *SaramaConsumingClient) handleMessage(msg *sarama.ConsumerMessage, sess
 func (sm *SaramaConsumingClient) logConsumerErrors(errs <-chan error) {
 	defer sm.waiter.Done()
 	for err := range errs {
-		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext("SARAMA_CONSUMER_ERROR: "+err.Error(), "context", func(event actorkit.LogEvent) {
+		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext("SARAMA_CONSUMER_ERROR: "+err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", sm.topic)
 			if sm.consumerGroup != "" {
 				event.String("consumer_group", sm.consumerGroup)
@@ -533,7 +535,7 @@ func (sm *SaramaConsumingClient) logConsumerErrors(errs <-chan error) {
 func (sm *SaramaConsumingClient) logConsumerErrorsFromMessages(errs <-chan *sarama.ConsumerError) {
 	defer sm.waiter.Done()
 	for err := range errs {
-		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext("SARAMA_CONSUMER_ERROR: "+err.Err.Error(), "context", func(event actorkit.LogEvent) {
+		sm.logs.Emit(actorkit.ERROR, actorkit.LogMsgWithContext("SARAMA_CONSUMER_ERROR: "+err.Err.Error(), "context", func(event *actorkit.LogEvent) {
 			event.String("topic", err.Topic)
 			event.ObjectJSON("consumer_err", err)
 			event.Int64("partition", int64(err.Partition))
@@ -607,13 +609,13 @@ func NewAsyncPublisher(ctx context.Context, config *Config, kafkaConfig *sarama.
 	producer, err := sarama.NewAsyncProducer(config.Brokers, kap.kafkaConfig)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to create new Producer")
-		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", topic)
 		}))
 		return nil, err
 	}
 
-	kap.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Created producer for topic", "context", nil).With(func(event actorkit.LogEvent) {
+	kap.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Created producer for topic", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", topic)
 	}))
 
@@ -642,13 +644,13 @@ func (ka *AsyncPublisher) Publish(msg actorkit.Envelope) error {
 	encoded, err := ka.config.Marshaler.Marshal(pubsubs.Message{Topic: ka.topic, Envelope: msg})
 	if err != nil {
 		err = errors.Wrap(err, "Failed to marshal incoming message")
-		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", msg)
 		}))
 		return err
 	}
 
-	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("publishing new message", "context", nil).With(func(event actorkit.LogEvent) {
+	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("publishing new message", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
 	}))
 
@@ -660,17 +662,17 @@ func (ka *AsyncPublisher) Publish(msg actorkit.Envelope) error {
 	case sendingChan <- &encoded:
 		select {
 		case <-successChan:
-			ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event actorkit.LogEvent) {
+			ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event *actorkit.LogEvent) {
 				event.String("topic", ka.topic).ObjectJSON("message", encoded)
 			}))
 		case err := <-errChan:
-			ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+			ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 				event.String("topic", ka.topic).ObjectJSON("message", msg)
 			}))
 		}
 	case <-time.After(ka.config.MessageDeliveryTimeout):
 		err := errors.New("timeout: failed to send message")
-		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", msg)
 		}))
 		return err
@@ -723,13 +725,13 @@ func NewSyncPublisher(ctx context.Context, config *Config, kafkaConfig *sarama.C
 	producer, err := sarama.NewSyncProducer(config.Brokers, kap.kafkaConfig)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to create new Producer")
-		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		kap.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", topic)
 		}))
 		return nil, err
 	}
 
-	kap.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Created producer for topic", "context", nil).With(func(event actorkit.LogEvent) {
+	kap.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("Created producer for topic", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", topic)
 	}))
 
@@ -758,26 +760,26 @@ func (ka *SyncPublisher) Publish(msg actorkit.Envelope) error {
 	encoded, err := ka.config.Marshaler.Marshal(pubsubs.Message{Topic: ka.topic, Envelope: msg})
 	if err != nil {
 		err = errors.Wrap(err, "Failed to marshal incoming message")
-		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", msg)
 		}))
 		return err
 	}
 
-	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("publishing new message", "context", nil).With(func(event actorkit.LogEvent) {
+	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("publishing new message", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
 	}))
 
 	_, _, err = ka.producer.SendMessage(&encoded)
 	if err != nil {
 		err = errors.Wrap(err, "failed to send message to producer")
-		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event actorkit.LogEvent) {
+		ka.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext(err.Error(), "context", nil).With(func(event *actorkit.LogEvent) {
 			event.String("topic", ka.topic).ObjectJSON("message", msg)
 		}))
 		return err
 	}
 
-	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event actorkit.LogEvent) {
+	ka.log.Emit(actorkit.DEBUG, actorkit.LogMsgWithContext("published new message", "context", nil).With(func(event *actorkit.LogEvent) {
 		event.String("topic", ka.topic).ObjectJSON("message", encoded)
 	}))
 	return nil
@@ -857,6 +859,14 @@ func (ka *PublisherConsumerFactory) NewConsumer(topic string, id string, receive
 // NewGroupConsumer return a new consumer for a giving topic to be used for sarama under a giving consuming group name using
 // provided id and overrides configuration if provided.
 func (ka *PublisherConsumerFactory) NewGroupConsumer(topic string, group string, id string, receiver pubsubs.Receiver, userOverrides *sarama.Config) (*SaramaConsumingClient, error) {
+	if topic == "" {
+		return nil, errors.New("topic value can not be empty")
+	}
+
+	if id == "" {
+		return nil, errors.New("id value can not be empty")
+	}
+
 	if ka.config.ConsumerOverrides != nil && userOverrides == nil {
 		userOverrides = ka.config.ConsumerOverrides
 	}

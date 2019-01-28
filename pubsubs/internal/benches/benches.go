@@ -6,7 +6,6 @@ import (
 
 	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/pubsubs"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,17 +26,16 @@ func PubSubFactoryTestSuite(t *testing.T, pubsub pubsubs.PubSubFactory) {
 
 func testMessagePublishing(t *testing.T, pubsub pubsubs.PublisherFactory) {
 	pub, err := pubsub.NewPublisher("rats")
-	assert.NoError(t, err)
-	assert.NotNil(t, pub)
+	require.NoError(t, err)
+	require.NotNil(t, pub)
 
-	assert.NoError(t, pub.Publish(actorkit.CreateEnvelope(actorkit.DeadLetters(), actorkit.Header{}, "300")))
-
-	assert.NoError(t, pub.Close())
+	require.NoError(t, pub.Publish(actorkit.CreateEnvelope(actorkit.DeadLetters(), actorkit.Header{}, "300")))
+	require.NoError(t, pub.Close())
 }
 
 func testMessagePublishingAndSubscription(t *testing.T, pubsub pubsubs.PubSubFactory) {
 	pub, err := pubsub.NewPublisher("rats")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	require.NotNil(t, pub)
 
 	rec := make(chan pubsubs.Message, 1)
@@ -46,22 +44,23 @@ func testMessagePublishingAndSubscription(t *testing.T, pubsub pubsubs.PubSubFac
 		return pubsubs.ACK, nil
 	})
 
-	assert.NoError(t, err)
-	assert.NotNil(t, sub)
+	require.NoError(t, err)
+	require.NotNil(t, sub)
 
-	assert.NoError(t, pub.Publish(actorkit.CreateEnvelope(actorkit.DeadLetters(), actorkit.Header{}, "300")))
+	defer sub.Stop()
+
+	require.NoError(t, pub.Publish(actorkit.CreateEnvelope(actorkit.DeadLetters(), actorkit.Header{}, "300")))
 
 	select {
 	case msg := <-rec:
-		assert.Equal(t, "rats", msg.Topic)
-		assert.NotNil(t, msg.Envelope.Data)
-		assert.Equal(t, "300", msg.Envelope.Data)
-	case <-time.After(time.Second * 5):
-		assert.Fail(t, "Should have successfully received published message")
+		require.Equal(t, "rats", msg.Topic)
+		require.NotNil(t, msg.Envelope.Data)
+		require.Equal(t, "300", msg.Envelope.Data)
+	case <-time.After(time.Minute * 1):
+		require.Fail(t, "Should have successfully received published message")
 	}
 
-	sub.Stop()
-	assert.NoError(t, pub.Close())
+	require.NoError(t, pub.Close())
 }
 
 //**************************************************************************

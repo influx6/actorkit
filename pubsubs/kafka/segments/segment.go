@@ -2,6 +2,7 @@ package segments
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -126,6 +127,7 @@ func (kc UnmarshalerWrapper) Unmarshal(message segment.Message) (pubsubs.Message
 // Config provides a config struct for instantiating a PublishSubscribeFactory type.
 type Config struct {
 	Brokers                []string
+	ProjectID              string
 	MinMessageSize         uint64
 	MaxMessageSize         uint64
 	AutoCommit             bool
@@ -147,7 +149,7 @@ type Config struct {
 	ReaderConfigOverride *segment.ReaderConfig
 }
 
-func (c *Config) init() {
+func (c *Config) init() error {
 	if c.Log == nil {
 		c.Log = &actorkit.DrainLog{}
 	}
@@ -166,6 +168,8 @@ func (c *Config) init() {
 	if c.MessageDeliveryTimeout <= 0 {
 		c.MessageDeliveryTimeout = 1 * time.Second
 	}
+
+	return nil
 }
 
 // PublisherSubscriberFactory implements a Google segment Publisher factory which handles
@@ -189,7 +193,9 @@ type PublisherSubscriberFactory struct {
 
 // NewPublisherSubscriberFactory returns a new instance of publisher factory.
 func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
-	config.init()
+	if err := config.init(); err != nil {
+		return nil, err
+	}
 
 	var pb PublisherSubscriberFactory
 	pb.id = xid.New()
@@ -232,8 +238,9 @@ func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, i
 		return nil, errors.New("id value can not be empty")
 	}
 
+	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "segment/kafka", pf.config.ProjectID, topic, id)
 	var sub Subscription
-	sub.id = id
+	sub.id = subid
 	sub.group = grp
 	sub.queue = true
 	sub.topic = topic
@@ -260,8 +267,10 @@ func (pf *PublisherSubscriberFactory) QueueSubscribe(topic string, grp string, i
 //
 // Implementation hold's no respect for the id value, it is lost once a subscription is lost.
 func (pf *PublisherSubscriberFactory) Subscribe(topic string, id string, receiver pubsubs.Receiver) (*Subscription, error) {
+	var subid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "segment/kafka", pf.config.ProjectID, topic, id)
+
 	var sub Subscription
-	sub.id = id
+	sub.id = subid
 	sub.topic = topic
 	sub.config = &pf.config
 	sub.log = pf.config.Log

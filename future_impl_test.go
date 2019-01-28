@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/mocks"
@@ -14,9 +14,9 @@ import (
 func TestFutureResolved(t *testing.T) {
 	addr := &mocks.AddrImpl{}
 	newFuture := actorkit.NewFuture(addr)
-	assert.NoError(t, newFuture.Send("ready", eb))
-	assert.NoError(t, newFuture.Err())
-	assert.Equal(t, newFuture.Result().Data, "ready")
+	require.NoError(t, newFuture.Send("ready", eb))
+	require.NoError(t, newFuture.Err())
+	require.Equal(t, newFuture.Result().Data, "ready")
 }
 
 func TestFuturePipe(t *testing.T) {
@@ -30,26 +30,26 @@ func TestFuturePipe(t *testing.T) {
 	failure := errors.New("bad error")
 	newFuture.Escalate(failure)
 
-	assert.Equal(t, failure.Error(), newFuture.Wait().Error())
-	assert.Equal(t, failure.Error(), newFuture2.Wait().Error())
-	assert.Equal(t, failure.Error(), newFuture3.Wait().Error())
+	require.Equal(t, failure.Error(), newFuture.Wait().Error())
+	require.Equal(t, failure.Error(), newFuture2.Wait().Error())
+	require.Equal(t, failure.Error(), newFuture3.Wait().Error())
 
-	assert.Equal(t, failure.Error(), newFuture.Err().Error())
-	assert.Equal(t, failure.Error(), newFuture2.Err().Error())
-	assert.Equal(t, failure.Error(), newFuture3.Err().Error())
+	require.Equal(t, failure.Error(), newFuture.Err().Error())
+	require.Equal(t, failure.Error(), newFuture2.Err().Error())
+	require.Equal(t, failure.Error(), newFuture3.Err().Error())
 }
 
 func TestFutureEscalate(t *testing.T) {
 	addr := &mocks.AddrImpl{}
 	newFuture := actorkit.NewFuture(addr)
 	newFuture.Escalate("wake")
-	assert.Equal(t, newFuture.Err().Error(), actorkit.ErrFutureEscalatedFailure.Error())
+	require.Equal(t, newFuture.Err().Error(), actorkit.ErrFutureEscalatedFailure.Error())
 }
 
 func TestFutureTimeout(t *testing.T) {
 	addr := &mocks.AddrImpl{}
 	newFuture := actorkit.TimedFuture(addr, 1*time.Second)
 	<-time.After(2 * time.Second)
-	assert.Equal(t, newFuture.Err().Error(), actorkit.ErrFutureTimeout.Error())
-	assert.Error(t, newFuture.Send("ready", eb))
+	require.Equal(t, newFuture.Err().Error(), actorkit.ErrFutureTimeout.Error())
+	require.Error(t, newFuture.Send("ready", eb))
 }

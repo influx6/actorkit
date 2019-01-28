@@ -24,8 +24,8 @@ func TestNATS(t *testing.T) {
 		Unmarshaler: encoders.NoAddressUnmarshaler{},
 	})
 
-	assert.NoError(t, err)
-	assert.NotNil(t, natspub)
+	require.NoError(t, err)
+	require.NotNil(t, natspub)
 
 	if err != nil {
 		return
