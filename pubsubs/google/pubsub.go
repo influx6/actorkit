@@ -8,20 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
-	"github.com/gokit/actorkit"
-
 	"cloud.google.com/go/pubsub"
+	"github.com/gokit/actorkit"
 	"github.com/gokit/actorkit/pubsubs"
 	"github.com/gokit/errors"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/option"
-)
-
-const (
-	pubsubIDName    = "_actorkit_google_pubsub_id"
-	pubsubTopicName = "_actorkit_google_pubsub_topic"
-	subIDFormat     = "_actorkit_google_pubsub_%s_%d"
 )
 
 var (
@@ -47,34 +39,29 @@ type Marshaler interface {
 
 // PubSubMarshaler implements the Marshaler interface.
 type PubSubMarshaler struct {
+	Now       func() time.Time
 	Marshaler pubsubs.Marshaler
 }
 
 // Marshal marshals giving message into a pubsub message.
 func (ps PubSubMarshaler) Marshal(msg pubsubs.Message) (pubsub.Message, error) {
 	var res pubsub.Message
-	if msg.Envelope.Has(pubsubIDName) {
-		return res, errors.New("key %q is reserved for internal use only", pubsubIDName)
-	}
-
-	if msg.Envelope.Has(pubsubTopicName) {
-		return res, errors.New("key %q is reserved for internal use only", pubsubTopicName)
-	}
-
 	envData, err := ps.Marshaler.Marshal(msg.Envelope)
 	if err != nil {
 		return res, errors.Wrap(err, "Failed to marshal Envelope")
 	}
 
+	res.ID = msg.Envelope.Ref.String()
 	headers := map[string]string{
-		pubsubTopicName: msg.Topic,
-		pubsubIDName:    msg.Envelope.Ref.String(),
+		"topic": msg.Topic,
+		"ref":   msg.Envelope.Ref.String(),
 	}
 
 	for k, v := range msg.Envelope.Header {
 		headers[k] = v
 	}
 
+	res.PublishTime = ps.Now()
 	res.Attributes = headers
 	res.Data = envData
 
@@ -95,11 +82,15 @@ type PubSubUnmarshaler struct {
 // Unmarshal transforms giving pubsub.Message into a pubsubs.Message type.
 func (ps *PubSubUnmarshaler) Unmarshal(msg *pubsub.Message) (pubsubs.Message, error) {
 	var decoded pubsubs.Message
-	if _, ok := msg.Attributes[pubsubIDName]; ok {
-		return decoded, errors.New("message is not a actorkit encoded type")
+	if _, ok := msg.Attributes["ref"]; !ok {
+		return decoded, errors.New("message has no ref header")
 	}
 
-	decoded.Topic = msg.Attributes[pubsubTopicName]
+	if _, ok := msg.Attributes["topic"]; !ok {
+		return decoded, errors.New("message has no topic header")
+	}
+
+	decoded.Topic = msg.Attributes["topic"]
 
 	var err error
 	decoded.Envelope, err = ps.Unmarshaler.Unmarshal(msg.Data)
@@ -126,12 +117,12 @@ type SubscriberHandler func(*PublisherSubscriberFactory, string, string, pubsubs
 
 // PubSubFactoryGenerator returns a function which taken a PublisherSubscriberFactory returning
 // a factory for generating publishers and subscribers.
-type PubSubFactoryGenerator func(pub *PublisherSubscriberFactory, sub *PublisherSubscriberFactory) pubsubs.PubSubFactory
+type PubSubFactoryGenerator func(pub *PublisherSubscriberFactory) pubsubs.PubSubFactory
 
 // PubSubFactory provides a partial function for the generation of a pubsubs.PubSubFactory
 // using the PubSubFactorGenerator function.
 func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) PubSubFactoryGenerator {
-	return func(pub *PublisherSubscriberFactory, sub *PublisherSubscriberFactory) pubsubs.PubSubFactory {
+	return func(pub *PublisherSubscriberFactory) pubsubs.PubSubFactory {
 		var pbs pubsubs.PubSubFactoryImpl
 		if publishers != nil {
 			pbs.Publishers = func(topic string) (pubsubs.Publisher, error) {
@@ -140,7 +131,7 @@ func PubSubFactory(publishers PublisherHandler, subscribers SubscriberHandler) P
 		}
 		if subscribers != nil {
 			pbs.Subscribers = func(topic string, id string, receiver pubsubs.Receiver) (pubsubs.Subscription, error) {
-				return subscribers(sub, topic, id, receiver)
+				return subscribers(pub, topic, id, receiver)
 			}
 		}
 		return &pbs
@@ -231,8 +222,8 @@ type PublisherSubscriberFactory struct {
 	c        *pubsub.Client
 }
 
-// NewPublisherFactory returns a new instance of publisher factory.
-func NewPublisherFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
+// NewPublisherSubscriberFactory returns a new instance of publisher factory.
+func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*PublisherSubscriberFactory, error) {
 	if err := config.init(); err != nil {
 		return nil, err
 	}
@@ -309,6 +300,9 @@ func (pf *PublisherSubscriberFactory) Publisher(topic string, setting *pubsub.Pu
 				WriteError(pf.config.Log)
 			return nil, err
 		}
+
+		actorkit.LogMsg("Created new topic in queue").
+			String("topic", topic).WriteDebug(pf.config.Log)
 	}
 
 	if setting != nil {
@@ -411,13 +405,15 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 		actorkit.LogMsg("Published new message for topic").
 			ObjectJSON("message", marshaled).
 			String("topic", p.topic).WriteDebug(p.log)
+
+		errs <- nil
 	}
 
 	select {
 	case p.actions <- action:
 		return <-errs
-	default:
-		return errors.New("message failed to be published")
+	case <-time.After(p.config.MessageDeliveryTimeout):
+		return errors.New("publisher busy, unable to handle message, please retry")
 	}
 }
 
@@ -485,19 +481,30 @@ func (pf *PublisherSubscriberFactory) createSubscription(topic string, id string
 		config = &(*pf.config.DefaultSubscriptionConfig)
 	}
 
+	if config == nil && pf.config.DefaultSubscriptionConfig == nil {
+		config = &pubsub.SubscriptionConfig{}
+	}
+
+	var mid = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "google/pubsub", pf.config.ProjectID, topic, id)
+	var pid = transformIDForGooglePubSubFormat(mid)
+
 	actorkit.LogMsg("Creating new subscription for topic").
 		String("project_id", pf.config.ProjectID).
 		String("topic", topic).
 		String("id", id).
+		String("mid", mid).
+		String("pid", pid).
 		WriteDebug(pf.config.Log)
 
 	var newSub Subscription
+	newSub.id = mid
+	newSub.pid = pid
+	newSub.client = pf.c
 	newSub.subc = config
 	newSub.topic = topic
 	newSub.log = pf.config.Log
 	newSub.receiver = receiver
 	newSub.config = &pf.config
-	newSub.id = fmt.Sprintf(pubsubs.SubscriberTopicFormat, "google/pubsub", pf.config.ProjectID, topic, id)
 
 	newSub.ctx, newSub.canceler = context.WithCancel(pf.ctx)
 	if err := newSub.init(); err != nil {
@@ -516,12 +523,6 @@ func (pf *PublisherSubscriberFactory) createSubscription(topic string, id string
 		newSub.Wait()
 	}()
 
-	actorkit.LogMsg("Created new subscription for topic").
-		String("project_id", pf.config.ProjectID).
-		String("topic", topic).
-		String("id", id).
-		WriteDebug(pf.config.Log)
-
 	return &newSub, nil
 }
 
@@ -533,6 +534,7 @@ func (pf *PublisherSubscriberFactory) createSubscription(topic string, id string
 // for. It implements the pubsubs.Subscription interface.
 type Subscription struct {
 	id       string
+	pid      string
 	topic    string
 	canceler func()
 	config   *Config
@@ -573,14 +575,22 @@ func (s *Subscription) Stop() error {
 }
 
 func (s *Subscription) init() error {
-	sx := s.client.Subscription(transformIDForGooglePubSubFormat(s.id))
+	actorkit.LogMsg("Initiating new subscription for topic").
+		String("project_id", s.config.ProjectID).
+		String("topic", s.topic).
+		String("id", s.id).
+		String("pid", s.pid).
+		WriteDebug(s.config.Log)
+
+	sx := s.client.Subscription(s.pid)
 	sExists, err := sx.Exists(s.ctx)
 	if err != nil {
-		err = errors.Wrap(err, "failed to check existence of subscription id %q", s.id)
+		err = errors.Wrap(err, "failed to check existence of subscription ID")
 		actorkit.LogMsg(err.Error()).
 			String("project_id", s.config.ProjectID).
 			String("topic", s.topic).
 			String("id", s.id).
+			String("pid", s.pid).
 			WriteError(s.config.Log)
 		return err
 	}
@@ -598,6 +608,13 @@ func (s *Subscription) init() error {
 			sx.ReceiveSettings.MaxOutstandingMessages = s.config.MaxOutStandingMessages
 		}
 
+		actorkit.LogMsg("Found existing subscription for topic with id").
+			String("project_id", s.config.ProjectID).
+			String("topic", s.topic).
+			String("id", s.id).
+			String("pid", s.pid).
+			WriteDebug(s.config.Log)
+
 		s.sub = sx
 		return nil
 	}
@@ -609,6 +626,7 @@ func (s *Subscription) init() error {
 		actorkit.LogMsg(err.Error()).
 			String("project_id", s.config.ProjectID).
 			String("topic", s.topic).
+			String("pid", s.pid).
 			String("id", s.id).
 			WriteError(s.config.Log)
 		return err
@@ -620,18 +638,20 @@ func (s *Subscription) init() error {
 			String("project_id", s.config.ProjectID).
 			String("topic", s.topic).
 			String("id", s.id).
+			String("pid", s.pid).
 			WriteError(s.config.Log)
 		return err
 	}
 
 	s.subc.Topic = tx
-	sx, err = s.client.CreateSubscription(s.ctx, s.id, *s.subc)
+	sx, err = s.client.CreateSubscription(s.ctx, s.pid, *s.subc)
 	if err != nil {
 		err = errors.Wrap(err, "Failed to create subscription for topic")
 		actorkit.LogMsg(err.Error()).
 			String("project_id", s.config.ProjectID).
 			String("topic", s.topic).
 			String("id", s.id).
+			String("pid", s.pid).
 			WriteError(s.config.Log)
 		return err
 	}
@@ -650,11 +670,25 @@ func (s *Subscription) init() error {
 
 	s.sub = sx
 	s.waiter.Go(s.run)
+
+	actorkit.LogMsg("Created new subscription for topic ready").
+		String("project_id", s.config.ProjectID).
+		String("topic", s.topic).
+		String("id", s.id).
+		String("pid", s.pid).
+		WriteDebug(s.config.Log)
 	return nil
 }
 
 func (s *Subscription) run() error {
 	if err := s.sub.Receive(s.ctx, func(ctx context.Context, message *pubsub.Message) {
+		actorkit.LogMsg("Received new message for topic").
+			String("project_id", s.config.ProjectID).
+			String("topic", s.topic).
+			String("id", s.id).
+			String("pid", s.pid).
+			WriteDebug(s.config.Log)
+
 		decoded, err := s.config.Unmarshaler.Unmarshal(message)
 		if err != nil {
 			err = errors.Wrap(err, "Failed to unmarshal message")
@@ -667,6 +701,14 @@ func (s *Subscription) run() error {
 			message.Nack()
 			return
 		}
+
+		actorkit.LogMsg("Successfully transformed message for reading").
+			String("project_id", s.config.ProjectID).
+			String("topic", s.topic).
+			String("id", s.id).
+			String("pid", s.pid).
+			ObjectJSON("msg", decoded).
+			WriteDebug(s.config.Log)
 
 		action, err := s.receiver(decoded)
 		if err != nil {
@@ -681,6 +723,14 @@ func (s *Subscription) run() error {
 			return
 		}
 
+		actorkit.LogMsg("Message processed with action").
+			String("project_id", s.config.ProjectID).
+			ObjectJSON("action", action.String()).
+			String("topic", s.topic).
+			String("id", s.id).
+			String("pid", s.pid).
+			WriteDebug(s.config.Log)
+
 		switch action {
 		case pubsubs.ACK:
 			message.Ack()
@@ -689,6 +739,7 @@ func (s *Subscription) run() error {
 		case pubsubs.NOPN:
 			return
 		}
+
 	}); err != nil {
 		err = errors.Wrap(err, "Subscription failed and is unable to be recovered")
 		actorkit.LogMsg(err.Error()).
@@ -702,5 +753,5 @@ func (s *Subscription) run() error {
 }
 
 func transformIDForGooglePubSubFormat(id string) string {
-	return strings.Replace(id, "/", "-", -1)
+	return strings.Replace(id, "/", "-", -1)[1:]
 }

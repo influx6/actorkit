@@ -148,6 +148,18 @@ type PublisherFactory interface {
 // a message by a Receiver function type.
 type Action uint8
 
+func (a Action) String() string {
+	switch a {
+	case ACK:
+		return "ACK"
+	case NACK:
+		return "NACK"
+	case NOPN:
+		return "NOPN"
+	}
+	return "UNKNOWN"
+}
+
 // constants of action types
 const (
 	// ACK is for acknowledging a message received.

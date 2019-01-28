@@ -9,7 +9,7 @@ import (
 	"github.com/gokit/actorkit/pubsubs/internal/benches"
 	"github.com/gokit/actorkit/pubsubs/internal/encoders"
 	segment "github.com/gokit/actorkit/pubsubs/kafka/segments"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSegments(t *testing.T) {
