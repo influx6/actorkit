@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNATS(t *testing.T) {
+func TestSegments(t *testing.T) {
 	kpub, err := segment.NewPublisherSubscriberFactory(context.Background(), segment.Config{
 		Brokers:     []string{"127.0.0.1:9092"},
 		Log:         &internal.TLog{},
