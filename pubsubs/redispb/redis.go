@@ -129,8 +129,8 @@ func NewPublisherSubscriberFactory(ctx context.Context, config Config) (*Publish
 	// create redis client
 	client := redis.NewClient(pb.config.Host)
 
-	config.Log.Emit(actorkit.DEBUG, actorkit.LogMsg("Creating redis connection").
-		String("url", pb.config.Host.Addr))
+	actorkit.LogMsg("Creating redis connection").
+		String("url", pb.config.Host.Addr).WriteDebug(config.Log)
 
 	// verify that redis server is working with ping-pong.
 	status := client.Ping()

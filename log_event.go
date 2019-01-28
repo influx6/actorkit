@@ -201,7 +201,32 @@ func (l *LogEvent) Message() string {
 	return bytes2String(cn)
 }
 
-// Write delivers giving log event as a generated message.
+// WritePanic writes the underline logEvent into provided log as a PANIC log level.
+func (l *LogEvent) WritePanic(lg Logs) {
+	l.Write(PANIC, lg)
+}
+
+// WriteWARN writes the underline logEvent into provided log as a WARNING log level.
+func (l *LogEvent) WriteWarn(lg Logs) {
+	l.Write(ERROR, lg)
+}
+
+// WriteError writes the underline logEvent into provided log as a ERROR log level.
+func (l *LogEvent) WriteError(lg Logs) {
+	l.Write(ERROR, lg)
+}
+
+// WriteInfo writes the underline logEvent into provided log as a INFO log level.
+func (l *LogEvent) WriteInfo(lg Logs) {
+	l.Write(INFO, lg)
+}
+
+// WriteDEBUG writes the underline logEvent into provided log as a DEBUG log level.
+func (l *LogEvent) WriteDebug(lg Logs) {
+	l.Write(DEBUG, lg)
+}
+
+// Write writes giving event into Logs using provided log level.
 func (l *LogEvent) Write(ll Level, lg Logs) {
 	lg.Emit(ll, Message(l.Message()))
 }
