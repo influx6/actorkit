@@ -17,12 +17,6 @@ var (
 	// ErrNotSupported is returned when a giving feature or method has no implementation
 	// support.
 	ErrNotSupported = errors.New("method not supported")
-
-	// ErrSubscriptionFailed is returned for failed subscription to topic.
-	ErrSubscriptionFailed = errors.New("failed to subscribe to topic")
-
-	// ErrPublishingFailed is returned for failed publishing of message.
-	ErrPublishingFailed = errors.New("failed to publish message to channel/topic")
 )
 
 // Message defines a type which embodies a topic to be published to and the associated

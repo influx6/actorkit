@@ -327,9 +327,9 @@ func (p *Publisher) Publish(msg actorkit.Envelope) error {
 	case p.actions <- action:
 		return <-errs
 	case <-time.After(p.cfg.MessageDeliveryTimeout):
-		err := errors.Wrap(pubsubs.ErrPublishingFailed, "Topic %q", p.topic)
-		p.log.Emit(actorkit.ERROR, actorkit.LogMsgWithContext("Failed to deliver message to topic", "context", nil).
-			String("topic", p.topic))
+		err := errors.New("Failed to create publisher for topic %q", p.topic)
+		actorkit.LogMsgWithContext(err.Error(), "context", nil).
+			String("topic", p.topic).WriteError(p.log)
 		return err
 	}
 }
