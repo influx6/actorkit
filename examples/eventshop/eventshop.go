@@ -8,12 +8,14 @@ import (
 )
 
 func main() {
-	system, err := actorkit.Ancestor("kit", "localhost:0")
+	system, err := actorkit.Ancestor("kit", "localhost:0", actorkit.Prop{})
 	if err != nil {
 		panic(err)
 	}
 
-	books, err := system.Spawn("bookstore", &BookStore{}, actorkit.Prop{})
+	books, err := system.Spawn("bookstore", actorkit.Prop{
+		Behaviour: &BookStore{},
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -77,7 +79,7 @@ func (bm *BookStore) PostStart(addr actorkit.Addr) error {
 // PreStart will be called when actor is starting up.
 func (bm *BookStore) PreStart(actor actorkit.Addr) error {
 	if bm.Books == nil {
-		books, err := actor.Spawn("books_events", &BookEventStore{}, actorkit.Prop{})
+		books, err := actor.Spawn("books_events", actorkit.Prop{Behaviour: &BookEventStore{}})
 		if err != nil {
 			return err
 		}
@@ -86,7 +88,9 @@ func (bm *BookStore) PreStart(actor actorkit.Addr) error {
 	}
 
 	if bm.Ratings == nil {
-		ratings, err := actor.Spawn("books_ratings", &BookRatingStore{}, actorkit.Prop{})
+		ratings, err := actor.Spawn("books_ratings", actorkit.Prop{
+			Behaviour: &BookRatingStore{},
+		})
 		if err != nil {
 			return err
 		}

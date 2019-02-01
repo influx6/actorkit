@@ -22,12 +22,12 @@ func (h *HelloOp) Action(me actorkit.Addr, e actorkit.Envelope) {
 }
 
 func main() {
-	addr, err := actorkit.Ancestor("kit", "localhost:0")
+	addr, err := actorkit.Ancestor("kit", "localhost:0", actorkit.Prop{})
 	if err != nil {
 		panic(err)
 	}
 
-	hello, err := addr.Spawn("hello", &HelloOp{}, actorkit.Prop{})
+	hello, err := addr.Spawn("hello", actorkit.Prop{Behaviour: &HelloOp{}})
 	if err != nil {
 		panic(err)
 	}
