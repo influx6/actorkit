@@ -2,8 +2,11 @@
 
 Runtimes is a derivative of the initial idea of a flat queue-based event processing pipeline.
 
-In short, it allows actorkit to sit on top of any queue implementation. 
+In short, it allows actorkit to sit on top of any queue implementation, whilst still allowing a single
+actor to be the only processor of any event even with multiple instances deployed within a distributed system. 
 
+
+It replicates the competing consumers pattern when it's not natively supported by the queue system used.
 If your curious here is more information on this approach:
 [Consumers groups](https://blog.cloudera.com/blog/2018/05/scalability-of-kafka-messaging-using-consumer-groups/)
 [Competing Consumers](https://www.enterpriseintegrationpatterns.com/patterns/messaging/CompetingConsumers.html)
