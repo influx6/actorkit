@@ -17,8 +17,8 @@ go get -u github.com/gokit/actorkit
 
 ![Actor System](./media/actors.png)
 
-Actorkit is a fusion of CQRS, grains from Microsoft Orleans and actor-based message-passing principles within a
+Actorkit is a fusion of CQRS, and actor-based message processing combined within within a
 a single library geared towards the creation of scalable, distributed and resilient applications built on the concept of transparent,
-addressable processing units or actors. It embraces the very nature of chaotic, failing system which is 
-most transparent to the developer allowing the focus on creating systems able to resiliently function in such
-environments. These details become part of the architecture and not just a after development process managemeent routine.
+addressable processing units. It embraces the very nature of chaotic, failing system which is 
+as is natural with distributed systems, allowing the developer to both reason and built handling 
+strategies for this issues.
