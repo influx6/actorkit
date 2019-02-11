@@ -2,5 +2,7 @@
 // and distribute work for a deployed actorkit system.
 package runtimes
 
-type Hornet interface {
+type Proc struct {
+	Event string `json:"event"`
+	Reservation
 }
