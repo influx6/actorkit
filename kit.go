@@ -567,13 +567,6 @@ type Discovery interface {
 // the actor system where. How the underline actor's who's address is returned is
 // up to the implementer, but by abstracting such a system by this interface we
 // provide a simple and easy way to add better discovery functionality into actor trees.
-//
-// DiscoveryServices also provide the means of templated actors, where actors with
-// behaviors is already defined by a generating function called 'Templated Functions'.
-// Templated functions always return a new actor when called and provide a nice means
-// of having a guaranteed behaviour produced for a giving service namespace,
-//
-//
 type DiscoveryService interface {
 	Discover(service string) (Addr, error)
 }
@@ -591,21 +584,21 @@ type DiscoveryChain interface {
 	AddDiscovery(service DiscoveryService) error
 }
 
-// DiscoveryServiceFunction defines a function type which will spawn a given
+// FunctionServer defines a function type which will spawn a given
 // actor using a provided parent and returns address of spawned actor. This allows
 // us allocate management of giving actor to some parent whilst allowing others
 // gain access to giving actor.
-type DiscoveryServiceFunction func(parent Addr, service string) (Addr, error)
+type FunctionServer func(parent Addr, service string) (Addr, error)
 
-// DiscoveryFor returns a new DiscoveryService which calls giving function
+// FunctionDiscoveryService returns a new DiscoveryService which calls giving function
 // with service name for returning an actor suitable for handling a giving service.
-func DiscoveryFor(parent Addr, fn DiscoveryServiceFunction) DiscoveryService {
+func FunctionDiscoveryService(parent Addr, fn FunctionServer) DiscoveryService {
 	return &fnDiscovery{parent: parent, Fn: fn}
 }
 
 type fnDiscovery struct {
 	parent Addr
-	Fn     DiscoveryServiceFunction
+	Fn     FunctionServer
 }
 
 func (dn *fnDiscovery) Discover(service string) (Addr, error) {
