@@ -818,17 +818,17 @@ type Service interface {
 // a race against each other to win a message processing rights, how that works is up to
 // the implementer.
 type Reservation interface {
-	// ReserveFor reserves giving envelope for a set duration, which will be expired after
-	// giving time.
-	ReserveFor(Envelope, time.Duration) error
-
 	// Reserve reserves giving envelope for ever, ensuring no other can attempt to take giving
 	// envelope anymore.
 	Reserve(Envelope) error
 
-	// Unreserve giving envelope from underline registry, allowing other reservations attempts
+	// ExpireReserve giving envelope from underline registry, allowing other reservr attempts
 	// if still ongoing to succeed.
-	Unreserve(Envelope) error
+	ExpireReserve(Envelope) error
+
+	// ReserveTTL reserves giving envelope for a set duration, which will be expired after
+	// giving time.
+	ReserveTTL(Envelope, time.Duration) error
 }
 
 //***********************************
