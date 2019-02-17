@@ -1,6 +1,13 @@
 package actorkit
 
-import "log"
+import (
+	"log"
+	"time"
+)
+
+//***********************************************************
+// Route Messages
+//***********************************************************
 
 // AddRoute defines a giving message delivered
 // for adding sending address into route list.
@@ -13,6 +20,53 @@ type AddRoute struct{}
 //
 // Used by the RoundRobin, RandomRouter, HashedRouter and Broadcast Router.
 type RemoveRoute struct{}
+
+//***********************************************************
+// SpawningRouter
+//***********************************************************
+
+// SpawnerFunc spawns a new actor with provided ModOps which will be
+// used to build it's prop list.
+type SpawnerFunc func(mods ...ModProp) Actor
+
+// SpawnerConfig defines configuration which is used to power a underline
+// spawner and how it build's it's underline children from provided spawned function.
+type SpawnerConfig struct {
+	Max     int
+	Mods    []ModProp
+	Spawner SpawnerFunc
+	MaxIdle time.Duration
+}
+
+// SpawningRouter differs from other router which have their actors
+// provided to them over a message, instead these are specific for a giving
+// actor type and are provided a function which consistently spawns
+// actors for handling messages based on specific configurable conditions.
+type SpawningRouter struct {
+	config  SpawnerConfig
+	spawner SpawnerFunc
+
+	slots         []Actor
+	fallbackRobin *RoundRobinSet
+}
+
+// NewSpawningRouter returns a new SpawningRouter.
+func NewSpawningRouter(config SpawnerConfig) *SpawningRouter {
+	var spawner SpawningRouter
+	spawner.config = config
+	spawner.slots = make([]Actor, config.Max)
+	spawner.fallbackRobin = NewRoundRobinSet()
+	return &spawner
+}
+
+// Action implements the Op interface.
+// It handles the allocation of new pending work to available nodes
+// within the maximum allowed actors. It will dish out incoming messages
+// to non-busy workers when possible, else dish incoming work in a
+// round robin fashion.
+func (rr *SpawningRouter) Action(addr Addr, msg Envelope) {
+
+}
 
 //***********************************************************
 // RoundRobinRouter
@@ -48,7 +102,7 @@ func NewRoundRobinRouter(addrs ...Addr) *RoundRobinRouter {
 	}
 }
 
-// Action implements the Behaviour interface.
+// Action implements the Op interface.
 func (rr *RoundRobinRouter) Action(addr Addr, msg Envelope) {
 	switch msg.Data.(type) {
 	case AddRoute:
@@ -102,7 +156,7 @@ func NewBroadcastRouter(addrs ...Addr) *BroadcastRouter {
 	}
 }
 
-// Action implements the Behaviour interface.
+// Action implements the Op interface.
 func (rr *BroadcastRouter) Action(addr Addr, msg Envelope) {
 	switch msg.Data.(type) {
 	case AddRoute:
@@ -154,7 +208,7 @@ func NewRandomRouter(addrs ...Addr) *RandomRouter {
 	}
 }
 
-// Action implements the Behaviour interface.
+// Action implements the Op interface.
 func (rr *RandomRouter) Action(addr Addr, msg Envelope) {
 	switch msg.Data.(type) {
 	case AddRoute:
@@ -241,7 +295,7 @@ func NewHashedRouter(ref HashingReference, addrs ...Addr) *HashedRouter {
 	}
 }
 
-// Action implements the Behaviour interface.
+// Action implements the Op interface.
 func (rr *HashedRouter) Action(addr Addr, msg Envelope) {
 	switch msg.Data.(type) {
 	case AddRoute:

@@ -416,11 +416,11 @@ func (dm *CircuitAddr) SendWithHeader(data interface{}, h Header, addr Addr) err
 }
 
 //**********************************************************
-// BehaviourCircuit
+// OpCircuit
 //**********************************************************
 
-// BehaviourCircuit implements the circuit breaker pattern for
-// execution of a implementer of the ErrorBehaviour interface which
+// OpCircuit implements the circuit breaker pattern for
+// execution of a implementer of the ErrorOp interface which
 // returns errors for the execution of a operation.
 //
 // Usually this is suitable if the implementer only ever performs
@@ -429,14 +429,14 @@ func (dm *CircuitAddr) SendWithHeader(data interface{}, h Header, addr Addr) err
 // as the breaker once tripped will ignore all messages without a
 // care for it's type.
 //
-type BehaviourCircuit struct {
-	behaviour ErrorBehaviour
+type OpCircuit struct {
+	behaviour ErrorOp
 	circuit   *CircuitBreaker
 	fallback  func(Addr, Envelope) error
 }
 
-// Action implements the Behaviour interface.
-func (bc *BehaviourCircuit) Action(addr Addr, msg Envelope) {
+// Action implements the Op interface.
+func (bc *OpCircuit) Action(addr Addr, msg Envelope) {
 	bc.circuit.Do(context.Background(), func(ctx context.Context) error {
 		return bc.behaviour.Action(addr, msg)
 	}, func(ctx context.Context, err error) error {

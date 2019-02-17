@@ -19,7 +19,7 @@ func TestActorImpl(t *testing.T) {
 	base := &basic{
 		Message: make(chan *actorkit.Envelope, 1),
 	}
-	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
+	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Op: base})
 
 	require.NoError(t, am.Start())
 	require.True(t, isRunning(am))
@@ -33,7 +33,7 @@ func TestActorImpl(t *testing.T) {
 
 func TestActorImplMessaging(t *testing.T) {
 	base := &basic{Message: make(chan *actorkit.Envelope, 1)}
-	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
+	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Op: base})
 
 	require.NoError(t, am.Start())
 	require.True(t, isRunning(am))
@@ -59,7 +59,7 @@ func TestActorChildMessaging(t *testing.T) {
 		Message: make(chan *actorkit.Envelope, 1),
 	}
 
-	addr, err := system.Spawn("basic", actorkit.Prop{Behaviour: base})
+	addr, err := system.Spawn("basic", actorkit.Prop{Op: base})
 	require.NoError(t, err)
 	require.NotNil(t, addr)
 
@@ -91,9 +91,12 @@ func TestActorImplPanic(t *testing.T) {
 		},
 	}
 
-	am := actorkit.FromFunc("ns", "br", func(addr actorkit.Addr, envelope actorkit.Envelope) {
-		panic("Error occured")
-	}, actorkit.UseSupervisor(supervisor))
+	am := actorkit.NewActorImpl("ns", "br", actorkit.Prop{
+		Supervisor: supervisor,
+		Op: actorkit.OpFromFunc(func(addr actorkit.Addr, envelope actorkit.Envelope) {
+			panic("Error occured")
+		}),
+	})
 
 	require.NoError(t, am.Start())
 	require.True(t, isRunning(am))
@@ -109,17 +112,17 @@ func TestActorWithChildTreeStates(t *testing.T) {
 	base := &basic{
 		Message: make(chan *actorkit.Envelope, 1),
 	}
-	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
+	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Op: base})
 
 	require.NoError(t, am.Start())
 	require.True(t, isRunning(am))
 
-	childAddr, err := am.Spawn("child", actorkit.Prop{Behaviour: base})
+	childAddr, err := am.Spawn("child", actorkit.Prop{Op: base})
 	require.NoError(t, err)
 
 	require.Len(t, am.Children(), 1)
 
-	grandChild, err := childAddr.Spawn("grand-child", actorkit.Prop{Behaviour: base})
+	grandChild, err := childAddr.Spawn("grand-child", actorkit.Prop{Op: base})
 	require.NoError(t, err)
 
 	require.Len(t, childAddr.Children(), 1)
@@ -142,12 +145,12 @@ func TestActorWithChildStates(t *testing.T) {
 		Message: make(chan *actorkit.Envelope, 1),
 	}
 
-	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Behaviour: base})
+	am := actorkit.NewActorImpl("ns", "ds", actorkit.Prop{Op: base})
 
 	require.NoError(t, am.Start())
 	require.True(t, isRunning(am))
 
-	childAddr, err := am.Spawn("child", actorkit.Prop{Behaviour: &basic{}})
+	childAddr, err := am.Spawn("child", actorkit.Prop{Op: &basic{}})
 	require.NoError(t, err)
 
 	require.NoError(t, am.Restart())

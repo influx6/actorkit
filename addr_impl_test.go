@@ -15,7 +15,7 @@ func TestAddrAddressFormat(t *testing.T) {
 
 	require.Equal(t, "kitkat@10.10.10.10:2020/"+system.ID()+"/access", system.Addr())
 
-	child, err := system.Spawn("runner", actorkit.Prop{Behaviour: &basic{}})
+	child, err := system.Spawn("runner", actorkit.Prop{Op: &basic{}})
 	require.NoError(t, err)
 	require.NotNil(t, child)
 
@@ -29,7 +29,7 @@ func TestDeadLetterAddr(t *testing.T) {
 
 	require.True(t, strings.HasPrefix(addr.Addr(), "kit@localhost"), "should have prefix %q", addr.Addr())
 
-	_, err := addr.Spawn("wap", actorkit.Prop{Behaviour: &basic{}})
+	_, err := addr.Spawn("wap", actorkit.Prop{Op: &basic{}})
 	require.Error(t, err)
 
 	_, err = addr.AddressOf("wap", true)

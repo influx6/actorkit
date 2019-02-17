@@ -44,6 +44,18 @@ type Unmarshaler interface {
 	Unmarshal([]byte) (actorkit.Envelope, error)
 }
 
+//***********************************************************
+// Router
+//***********************************************************
+
+// Router provides a publishing subscription routing implementation which will
+// take a giving underline pubsub factory and a router will
+// attempt to create new actors for the processing of said
+// actors.
+type Router struct {
+	pubsub PubSubFactory
+}
+
 //*********************************************************
 //  PubSubFactory
 //*********************************************************

@@ -23,34 +23,12 @@ var (
 	// ErrActorMustBeRunning is returned when an operation is to be done and the giving actor is not started.
 	ErrActorMustBeRunning = errors.New("Actor must be running")
 
-	// ErrActorHasNoBehaviour is returned when an is to start with no attached behaviour.
-	ErrActorHasNoBehaviour = errors.New("Actor must be running")
+	// ErrActorHasNoOp is returned when an is to start with no attached behaviour.
+	ErrActorHasNoOp = errors.New("Actor must be running")
 
 	// ErrActorHasNoDiscoveryService is returned when actor has no discovery server.
 	ErrActorHasNoDiscoveryService = errors.New("Actor does not support discovery")
 )
-
-//********************************************************
-// Behaviour Function
-//********************************************************
-
-// BehaviourFunc defines a function type which is wrapped by a
-// type implementing the Behaviour interface to be used in a
-// actor.
-type BehaviourFunc func(Addr, Envelope)
-
-// FromBehaviourFunc returns a new Behaviour from the function.
-func FromBehaviourFunc(b BehaviourFunc) Behaviour {
-	return &behaviourFunctioner{fn: b}
-}
-
-type behaviourFunctioner struct {
-	fn BehaviourFunc
-}
-
-func (bh *behaviourFunctioner) Action(addr Addr, env Envelope) {
-	bh.fn(addr, env)
-}
 
 //********************************************************
 // signal dummy
@@ -63,81 +41,12 @@ type signalDummy struct{}
 func (signalDummy) SignalState(_ Addr, _ Signal) {}
 
 //********************************************************
-// Actor Constructors
+// Actors
 //********************************************************
 
-// ActorOption defines a function which is runned against a pointer to a
-// Prop which will be used for generating a actor's underline behaviour.
-type ActorOption func(*Prop)
-
-// ActorSpawner defines a function interface which takes a giving set of
-// options returns a new instantiated Actor.
-type ActorSpawner func(...ActorOption) Actor
-
-// FromPartial returns a ActorSpawner which will be used for spawning new Actor using
-// provided options both from the call to FromPartial and those passed to the returned function.
-func FromPartial(namespace string, protocol string, ops ...ActorOption) ActorSpawner {
-	return func(more ...ActorOption) Actor {
-		var prop = new(Prop)
-		for _, op := range ops {
-			op(prop)
-		}
-		for _, op := range more {
-			op(prop)
-		}
-		return NewActorImpl(namespace, protocol, *prop)
-	}
-}
-
-// FromPartialFunc defines a giving function which can be supplied a function which will
-// be called with provided ActorOption to be used for generating new actors for
-// giving options.
-func FromPartialFunc(partial func(string, string, ...ActorOption) Actor, pre ...ActorOption) func(string, string, ...ActorOption) Actor {
-	return func(namespace string, protocol string, ops ...ActorOption) Actor {
-		var prop = new(Prop)
-		for _, op := range pre {
-			op(prop)
-		}
-		for _, op := range ops {
-			op(prop)
-		}
-		return partial(namespace, protocol, pre...)
-	}
-}
-
-// From returns a new spawned and not yet started Actor based on provided ActorOptions.
-func From(namespace string, protocol string, ops ...ActorOption) Actor {
-	var prop = new(Prop)
-	for _, op := range ops {
-		op(prop)
-	}
-	return NewActorImpl(namespace, protocol, *prop)
-}
-
-// FromFunc returns a new actor based on provided function.
-func FromFunc(namespace string, protocol string, fn BehaviourFunc, ops ...ActorOption) Actor {
-	var prop = new(Prop)
-	for _, op := range ops {
-		op(prop)
-	}
-	prop.Behaviour = FromBehaviourFunc(fn)
-	actor := NewActorImpl(namespace, protocol, *prop)
-	return actor
-}
-
-// Func returns a Actor generating function which uses provided BehaviourFunc.
-func Func(fn BehaviourFunc) func(string, string, ...ActorOption) Actor {
-	return FromPartialFunc(func(ns string, pr string, options ...ActorOption) Actor {
-		var prop = new(Prop)
-		for _, op := range options {
-			op(prop)
-		}
-
-		prop.Behaviour = FromBehaviourFunc(fn)
-		actor := NewActorImpl(ns, pr, *prop)
-		return actor
-	})
-}
+// ActorFunc defines a function which taking a provided Prop object
+// returns a new Actor.
+type ActorFunc func(Prop) Actor
 
 // Ancestor create an actor with a default DeadLetter behaviour, where this actor
 // is the root node in a tree of actors. It is the entity by which all children
@@ -151,90 +60,12 @@ func Func(fn BehaviourFunc) func(string, string, ...ActorOption) Actor {
 // Remember all child actors spawned from an ancestor always takes its protocol and
 // namespace.
 func Ancestor(protocol string, namespace string, prop Prop) (Addr, error) {
-	if prop.Behaviour == nil {
-		prop.Behaviour = &DeadLetterBehaviour{}
+	if prop.Op == nil {
+		prop.Op = &DeadLetterOp{}
 	}
 
 	actor := NewActorImpl(namespace, protocol, prop)
 	return AccessOf(actor), actor.Start()
-}
-
-// UseMailbox sets the mailbox to be used by the actor.
-func UseMailbox(m Mailbox) ActorOption {
-	return func(ac *Prop) {
-		ac.Mailbox = m
-	}
-}
-
-// UseSignal applies giving signals to be used by
-// generated actor.
-func UseSignal(signal Signals) ActorOption {
-	return func(ac *Prop) {
-		ac.Signals = signal
-	}
-}
-
-// UseSentinel sets giving Sentinel provider for a actor.
-func UseSentinel(sn Sentinel) ActorOption {
-	return func(ac *Prop) {
-		ac.Sentinel = sn
-	}
-}
-
-// UseDeadLetter sets giving deadletter as processor for death mails.
-func UseDeadLetter(ml DeadLetter) ActorOption {
-	return func(ac *Prop) {
-		ac.DeadLetters = ml
-	}
-}
-
-// UseContextLog sets the Logs to be used by the actor.
-func UseContextLog(cl ContextLogs) ActorOption {
-	return func(ac *Prop) {
-		ac.ContextLogs = cl
-	}
-}
-
-// UseSupervisor sets the supervisor to be used by the actor.
-func UseSupervisor(s Supervisor) ActorOption {
-	return func(ac *Prop) {
-		ac.Supervisor = s
-	}
-}
-
-// UseEventStream sets the event stream to be used by the actor.
-func UseEventStream(es EventStream) ActorOption {
-	return func(ac *Prop) {
-		ac.Event = es
-	}
-}
-
-// UseMailInvoker sets the mail invoker to be used by the actor.
-func UseMailInvoker(mi MailInvoker) ActorOption {
-	return func(ac *Prop) {
-		ac.MailInvoker = mi
-	}
-}
-
-// UseBehaviour sets the behaviour to be used by a given actor.
-func UseBehaviour(bh Behaviour) ActorOption {
-	return func(ac *Prop) {
-		ac.Behaviour = bh
-	}
-}
-
-// UseStateInvoker sets the state invoker to be used by the actor.
-func UseStateInvoker(st StateInvoker) ActorOption {
-	return func(ac *Prop) {
-		ac.StateInvoker = st
-	}
-}
-
-// UseMessageInvoker sets the message invoker to be used by the actor.
-func UseMessageInvoker(st MessageInvoker) ActorOption {
-	return func(ac *Prop) {
-		ac.MessageInvoker = st
-	}
 }
 
 //********************************************************
@@ -269,6 +100,7 @@ type ActorImpl struct {
 	namespace   string
 	protocol    string
 	state       uint32
+	wstate      uint32
 	logger      Logs
 	tree        *ActorTree
 	deadLockDur time.Duration
@@ -330,8 +162,8 @@ func NewActorImpl(namespace string, protocol string, props Prop) *ActorImpl {
 		protocol = "kit"
 	}
 
-	if props.Behaviour == nil {
-		panic("Can have nil Behaviour")
+	if props.Op == nil {
+		panic("Can have nil Op")
 	}
 
 	ac := &ActorImpl{}
@@ -355,49 +187,49 @@ func NewActorImpl(namespace string, protocol string, props Prop) *ActorImpl {
 		props.Signals = &signalDummy{}
 	}
 
-	if tm, ok := props.Behaviour.(PreStart); ok {
+	if tm, ok := props.Op.(PreStart); ok {
 		ac.preStart = tm
 	} else {
 		ac.preStart = nil
 	}
 
-	if tm, ok := props.Behaviour.(PostStart); ok {
+	if tm, ok := props.Op.(PostStart); ok {
 		ac.postStart = tm
 	} else {
 		ac.postStart = nil
 	}
 
-	if tm, ok := props.Behaviour.(PreDestroy); ok {
+	if tm, ok := props.Op.(PreDestroy); ok {
 		ac.preDestroy = tm
 	} else {
 		ac.preDestroy = nil
 	}
 
-	if tm, ok := props.Behaviour.(PostDestroy); ok {
+	if tm, ok := props.Op.(PostDestroy); ok {
 		ac.postDestroy = tm
 	} else {
 		ac.postDestroy = nil
 	}
 
-	if tm, ok := props.Behaviour.(PreRestart); ok {
+	if tm, ok := props.Op.(PreRestart); ok {
 		ac.preRestart = tm
 	} else {
 		ac.preRestart = nil
 	}
 
-	if tm, ok := props.Behaviour.(PostRestart); ok {
+	if tm, ok := props.Op.(PostRestart); ok {
 		ac.postRestart = tm
 	} else {
 		ac.postRestart = nil
 	}
 
-	if tm, ok := props.Behaviour.(PreStop); ok {
+	if tm, ok := props.Op.(PreStop); ok {
 		ac.preStop = tm
 	} else {
 		ac.preStop = nil
 	}
 
-	if tm, ok := props.Behaviour.(PostStop); ok {
+	if tm, ok := props.Op.(PostStop); ok {
 		ac.postStop = tm
 	} else {
 		ac.postStop = nil
@@ -462,6 +294,16 @@ func NewActorImpl(namespace string, protocol string, props Prop) *ActorImpl {
 // Wait implements the Waiter interface.
 func (ati *ActorImpl) Wait() {
 	ati.proc.Wait()
+}
+
+// WorkState returns the current work state of giving actor
+// in a safe-concurrent manner.
+func (ati *ActorImpl) WorkState() WorkSignal {
+	return WorkSignal(atomic.LoadUint32(&ati.wstate))
+}
+
+func (ati *ActorImpl) setWorkState(ns WorkSignal) {
+	atomic.StoreUint32(&ati.wstate, uint32(ns))
 }
 
 // State returns the current state of giving actor in a safe-concurrent
@@ -1388,6 +1230,9 @@ func (ati *ActorImpl) readMessages() {
 }
 
 func (ati *ActorImpl) process(a Addr, x Envelope) {
+	ati.setWorkState(BUSY)
+	defer ati.setWorkState(FREE)
+
 	// decrease message wait counter.
 	ati.messages.Done()
 
@@ -1395,7 +1240,7 @@ func (ati *ActorImpl) process(a Addr, x Envelope) {
 		ati.props.MessageInvoker.InvokedProcessing(a, x)
 	}
 
-	ati.props.Behaviour.Action(a, x)
+	ati.props.Op.Action(a, x)
 
 	if ati.props.MessageInvoker != nil {
 		ati.props.MessageInvoker.InvokedProcessed(a, x)

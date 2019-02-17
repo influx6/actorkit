@@ -6,11 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
-	"github.com/gokit/actorkit/internal"
-
 	"github.com/gokit/actorkit"
+	"github.com/gokit/actorkit/internal"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExponentialBackoffRestartSupervisor(t *testing.T) {
@@ -24,11 +22,11 @@ func TestExponentialBackoffRestartSupervisor(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, system)
 
-	child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+	child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 	require.NoError(t, err)
 	require.NotNil(t, child1)
 
-	child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+	child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 	require.NoError(t, err)
 	require.NotNil(t, child2)
 
@@ -68,11 +66,11 @@ func TestRestartSupervisor(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, system)
 
-	child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+	child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 	require.NoError(t, err)
 	require.NotNil(t, child1)
 
-	child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+	child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 	require.NoError(t, err)
 	require.NotNil(t, child2)
 
@@ -125,11 +123,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told destroy")
 	{
-		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child2)
 
@@ -165,11 +163,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told kill")
 	{
-		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child2)
 
@@ -207,11 +205,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told stop")
 	{
-		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child2)
 
@@ -249,11 +247,11 @@ func TestOneForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told restart")
 	{
-		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child2)
 
@@ -311,11 +309,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told destroy")
 	{
-		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child2)
 
@@ -351,11 +349,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told kill")
 	{
-		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child2)
 
@@ -393,11 +391,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told stop")
 	{
-		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child2)
 
@@ -435,11 +433,11 @@ func TestAllForOneSupervisor(t *testing.T) {
 
 	t.Logf("When supervisor is told restart")
 	{
-		child1, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child1, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child1)
 
-		child2, err := system.Spawn("basic", actorkit.Prop{Behaviour: &basic{}})
+		child2, err := system.Spawn("basic", actorkit.Prop{Op: &basic{}})
 		require.NoError(t, err)
 		require.NotNil(t, child2)
 

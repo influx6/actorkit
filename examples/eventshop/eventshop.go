@@ -14,7 +14,7 @@ func main() {
 	}
 
 	books, err := system.Spawn("bookstore", actorkit.Prop{
-		Behaviour: &BookStore{},
+		Op: &BookStore{},
 	})
 	if err != nil {
 		panic(err)
@@ -79,7 +79,7 @@ func (bm *BookStore) PostStart(addr actorkit.Addr) error {
 // PreStart will be called when actor is starting up.
 func (bm *BookStore) PreStart(actor actorkit.Addr) error {
 	if bm.Books == nil {
-		books, err := actor.Spawn("books_events", actorkit.Prop{Behaviour: &BookEventStore{}})
+		books, err := actor.Spawn("books_events", actorkit.Prop{Op: &BookEventStore{}})
 		if err != nil {
 			return err
 		}
@@ -89,7 +89,7 @@ func (bm *BookStore) PreStart(actor actorkit.Addr) error {
 
 	if bm.Ratings == nil {
 		ratings, err := actor.Spawn("books_ratings", actorkit.Prop{
-			Behaviour: &BookRatingStore{},
+			Op: &BookRatingStore{},
 		})
 		if err != nil {
 			return err
@@ -126,7 +126,7 @@ func (bm *BookEventStore) PreStart(addr actorkit.Addr) error {
 	return nil
 }
 
-// Action implements the actorkit.Behaviour interface and contains the logic
+// Action implements the actorkit.Op interface and contains the logic
 // related to handling different incoming book events.
 func (bm *BookEventStore) Action(addr actorkit.Addr, message actorkit.Envelope) {
 	switch event := message.Data.(type) {
@@ -148,7 +148,7 @@ func (bm *BookRatingStore) PreStart(addr actorkit.Addr) error {
 	return nil
 }
 
-// Action implements the actorkit.Behaviour interface and contains the logic
+// Action implements the actorkit.Op interface and contains the logic
 // related to handling different incoming book events for upvotes and signing.
 func (bm *BookRatingStore) Action(addr actorkit.Addr, message actorkit.Envelope) {
 	switch event := message.Data.(type) {

@@ -120,6 +120,7 @@ type Actor interface {
 	ProtocolAddr
 
 	State
+	WorkState
 	Ancestry
 	Descendants
 
@@ -188,19 +189,19 @@ type Signal uint32
 // constants of different actor states transition used for signaling purposes.
 const (
 	INACTIVE Signal = 1 << iota
-	STARTING
-	RUNNING
-	RESTARTING
-	RESTARTED
-	STOPPING
-	STOPPED
+	REJECTED
+	RESOLVED
+	PANICED
 	KILLING
 	KILLED
 	DESTRUCTING
 	DESTROYED
-	PANICED
-	REJECTED
-	RESOLVED
+	STOPPING
+	STOPPED
+	RESTARTING
+	RESTARTED
+	STARTING
+	RUNNING
 )
 
 // String returns a text version of state.
@@ -245,9 +246,36 @@ type Signals interface {
 	SignalState(Addr, Signal)
 }
 
-// State defines a function which returns the current state of it's implementer.
+// State exposes a function which returns the current state of it's implementer.
 type State interface {
 	State() Signal
+}
+
+// WorkSignal represent a series of transitioning
+// state which an actor runs through, it also
+// provides a efficient means of checking actor's state.
+type WorkSignal uint32
+
+// constants of different actor work states transition used for signaling purposes.
+const (
+	FREE WorkSignal = 1 << iota
+	BUSY
+)
+
+// String returns a text version of state.
+func (s WorkSignal) String() string {
+	switch s {
+	case FREE:
+		return "FREE"
+	case BUSY:
+		return "BUSY"
+	}
+	return "UNKNOWN"
+}
+
+// WorkState exposes a function which returns the current state of giving worker.
+type WorkState interface {
+	WorkState() WorkSignal
 }
 
 //***********************************
@@ -384,19 +412,44 @@ type AddressService interface {
 }
 
 //***********************************
-//  Behaviour
+//  Op
 //***********************************
 
-// Behaviour defines an interface that exposes a method
+// ActionFunc defines a function type which accepts a address and
+// an envelope.
+type ActionFunc func(Addr, Envelope)
+
+// Op defines an interface that exposes a method
 // that indicate a giving action to be done.
-type Behaviour interface {
+type Op interface {
 	Action(Addr, Envelope)
 }
 
-// ErrorBehaviour defines an interface that exposes the
+// OpFunc returns a function which always returns a new Op from
+// provided function.
+func OpFunc(actionFunc ActionFunc) func() Op {
+	return func() Op {
+		return funcOp{ActionFunc: actionFunc}
+	}
+}
+
+// OpFromFunc returns a new Op from provided function.
+func OpFromFunc(actionFunc ActionFunc) Op {
+	return funcOp{ActionFunc: actionFunc}
+}
+
+type funcOp struct {
+	ActionFunc ActionFunc
+}
+
+func (f funcOp) Action(addr Addr, envelope Envelope) {
+	f.ActionFunc(addr, envelope)
+}
+
+// ErrorOp defines an interface that exposes the
 // a method which returns an error if one occurred for
 // it's operation on a received Envelope.
-type ErrorBehaviour interface {
+type ErrorOp interface {
 	Action(Addr, Envelope) error
 }
 
@@ -478,6 +531,10 @@ type DeathWatch interface {
 // Prop defines underline actor operation which are used to
 // generate said handlers for an instantiated actor.
 type Prop struct {
+	// Op defines the behaviour to be used for handling
+	// and processing incoming messages.
+	Op Op
+
 	// ContextLog sets the context logger provider, which will be
 	// if set to create a Logger which will be used by the actor
 	// for logging, it's operations.
@@ -486,10 +543,6 @@ type Prop struct {
 	// if they are provided none for use in creating Logs instance in
 	// implementations.
 	ContextLogs ContextLogs
-
-	// Behaviour defines the behaviour to be used for handling
-	// and processing incoming messages.
-	Behaviour Behaviour
 
 	// Event represent the local events coming from the
 	// actor. Usually good to isolate events for actor
@@ -510,7 +563,7 @@ type Prop struct {
 	// Sentinel provides a advisor of behaviours to be performed
 	// for actors being watched by owner of this prop. This allows
 	// behaviours to be implemented or optionally provided. You can
-	// also implement the Sentinel interface on the Behaviour implementer
+	// also implement the Sentinel interface on the Op implementer
 	// instead.
 	Sentinel Sentinel
 
@@ -537,6 +590,23 @@ type Prop struct {
 	// MailInvoker defines the invoker called for updating metrics on mailbox usage.
 	MailInvoker MailInvoker
 }
+
+// ModProp defines a function which modifies a underline prop returning
+// a new prop or same prop after modification.
+type ModProp func(Prop) Prop
+
+// Props returns a new Prop based on provided modding functions supplied.
+func Props(props ...ModProp) Prop {
+	var base Prop
+	for _, mod := range props {
+		base = mod(base)
+	}
+	return base
+}
+
+//***********************************
+//  Spawning
+//***********************************
 
 // Spawner exposes a single method to spawn an underline actor returning
 // the address for spawned actor.
