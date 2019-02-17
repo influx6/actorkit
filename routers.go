@@ -2,6 +2,7 @@ package actorkit
 
 import (
 	"log"
+	"sync"
 	"time"
 )
 
@@ -32,9 +33,23 @@ type SpawnerFunc func(mods ...ModProp) Actor
 // SpawnerConfig defines configuration which is used to power a underline
 // spawner and how it build's it's underline children from provided spawned function.
 type SpawnerConfig struct {
-	Max     int
-	Mods    []ModProp
-	Spawner SpawnerFunc
+	// Max sets the maximum allowed children actors to be spawned for giving
+	// actors.
+	// ( Default: 20 ).
+	Max int
+
+	// Mods sets the default Mod functions for using to create a new Prop
+	// for giving generated actor.
+	Mods []ModProp
+
+	// SpawnerFunc sets the function to be used for spawning new
+	// actors.
+	SpawnerFunc SpawnerFunc
+
+	// MaxIdle sets the maximum duration which we must wait till the
+	// actor can be considered idle and killable since no new work has
+	// being received within giving duration.
+	// ( Default: 10 seconds ).
 	MaxIdle time.Duration
 }
 
@@ -43,19 +58,31 @@ type SpawnerConfig struct {
 // actor type and are provided a function which consistently spawns
 // actors for handling messages based on specific configurable conditions.
 type SpawningRouter struct {
-	config  SpawnerConfig
+	config  *SpawnerConfig
 	spawner SpawnerFunc
 
-	slots         []Actor
 	fallbackRobin *RoundRobinSet
+
+	sml   sync.Mutex
+	slots []*spawnTtlActor
 }
 
 // NewSpawningRouter returns a new SpawningRouter.
 func NewSpawningRouter(config SpawnerConfig) *SpawningRouter {
+	if config.SpawnerFunc == nil {
+		panic("SpawnerConfig.SpawnerFunc must be supplied")
+	}
+	if config.MaxIdle <= 0 {
+		config.MaxIdle = time.Second * 10
+	}
+	if config.Max <= 0 {
+		config.Max = 20
+	}
+
 	var spawner SpawningRouter
-	spawner.config = config
-	spawner.slots = make([]Actor, config.Max)
+	spawner.config = &config
 	spawner.fallbackRobin = NewRoundRobinSet()
+	spawner.slots = make([]*spawnTtlActor, 0, config.Max)
 	return &spawner
 }
 
@@ -65,7 +92,66 @@ func NewSpawningRouter(config SpawnerConfig) *SpawningRouter {
 // to non-busy workers when possible, else dish incoming work in a
 // round robin fashion.
 func (rr *SpawningRouter) Action(addr Addr, msg Envelope) {
+	switch msg.Data.(type) {
 
+	}
+}
+
+func (rr *SpawningRouter) remove(index int) {
+	rr.sml.Lock()
+	defer rr.sml.Unlock()
+}
+
+// spawnTtlActor implements a time limited actor which if idle for
+// a giving duration will be killed.
+type spawnTtlActor struct {
+	index  int
+	actor  Actor
+	timer  *time.Timer
+	owner  *SpawningRouter
+	waiter sync.WaitGroup
+}
+
+// newSpawnTTLActor returns a new instance of a spawnTtlActor.
+func newSpawnTTLActor(index int, actor Actor, owner *SpawningRouter) *spawnTtlActor {
+	var ttl spawnTtlActor
+	ttl.index = index
+	ttl.actor = actor
+	ttl.owner = owner
+	ttl.timer = time.NewTimer(owner.config.MaxIdle)
+
+	return &ttl
+}
+
+// Wait blocks till giving instance is closed.
+func (ttl *spawnTtlActor) Wait() {
+	ttl.waiter.Wait()
+}
+
+// Receive implements the Receiver interface.
+func (ttl *spawnTtlActor) Receive(addr Addr, msg Envelope) {
+	ttl.timer.Reset(ttl.owner.config.MaxIdle)
+	ttl.actor.Receive(addr, msg)
+}
+
+func (ttl *spawnTtlActor) manageTTL() {
+	ttl.waiter.Add(1)
+	go func() {
+		defer ttl.waiter.Done()
+
+		for {
+			select {
+			case <-ttl.timer.C:
+				// the maximum idle time out as being reach,
+				ttl.actor.Destroy()
+
+				// Remove this actor from spawner list.
+				ttl.owner.remove(ttl.index)
+			default:
+				continue
+			}
+		}
+	}()
 }
 
 //***********************************************************
